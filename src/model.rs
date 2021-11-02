@@ -153,6 +153,14 @@ impl Model {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
                     },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&normal_texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(&normal_texture.sampler),
+                    },
                 ],
                 label: None,
             });

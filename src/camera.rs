@@ -1,81 +1,61 @@
-use cgmath::*;
+
 use winit::event::*;
 use winit::dpi::PhysicalPosition;
 use std::time::Duration;
-use std::f32::consts::FRAC_PI_2;
+use nalgebra::*;
+use glm;
+
 
 #[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
+pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
     0.0, 1.0, 0.0, 0.0,
     0.0, 0.0, 0.5, 0.0,
     0.0, 0.0, 0.5, 1.0,
 );
 
-const SAFE_FRAC_PI_2: f32 = FRAC_PI_2 - 0.0001;
-
 
 #[derive(Debug)]
 pub struct Camera {
-    pub position: Point3<f32>,
-    pub rotation: Quaternion<f32>,
+    pub position: Vector3<f32>,
+    pub rotation: UnitQuaternion<f32>,
+	aspect: f32,
+    fovy: f32,
+    near: f32,
+    far: f32,
 }
 impl Camera {
     pub fn new<
-        p: Into<Point3<f32>>,
-        r: Into<Quaternion<f32>>,
+        P: Into<Vector3<f32>>,
+        R: Into<UnitQuaternion<f32>>
     >(
-        position: p,
-        rotation: r
+        position: P,
+        rotation: R,
+		aspect: f32,
+		fovy: f32,
+		near: f32,
+		far: f32,
     ) -> Self {
         Self {
             position: position.into(),
-            rotation: rotation.into()
+            rotation: rotation.into(),
+			aspect,
+			fovy,
+			near,
+			far,
         }
     }
 
-    pub fn calc_matrix(&self) -> Matrix4<f32> {
-        cgmath::Matrix4::from_translation(self.position) * cgmath::Matrix4::from(self.rotation);
-		// Matrix4::look_to_rh(
-        //     self.position,
-        //     Vector3::new(
-        //         self.yaw.0.cos(),
-        //         self.pitch.0.sin(),
-        //         self.yaw.0.sin(),
-        //     ).normalize(),
-        //     Vector3::unit_y(),
-        // )
-    }
-}
-
-pub struct Projection {
-    aspect: f32,
-    fovy: Rad<f32>,
-    znear: f32,
-    zfar: f32,
-}
-impl Projection {
-    pub fn new<F: Into<Rad<f32>>>(
-        width: u32,
-        height: u32,
-        fovy: F,
-        znear: f32,
-        zfar: f32,
-    ) -> Self {
-        Self {
-            aspect: width as f32 / height as f32,
-            fovy: fovy.into(),
-            znear,
-            zfar,
-        }
+    pub fn cam_matrix(&self) -> Matrix4<f32> {
+        self.rotation.to_homogeneous() * Matrix4::new_translation(&self.position)
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+	pub fn proj_matrix(&self) -> Matrix4<f32> {
+        OPENGL_TO_WGPU_MATRIX * glm::perspective_lh(self.aspect, self.fovy, self.near, self.far)
+    }
+
+	pub fn resize(&mut self, width: u32, height: u32) {
         self.aspect = width as f32 / height as f32;
-    }
-
-    pub fn calc_matrix(&self) -> Matrix4<f32> {
-        OPENGL_TO_WGPU_MATRIX * perspective(self.fovy, self.aspect, self.znear, self.zfar)
     }
 }
 
@@ -94,7 +74,6 @@ pub struct CameraController {
     speed: f32,
     sensitivity: f32,
 }
-
 impl CameraController {
     pub fn new(speed: f32, sensitivity: f32) -> Self {
         Self {
@@ -162,42 +141,24 @@ impl CameraController {
     pub fn update_camera(&mut self, camera: &mut Camera, dt: Duration) {
         let dt = dt.as_secs_f32();
 
-        // Move forward/backward and left/right
-        let (yaw_sin, yaw_cos) = camera.yaw.0.sin_cos();
-        let forward = Vector3::new(yaw_cos, 0.0, yaw_sin).normalize();
-        let right = Vector3::new(-yaw_sin, 0.0, yaw_cos).normalize();
-        camera.position += forward * (self.amount_forward - self.amount_backward) * self.speed * dt;
-        camera.position += right * (self.amount_right - self.amount_left) * self.speed * dt;
-
-        // Move in/out (aka. "zoom")
-        // Note: this isn't an actual zoom. The camera's position
-        // changes when zooming. I've added this to make it easier
-        // to get closer to an object you want to focus on.
-        let (pitch_sin, pitch_cos) = camera.pitch.0.sin_cos();
-        let scrollward = Vector3::new(pitch_cos * yaw_cos, pitch_sin, pitch_cos * yaw_sin).normalize();
-        camera.position += scrollward * self.scroll * self.speed * self.sensitivity * dt;
-        self.scroll = 0.0;
-
-        // Move up/down. Since we don't use roll, we can just
-        // modify the y coordinate directly.
-        camera.position.y += (self.amount_up - self.amount_down) * self.speed * dt;
+        // Move
+        camera.position.x += (self.amount_forward - self.amount_backward) * self.speed * dt;
+        camera.position.y += (self.amount_right - self.amount_left) * self.speed * dt;
+        camera.position.z += (self.amount_up - self.amount_down) * self.speed * dt;
 
         // Rotate
-        camera.yaw += Rad(self.rotate_horizontal) * self.sensitivity * dt;
-        camera.pitch += Rad(-self.rotate_vertical) * self.sensitivity * dt;
+        camera.rotation = camera.rotation * UnitQuaternion::from_euler_angles(0.0, -self.rotate_vertical * self.sensitivity * dt, self.rotate_horizontal * self.sensitivity * dt);
+
+        println!("Pos: x={}, y={}, z={}", camera.position.x, camera.position.y, camera.position.z);
+        let (rx, ry, rz) = camera.rotation.euler_angles();
+        println!("Rot: x={}, y=%{}, z=%{}", rx, ry, rz);
+
 
         // If process_mouse isn't called every frame, these values
         // will not get set to zero, and the camera will rotate
         // when moving in a non cardinal direction.
         self.rotate_horizontal = 0.0;
         self.rotate_vertical = 0.0;
-
-        // Keep the camera's angle from going too high/low.
-        if camera.pitch < -Rad(SAFE_FRAC_PI_2) {
-            camera.pitch = -Rad(SAFE_FRAC_PI_2);
-        } else if camera.pitch > Rad(SAFE_FRAC_PI_2) {
-            camera.pitch = Rad(SAFE_FRAC_PI_2);
-        }
     }
 }
 
