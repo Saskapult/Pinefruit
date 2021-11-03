@@ -1,111 +1,14 @@
-use crate::texture;
+use crate::model::{
+    texture::Texture,
+    mesh::Mesh,
+    material::Material,
+    vertex::Vertex,
+};
 use std::ops::Range;
 use std::path::Path;
 use anyhow::*;
 use tobj::LoadOptions;
 use wgpu::util::DeviceExt;
-
-
-
-// Better a vertex, part of UI, model, or data stuff
-pub trait Vertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a>;
-}
-
-
-// A model vertex is a vertex which is part of a model
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ModelVertex {
-    position: [f32; 3],
-    tex_coords: [f32; 2],
-    normal: [f32; 3],
-}
-impl Vertex for ModelVertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        use std::mem;
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<ModelVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    shader_location: 0,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                    format: wgpu::VertexFormat::Float32x2,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
-                    shader_location: 2,
-                    format: wgpu::VertexFormat::Float32x3,
-                },
-            ],
-        }
-    }
-}
-
-
-// A material is a texture and normal map combo
-pub struct Material {
-    pub name: String,
-    pub diffuse_texture: texture::Texture,
-    pub normal_texture: texture::Texture,
-    pub bind_group: wgpu::BindGroup,
-}
-impl Material {
-    pub fn new(
-        device: &wgpu::Device,
-        name: &str,
-        diffuse_texture: texture::Texture,
-        normal_texture: texture::Texture,
-        layout: &wgpu::BindGroupLayout,
-    ) -> Self {
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&diffuse_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&diffuse_texture.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&normal_texture.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&normal_texture.sampler),
-                },
-            ],
-            label: Some(name),
-        });
-
-        Self {
-            name: String::from(name),
-            diffuse_texture,
-            normal_texture,
-            bind_group,
-        }
-    }
-}
-
-
-// A mesh is a series of vertices with index optimizations, it also has a material
-pub struct Mesh {
-    pub name: String,
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub num_elements: u32,
-    pub material: usize,    // The material index to pull from
-}
-
 
 
 // A model is composed of meshes with corresponding materials
@@ -120,6 +23,7 @@ impl Model {
         layout: &wgpu::BindGroupLayout,
         path: P,
     ) -> Result<Self> {
+        // Use tobj to get models and materials
         let (obj_models, obj_materials) = tobj::load_obj(path.as_ref(), &LoadOptions {
                 triangulate: true,
                 single_index: true,
@@ -127,6 +31,7 @@ impl Model {
             },
         )?;
 
+        // Did the materials load correctly?
         let obj_materials = obj_materials?;
 
         // We're assuming that the texture files are stored with the obj file
@@ -137,11 +42,13 @@ impl Model {
         let mut materials = Vec::new();
         for mat in obj_materials {
             let diffuse_path = mat.diffuse_texture;
-            let diffuse_texture = texture::Texture::load(device, queue, containing_folder.join(diffuse_path), false)?;
+            let diffuse_texture = Texture::load(device, queue, containing_folder.join(diffuse_path), false)?;
 
+            // This should be optional in the future
             let normal_path = mat.normal_texture;
-            let normal_texture = texture::Texture::load(device, queue, containing_folder.join(normal_path), true)?;
+            let normal_texture = Texture::load(device, queue, containing_folder.join(normal_path), true)?;
 
+            // Make a bind group for the two textures
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 layout,
                 entries: &[
@@ -178,12 +85,13 @@ impl Model {
         for m in obj_models {
             let mut vertices = Vec::new();
             for i in 0..m.mesh.positions.len() / 3 {
-                vertices.push(ModelVertex {
+                vertices.push(Vertex {
                     position: [
                         m.mesh.positions[i * 3],
                         m.mesh.positions[i * 3 + 1],
                         m.mesh.positions[i * 3 + 2],
                     ],
+                    colour: [1.0, 1.0, 1.0],
                     tex_coords: [m.mesh.texcoords[i * 2], m.mesh.texcoords[i * 2 + 1]],
                     normal: [
                         m.mesh.normals[i * 3],
@@ -217,6 +125,28 @@ impl Model {
 
         Ok(Self { meshes, materials })
     }
+}
+
+
+pub fn make_mesh_buffers(
+    device: &wgpu::Device, 
+    name: String, 
+    vertices: Vec<Vertex>, 
+    indices: Vec<u32>,
+) -> (wgpu::Buffer, wgpu::Buffer) {
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{:?} Vertex Buffer", name)),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        }
+    );
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(&format!("{:?} Index Buffer", name)),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        }
+    );
+    return (vertex_buffer, index_buffer)
 }
 
 
@@ -313,3 +243,118 @@ where
 }
 
 
+fn create_cube_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let vertices = [
+        [-1.0, -1.0, 1.0],   
+        [1.0, -1.0, 1.0],    
+        [1.0, 1.0, 1.0],     
+        [-1.0, 1.0, 1.0],    
+        [-1.0, 1.0, -1.0],   
+        [1.0, 1.0, -1.0],    
+        [1.0, -1.0, -1.0],   
+        [-1.0, -1.0, -1.0],  
+        [1.0, -1.0, -1.0],   
+        [1.0, 1.0, -1.0],    
+        [1.0, 1.0, 1.0],     
+        [1.0, -1.0, 1.0],    
+        [-1.0, -1.0, 1.0],   
+        [-1.0, 1.0, 1.0],    
+        [-1.0, 1.0, -1.0],   
+        [-1.0, -1.0, -1.0],  
+        [1.0, 1.0, -1.0],    
+        [-1.0, 1.0, -1.0],   
+        [-1.0, 1.0, 1.0],    
+        [1.0, 1.0, 1.0],     
+        [1.0, -1.0, 1.0],    
+        [-1.0, -1.0, 1.0],   
+        [-1.0, -1.0, -1.0],  
+        [1.0, -1.0, -1.0],   
+    ];
+
+    let normals = [
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [0.0, 0.0, -1.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, -1.0, 0.0],
+    ];
+
+    let tcs = [ 
+        [1.0, 1.0],
+        [0.0, 1.0], 
+        [0.0, 0.0],
+        [0.0, 0.0],
+        [1.0, 0.0],   
+        [1.0, 1.0],
+        [0.0, 1.0],   
+        [0.0, 0.0],  
+        [1.0, 0.0],
+        [1.0, 0.0],   
+        [1.0, 1.0],   
+        [0.0, 1.0],
+        [1.0, 0.0],   
+        [1.0, 1.0],  
+        [0.0, 1.0],
+        [0.0, 1.0],   
+        [0.0, 0.0],  
+        [1.0, 0.0],
+        [1.0, 1.0],   
+        [0.0, 1.0],  
+        [0.0, 0.0],
+        [0.0, 0.0],    
+        [1.0, 0.0],   
+        [1.0, 1.0],
+        [0.0, 1.0],   
+        [0.0, 0.0],   
+        [1.0, 0.0],
+        [1.0, 0.0],   
+        [1.0, 1.0],    
+        [0.0, 1.0],
+        [0.0, 0.0], 
+        [1.0, 0.0], 
+        [1.0, 1.0],
+        [1.0, 1.0], 
+        [0.0, 1.0], 
+        [0.0, 0.0],
+    ];
+
+    let mut vertex_data = Vec::new();
+    for i in 0..vertices.len() {
+        vertex_data.push(Vertex {
+            position: vertices[i],
+            colour: [1.0, 1.0, 1.0],
+            tex_coords: tcs[i],
+            normal: normals[i],
+        });
+    }
+
+    let index_data: &[u16] = &[
+        0, 1, 2, 2, 3, 0, // top
+        4, 5, 6, 6, 7, 4, // bottom
+        8, 9, 10, 10, 11, 8, // right
+        12, 13, 14, 14, 15, 12, // left
+        16, 17, 18, 18, 19, 16, // front
+        20, 21, 22, 22, 23, 20, // back
+    ];
+
+    (vertex_data, index_data.to_vec())
+}

@@ -5,7 +5,7 @@ use winit::{
 	event_loop::{ControlFlow, EventLoop},
 	window::WindowBuilder,
 };
-use crate::render::Render;
+use crate::render::renderer::Render;
 
 
 

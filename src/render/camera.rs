@@ -3,7 +3,6 @@ use winit::event::*;
 use winit::dpi::PhysicalPosition;
 use std::time::Duration;
 use nalgebra::*;
-use glm;
 
 
 #[rustfmt::skip]
@@ -15,6 +14,7 @@ pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
 );
 
 
+// A camera in the world
 #[derive(Debug)]
 pub struct Camera {
     pub position: Vector3<f32>,
@@ -51,7 +51,12 @@ impl Camera {
     }
 
 	pub fn proj_matrix(&self) -> Matrix4<f32> {
-        OPENGL_TO_WGPU_MATRIX * glm::perspective_lh(self.aspect, self.fovy, self.near, self.far)
+        Matrix4::new_perspective(self.aspect, self.fovy, self.near, self.far)
+        //glm::perspective_lh(self.aspect, self.fovy, self.near, self.far)
+    }
+
+    pub fn view_matrix(&self) -> Matrix4<f32> {
+        OPENGL_TO_WGPU_MATRIX * self.proj_matrix() * self.cam_matrix()
     }
 
 	pub fn resize(&mut self, width: u32, height: u32) {
@@ -60,6 +65,7 @@ impl Camera {
 }
 
 
+// A coltroller for the camera
 #[derive(Debug)]
 pub struct CameraController {
     amount_left: f32,
@@ -142,16 +148,16 @@ impl CameraController {
         let dt = dt.as_secs_f32();
 
         // Move
-        camera.position.x += (self.amount_forward - self.amount_backward) * self.speed * dt;
-        camera.position.y += (self.amount_right - self.amount_left) * self.speed * dt;
-        camera.position.z += (self.amount_up - self.amount_down) * self.speed * dt;
+        camera.position.x += (self.amount_right - self.amount_left) * self.speed * dt;
+        camera.position.z += (self.amount_forward - self.amount_backward) * self.speed * dt;
+        camera.position.y += (self.amount_up - self.amount_down) * self.speed * dt;
 
         // Rotate
         camera.rotation = camera.rotation * UnitQuaternion::from_euler_angles(0.0, -self.rotate_vertical * self.sensitivity * dt, self.rotate_horizontal * self.sensitivity * dt);
 
         println!("Pos: x={}, y={}, z={}", camera.position.x, camera.position.y, camera.position.z);
-        let (rx, ry, rz) = camera.rotation.euler_angles();
-        println!("Rot: x={}, y=%{}, z=%{}", rx, ry, rz);
+        //let (rx, ry, rz) = camera.rotation.euler_angles();
+        //println!("Rot: x={}, y=%{}, z=%{}", rx, ry, rz);
 
 
         // If process_mouse isn't called every frame, these values

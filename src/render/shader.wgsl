@@ -39,15 +39,16 @@ var<uniform> camera: Camera;
 
 struct VertexInput {
     [[location(0)]] position: vec3<f32>;    // Vertex position in model space
-    [[location(1)]] tex_coords: vec2<f32>;  // Vertex texture coords
-    [[location(2)]] normal: vec3<f32>;      // Vertex normal
+    [[location(1)]] colour: vec3<f32>;      // Vertex colour
+    [[location(2)]] tex_coords: vec2<f32>;  // Vertex texture coords
+    [[location(3)]] normal: vec3<f32>;      // Vertex normal
 };
 struct InstanceInput {
     // Model matrix (Where is model in world)
-    [[location(5)]] model_matrix_0: vec4<f32>;
-    [[location(6)]] model_matrix_1: vec4<f32>;
-    [[location(7)]] model_matrix_2: vec4<f32>;
-    [[location(8)]] model_matrix_3: vec4<f32>;
+    [[location(6)]] model_matrix_0: vec4<f32>;
+    [[location(7)]] model_matrix_1: vec4<f32>;
+    [[location(8)]] model_matrix_2: vec4<f32>;
+    [[location(9)]] model_matrix_3: vec4<f32>;
 };
 struct VertexOutput {
 	[[builtin(position)]] clip_position: vec4<f32>; // Position in clipping coords

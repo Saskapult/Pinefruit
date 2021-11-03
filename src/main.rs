@@ -1,9 +1,9 @@
-mod window;
-mod render;
-mod texture;
 mod model;
-mod camera;
-extern crate nalgebra_glm as glm;
+mod render;
+mod entity;
+
+mod window;
+
 
 fn main() {
 	println!("Hello, world!");
