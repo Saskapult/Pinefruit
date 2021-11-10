@@ -1,14 +1,8 @@
-use std::rc::Rc;
-use std::path::Path;
-use tobj;
+
 use std::collections::HashMap;
-use wgpu::util::DeviceExt;
-use image::GenericImageView;
 use crate::model::{
-	vertex::*,
 	texture::*,
 	mesh::*,
-	model::*,
 	material::*,
 };
 use anyhow::*;
@@ -43,7 +37,7 @@ impl TextureLoader {
 		}	
 	}
 	// Looks for a texture in gpu memory, loads if not found
-	pub fn get_tetxure_GPU(&mut self, name: &String) -> Result<TextureGPU> {
+	pub fn get_texture_GPU(&mut self, name: &String) -> Result<TextureGPU> {
 		// Look in loaded stuff
 		if self.textures_GPU.contains_key(&name) {
 			return Ok(self.textures_GPU[&name])

@@ -1,65 +1,166 @@
-
-use crate::model::model::Model;
-use std::collections::BTreeMap;
+use crate::{
+	render::*,
+	texturemanagers::BlockTexturesManager,
+	geometry::*,
+};
 use nalgebra::*;
-use std::sync::mpsc;
 
 
-struct World {
-	models: Vec<Model>,
-	instances: Vec<f32>,
+
+const CHUNKSIZE: usize = 32;
+const CHUNKSIZE_SQUARED: usize = CHUNKSIZE * CHUNKSIZE;
+const CHUNKSIZE_CUBED: usize = CHUNKSIZE * CHUNKSIZE * CHUNKSIZE;
+const CHUNKSIZE_PLUS_ONE: usize = CHUNKSIZE + 1;
+const CHUNKSIZE_PLUS_ONE_SQUARED: usize = CHUNKSIZE_PLUS_ONE * CHUNKSIZE_PLUS_ONE;
+
+pub struct Map {
+	pub chunks: Vec<Chunk>,
+	pub chunk_render_pipeline: wgpu::RenderPipeline,
+}
+impl Map {
+	pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, camera: &Camera, texture_manager: &BlockTexturesManager) -> Self {
+		let chunk_render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label: Some("Chunk Render Pipeline Layout"),
+			bind_group_layouts: &[
+				&texture_manager.texture_bind_group_layout,
+				&camera.camera_bind_group_layout,
+				],
+			push_constant_ranges: &[],
+		});
+
+		let chunk_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+			label: Some("Chunk Shader"),
+			source: wgpu::ShaderSource::Wgsl(include_str!("shaders/chunk_shader.wgsl").into()),
+		});
+
+		let chunk_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+			label: Some("Chunk Render Pipeline"),
+			layout: Some(&chunk_render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &chunk_shader,
+                entry_point: "vs_main",
+                buffers: &[
+					Vertex::desc(), 
+				],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &chunk_shader,
+                entry_point: "fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent::REPLACE,
+                        alpha: wgpu::BlendComponent::REPLACE,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLAMPING
+                clamp_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: texture::Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+        });
+
+		let chunks = Vec::new();
+
+		Self {
+			chunks,
+			chunk_render_pipeline,
+		}
+	}
+
+	// Takes a world position, finds its chunk, and finds the block in that chunk
+	pub fn block_at_pos(position: Vector3<f32>) {
+		let chunk_pos = [
+			(position[0] / (CHUNKSIZE as f32)).floor(),
+			(position[1] / (CHUNKSIZE as f32)).floor(),
+			(position[2] / (CHUNKSIZE as f32)).floor(),
+		];
+		let relative_block_pos = [
+			(position[0] % (CHUNKSIZE as f32)),
+			(position[1] % (CHUNKSIZE as f32)),
+			(position[2] % (CHUNKSIZE as f32)),
+		];
+		// Check if chunk exists
+	}
 }
 
 
-struct Map {
-	chunks: HashMap<i32, Chunk>,
-	new_chunks: mpsc::Receiver,		// New chunks should be sent here
-}
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-/*
-https://0fps.net/2012/01/14/an-analysis-of-minecraft-like-engines/
-
-a run-length encoding of a string is formally equivalent to an interval tree representation
-
-An interval tree is just an ordinary binary tree, where the key of each node is the start of a run and the value is the coordinate of the run
-*/
-
-// I like z=up x=right y=forward
-// This takes that and makes it boring (x=up, y=right, z-forward)
-// pub const ks_to_ws: Matrix4 = 
-// 	Matrix4::new_nonuniform_scaling(Vector3::new(0.0, -1.0, 0.0)) * 	// Flip y
-// 	Matrix4::from_scaled_axis(Vector3::new(0.0, std::f32::pi, 0.0)) *	// Rotate half on y
-// 	Matrix4::from_scaled_axis(Vector3::new(0.0, 0.0, std::f32::pi/2));	// Rotate quarter on z
-
-
-
-
-// A 32*32*32 area
 // Should be hashed in a z-order curve
-struct Chunk {
-	location: [i32; 3],			// Chunk coordinates in chunk coordinates
-	runs: BTreeMap<i32, i32>,
+pub struct Chunk {
+	location: [i32; 3],			// Chunk location in chunk coordinates
+	blocks: Vec<i32>,			// Len is CHUNKSIZE^3
+	// Blocks to tick
+	vertex_buf: wgpu::Buffer,
+	index_buf: wgpu::Buffer,
+	index_count: usize,
 }
 impl Chunk {
 	
-	fn line() {
+	fn meshme(&self) {
+		let worldposition = [
+			(self.location[0] * (CHUNKSIZE as i32)) as f32,
+			(self.location[1] * (CHUNKSIZE as i32)) as f32,
+			(self.location[2] * (CHUNKSIZE as i32)) as f32,
+		];
 
-	}
-	fn unline(data: String) {
+		// let mesh_vertices = Vec::new();
+		// let mesh_indices = Vec::new();
+		// let mesh_texture_coordinates = Vec::new();
+
+		for x in 0..CHUNKSIZE {
+			for y in 0..CHUNKSIZE {
+				for z in 0..CHUNKSIZE {
+					
+					let block_position = [
+						worldposition[0] + (x as f32),
+						worldposition[1] + (y as f32),
+						worldposition[2] + (z as f32),
+					];
+
+					// Add block to mesh
+				}
+			}
+		}
 
 	}
 }
+
+
+struct Block {
+	block_type: String,
+}
+
+
+struct BlockRun {
+	block_type: String,
+	length: u32,
+}
+struct ChunkMesher {
+	runs: Vec<BlockRun>,
+	sides: [[bool; CHUNKSIZE_SQUARED]; 6],
+}
+
+

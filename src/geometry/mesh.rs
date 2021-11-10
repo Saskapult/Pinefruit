@@ -1,5 +1,5 @@
 use wgpu::util::DeviceExt;
-use crate::model::vertex::Vertex;
+use crate::geometry::vertex::Vertex;
 
 
 

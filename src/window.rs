@@ -2,10 +2,13 @@
 
 use winit::{
 	event::*,
-	event_loop::{ControlFlow, EventLoop},
-	window::WindowBuilder,
+	event_loop::*,
+	window::*,
 };
-use crate::render::renderer::Render;
+use crate::render::Renderer;
+
+
+
 
 
 
@@ -13,8 +16,9 @@ pub fn windowmain() {
 	let event_loop = EventLoop::new();
 	let window = WindowBuilder::new().build(&event_loop).unwrap();
 
-	let mut render = pollster::block_on(Render::new(&window));
+	let mut render = pollster::block_on(Renderer::new(&window));
 	let mut last_render_time = std::time::Instant::now();
+
 	event_loop.run(move |event, _, control_flow| 
 		match event {
 			Event::DeviceEvent {
@@ -67,12 +71,9 @@ pub fn windowmain() {
 				}
 			}
 			Event::MainEventsCleared => {
-				// RedrawRequested will only trigger once, unless we manually
-				// request it.
+				// RedrawRequested will only trigger once, unless we manually request it.
 				window.request_redraw();
 			}
 			_ => {}
 	});
-
-
 }

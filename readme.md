@@ -3,23 +3,29 @@ Kkraft is like Minecraft but it sucks.
 
 
 # Dependencies
-Mlua:
-It's like rlua but has jit compilation.
+Mlua
+Gilrs
 
-Tokio:
-Tokio has a global queue and a local queue for work stealing.
 
-Wgpu:
-It compiles to the api of the host hardware.
+ECS design, Rust loves data ownership.
+Don't let everything have access to everything.
+The borrowing will tear you apart.
+OO will cause pain.
+So, separate data from functions.
 
-Specs:
-It's an ECS.
+Use vec and indices, leave arena and rc for experts.
 
-Gilrs:
-It handles input.
+Generational indices are indices with a generation.
+Alloc => 0
+Alloc => 1
+Dealloc 0
+Alloc => 0
 
-Cgmath:
-Maths.
+
+ECS:
+System: Entity, physics, input, UI, (chunk meshing)?, (chunk blocktick?)
+Movement component takes input and gives physics position component
+
 
 
 # Implementation

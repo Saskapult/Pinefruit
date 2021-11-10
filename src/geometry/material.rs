@@ -1,4 +1,4 @@
-use crate::model::texture::Texture;
+use crate::geometry::texture::Texture;
 
 
 // A material is a texture and normal map combo

@@ -1,5 +1,9 @@
 pub mod camera;
-pub mod light;
 pub mod renderer;
-pub mod uniforms;
-pub mod modelgroup;
+pub mod drawable;
+pub mod instance;
+
+pub use camera::*;
+pub use renderer::*;
+pub use drawable::*;
+pub use instance::*;

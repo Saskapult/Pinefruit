@@ -1,6 +1,6 @@
 use anyhow::*;
 use image::{GenericImageView, DynamicImage};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 
 pub enum TextureType {
@@ -11,67 +11,6 @@ pub enum TextureType {
 	ShininessTexture,
 	DissolveTexture,
 }
-
-
-
-// A texture entry
-struct TextureEntry {
-	name: String,
-	texture_type: TextureType,
-}
-
-// A texture stored on disk
-struct TextureDISK {
-	entry: TextureEntry,
-	path: Pathbuf,
-}
-
-// A texture stored in RAM
-struct TextureRAM {
-	entry: TextureEntry,
-	data: DynamicImage,
-}
-impl TextureRAM {
-	// Load from disk
-	pub fn from_disk(disk: TextureDISK) -> Result<Self> {
-		let entry = disk.entry;
-		let data = image::open(disk.path)?;
-		Ok(Self {
-			entry,
-			data,
-		})
-	}
-
-	// Load from bytes
-	pub fn from_bytes(entry: TextureEntry, bytes: &[u8]) -> Result<Self> {
-		let data = image::load_from_memory(bytes)?;
-		Ok(Self {
-			entry,
-			data,
-		})
-	}
-}
-
-// A texture buffer on the GPU
-struct TextureGPU {
-	entry: TextureEntry,
-	texture: Texture
-}
-impl TextureGPU {
-	pub fn from_ram(
-		ram: TextureRAM, 
-		device: &wgpu::Device,
-		queue: &wgpu::Queue,
-	) -> Result<Self> {
-		let entry = ram.entry;
-		let texture = Texture::from_image(device, queue, &ram.data, None, entry.texture_type)?;
-		Ok(Self{
-			entry,
-			texture,
-		})
-	}
-}
-
 
 
 
