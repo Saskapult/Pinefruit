@@ -1,79 +1,135 @@
-//use render::Render;
 
 use winit::{
 	event::*,
 	event_loop::*,
 	window::*,
 };
-use crate::render::Renderer;
+use wgpu;
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
+
+
+pub struct GameWindow {
+	pub window: Window,
+	pub surface: wgpu::Surface,
+	pub surface_config: wgpu::SurfaceConfiguration,
+}
+impl GameWindow {
+	pub fn new(instance: &wgpu::Instance, adapter: &wgpu::Adapter, event_loop: &EventLoop<()>) -> Self {
+		let window = new_window(&event_loop);
+		Self::from_window(instance, adapter, window)
+	}
+
+	pub fn from_window(instance: &wgpu::Instance, adapter: &wgpu::Adapter, window: Window) -> Self {
+		let surface = unsafe { instance.create_surface(&window) };
+		let size = window.inner_size();
+		let surface_config = wgpu::SurfaceConfiguration {
+			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+			format: surface.get_preferred_format(&adapter).unwrap(),
+			width: size.width,
+			height: size.height,
+			present_mode: wgpu::PresentMode::Fifo,
+		};
+		
+		Self {
+			window,
+			surface,
+			surface_config,
+		}
+	}
+
+	// To be called by the game when there is a resize event in the queue
+	pub fn resize(&mut self, device: &wgpu::Device, new_size: winit::dpi::PhysicalSize<u32>) {
+		if new_size.width > 0 && new_size.height > 0 {
+			self.surface_config.width = new_size.width;
+			self.surface_config.height = new_size.height;
+			self.surface.configure(&device, &self.surface_config);
+			// Depth texture?			
+		}
+	}
+}
 
 
 
 
 
 
-pub fn windowmain() {
-	let event_loop = EventLoop::new();
-	let window = WindowBuilder::new().build(&event_loop).unwrap();
 
-	let mut render = pollster::block_on(Renderer::new(&window));
-	let mut last_render_time = std::time::Instant::now();
 
-	event_loop.run(move |event, _, control_flow| 
+#[derive(Debug)]
+pub struct EventWhen {
+	pub window_id: WindowId,
+	pub event: WindowEvent<'static>,
+	pub ts: std::time::Instant,
+}
+
+
+
+
+
+
+pub fn new_event_loop() -> EventLoop<EventLoopEvent> {
+	EventLoop::<EventLoopEvent>::with_user_event()
+}
+
+pub fn new_window(event_loop: &EventLoop<()>) -> Window {
+	WindowBuilder::new()
+		.build(event_loop)
+		.unwrap()
+}
+
+pub fn new_queue() -> Arc<Mutex<Vec<EventWhen>>> {
+	Arc::new(Mutex::new(Vec::<EventWhen>::new()))
+}
+
+#[derive(Debug)]
+pub enum EventLoopEvent {
+	Close,
+	NewWindow(mpsc::Sender<Window>),
+}
+
+// Could use custom event to send cf::exit from within the program
+pub fn run_event_loop(
+	event_loop: EventLoop<EventLoopEvent>, 
+	event_queue: Arc<Mutex<Vec<EventWhen>>>,
+) {
+	event_loop.run(move |event, event_loop, control_flow| {
 		match event {
-			Event::DeviceEvent {
-                ref event,
-                .. // We're not using device_id currently
-            } => {
-                render.input(event);
-            }
-			Event::WindowEvent {
-				ref event,
-				window_id,
-			} if window_id == window.id() => {
+			Event::UserEvent(event) => {
 				match event {
-					// Close if close requested for 'esc' pressed
-					WindowEvent::CloseRequested | WindowEvent::KeyboardInput {
-						input:
-							KeyboardInput {
-								state: ElementState::Pressed,
-								virtual_keycode: Some(VirtualKeyCode::Escape),
-								..
-							},
-						..
-					} => *control_flow = ControlFlow::Exit,
-					// Resize if resized
-					WindowEvent::Resized(physical_size) => {
-						render.resize(*physical_size);
+					EventLoopEvent::Close => *control_flow = ControlFlow::Exit,
+					EventLoopEvent::NewWindow(sender) => {
+						let window = WindowBuilder::new().build(event_loop).unwrap();
+						sender.send(window).expect("Failed to send window");
 					}
-					// Resize if scaled
-					WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-						// new_inner_size is &&mut so we have to dereference it twice
-						render.resize(**new_inner_size);
-					}
-					// Else nothing
 					_ => {},
 				}
+				
 			}
-			Event::RedrawRequested(_) => {
-				let now = std::time::Instant::now();
-                let dt = now - last_render_time;
-                last_render_time = now;
-				render.update(dt);
-				match render.render() {
-					Ok(_) => {}
-					// Reconfigure the surface if lost
-					Err(wgpu::SurfaceError::Lost) => render.resize(render.size),
-					// The system is out of memory, we should probably quit
-					Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-					// All other errors (Outdated, Timeout) should be resolved by the next frame
-					Err(e) => eprintln!("{:?}", e),
-				}
+			Event::WindowEvent {
+				event,
+				window_id,
+			} => match event {
+				WindowEvent::CloseRequested  => *control_flow = ControlFlow::Exit,
+				_ => {
+					if let Some(event) = event.to_static() {
+						let g = EventWhen {
+							window_id,
+							event,
+							ts: std::time::Instant::now(),
+						};
+						event_queue.lock().unwrap().push(g);
+					}
+				},
 			}
-			Event::MainEventsCleared => {
-				// RedrawRequested will only trigger once, unless we manually request it.
-				window.request_redraw();
-			}
-			_ => {}
+			_ => {},
+		}
 	});
+	
 }
+
+
+
+
+
+

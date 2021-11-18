@@ -19,7 +19,7 @@ anyhow = "1.0"
 tobj = "3.0"
 nalgebra = "0.29.0"
 #dashmap = "4.0.2"	# Concurrent hashmap
-#specs = "0.17.0"
+specs = { version = "0.17.0", features = ["specs-derive"]}
 
 [build-dependencies]
 anyhow = "1.0"

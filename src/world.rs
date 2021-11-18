@@ -1,5 +1,6 @@
 use crate::{
 	render::*,
+	texture::*,
 	texturemanagers::BlockTexturesManager,
 	geometry::*,
 };
@@ -68,7 +69,7 @@ impl Map {
                 conservative: false,
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: texture::Texture::DEPTH_FORMAT,
+                format: Texture::DEPTH_FORMAT,
                 depth_write_enabled: true,
                 depth_compare: wgpu::CompareFunction::Less,
                 stencil: wgpu::StencilState::default(),

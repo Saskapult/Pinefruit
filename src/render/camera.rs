@@ -3,7 +3,6 @@ use winit::event::*;
 use winit::dpi::PhysicalPosition;
 use std::time::Duration;
 use nalgebra::*;
-use crate::render::*;
 use wgpu::util::DeviceExt;
 
 
@@ -20,10 +19,7 @@ pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
 pub struct Camera {
     pub position: Vector3<f32>,
     pub rotation: UnitQuaternion<f32>,
-	aspect: f32,
-    fovy: f32,
-    near: f32,
-    far: f32,
+	pub projection: Projection,
     pub camera_uniform: CameraUniform,
     pub camera_uniform_buffer: wgpu::Buffer,
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
@@ -35,8 +31,8 @@ impl Camera {
         rotation: R,
 		aspect: f32,
 		fovy: f32,
-		near: f32,
-		far: f32,
+		znear: f32,
+		zfar: f32,
         device: &wgpu::Device,
     ) -> Self {
         let camera_uniform = CameraUniform::new();
@@ -70,15 +66,12 @@ impl Camera {
             label: Some("camera_bind_group"),
         });
 
-        //let camera_controller = CameraController::new(4.0, 0.4);
+        let projection = Projection::new(aspect, 1.0, fovy, znear, zfar);
 
         Self {
             position: position.into(),
             rotation: rotation.into(),
-			aspect,
-			fovy,
-			near,
-			far,
+			projection,
             camera_uniform,
             camera_uniform_buffer,
             camera_bind_group_layout,
@@ -89,13 +82,15 @@ impl Camera {
     pub fn view_matrix(&self) -> Matrix4<f32> {
         self.rotation.to_homogeneous() * Matrix4::new_translation(&self.position)
     }
-
-	pub fn proj_matrix(&self) -> Matrix4<f32> {
-        Matrix4::new_perspective(self.aspect, self.fovy, self.near, self.far)
+    pub fn projection_matrix(&self) -> Matrix4<f32> {
+        self.projection.matrix()
+    }
+    pub fn view_projection_matrix(&self) -> Matrix4<f32> {
+        self.projection_matrix() * self.view_matrix()
     }
 
 	pub fn resize(&mut self, width: u32, height: u32) {
-        self.aspect = width as f32 / height as f32;
+        self.projection.resize_wh(width as f32, height as f32);
     }
 }
 
@@ -116,13 +111,52 @@ impl CameraUniform {
     }
     pub fn update(&mut self, camera: &Camera) {
         self.position = camera.position.to_homogeneous().into();
-        self.view_projection = (OPENGL_TO_WGPU_MATRIX * camera.proj_matrix() * camera.view_matrix()).into();
+        self.view_projection = (camera.view_projection_matrix()).into();
     }
 }
 
 
 
-// A coltroller for the camera
+#[derive(Debug)]
+pub struct Projection {
+    aspect: f32,    // Width / Height
+    fovy: f32,
+    znear: f32,
+    zfar: f32,
+}
+impl Projection {
+    pub fn new(width: f32, height: f32, fovy: f32, znear: f32, zfar: f32) -> Self {
+        Self {
+            aspect: width / height,
+            fovy,
+            znear,
+            zfar,
+        }
+    }
+
+    pub fn resize_wh(&mut self, width: f32, height: f32) {
+        self.aspect = width / height;   
+    }
+
+    pub fn resize_a(&mut self, aspect: f32) {
+        self.aspect = aspect; 
+    }
+
+    pub fn matrix(&self) -> Matrix4<f32> {
+        OPENGL_TO_WGPU_MATRIX * Matrix4::new_perspective(self.aspect, self.fovy, self.znear, self.zfar)
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
 #[derive(Debug)]
 pub struct CameraController {
     amount_left: f32,

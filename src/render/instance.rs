@@ -9,7 +9,7 @@ pub struct Instance {
 }
 impl Instance {
     pub fn to_raw(&self) -> InstanceRaw {
-        let model = Matrix4::new_translation(&self.position);
+        let model = Matrix4::new_translation(&self.position) * self.rotation.to_homogeneous();
         InstanceRaw {
             model: model.into(),
         }
