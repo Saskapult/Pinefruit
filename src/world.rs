@@ -1,10 +1,5 @@
-use crate::{
-	render::*,
-	texture::*,
-	texturemanagers::BlockTexturesManager,
-	geometry::*,
-};
 use nalgebra::*;
+use std::collections::HashMap;
 
 
 
@@ -14,79 +9,18 @@ const CHUNKSIZE_CUBED: usize = CHUNKSIZE * CHUNKSIZE * CHUNKSIZE;
 const CHUNKSIZE_PLUS_ONE: usize = CHUNKSIZE + 1;
 const CHUNKSIZE_PLUS_ONE_SQUARED: usize = CHUNKSIZE_PLUS_ONE * CHUNKSIZE_PLUS_ONE;
 
+
+
 pub struct Map {
 	pub chunks: Vec<Chunk>,
-	pub chunk_render_pipeline: wgpu::RenderPipeline,
 }
 impl Map {
-	pub fn new(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, camera: &Camera, texture_manager: &BlockTexturesManager) -> Self {
-		let chunk_render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-			label: Some("Chunk Render Pipeline Layout"),
-			bind_group_layouts: &[
-				&texture_manager.texture_bind_group_layout,
-				&camera.camera_bind_group_layout,
-				],
-			push_constant_ranges: &[],
-		});
-
-		let chunk_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-			label: Some("Chunk Shader"),
-			source: wgpu::ShaderSource::Wgsl(include_str!("shaders/chunk_shader.wgsl").into()),
-		});
-
-		let chunk_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-			label: Some("Chunk Render Pipeline"),
-			layout: Some(&chunk_render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &chunk_shader,
-                entry_point: "vs_main",
-                buffers: &[
-					Vertex::desc(), 
-				],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &chunk_shader,
-                entry_point: "fs_main",
-                targets: &[wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent::REPLACE,
-                        alpha: wgpu::BlendComponent::REPLACE,
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                }],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLAMPING
-                clamp_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: Texture::DEPTH_FORMAT,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-        });
+	pub fn new() -> Self {
 
 		let chunks = Vec::new();
 
 		Self {
 			chunks,
-			chunk_render_pipeline,
 		}
 	}
 
@@ -105,8 +39,6 @@ impl Map {
 		// Check if chunk exists
 	}
 }
-
-
 
 
 // Should be hashed in a z-order curve
@@ -151,7 +83,31 @@ impl Chunk {
 
 
 struct Block {
-	block_type: String,
+	name: String,
+	texture_id: u32,
+}
+
+
+struct BlockMap {
+	blocks_id: Vec<Block>,				// Get block by id
+	blocks_name: HashMap<String, u32>	// Get block id by name
+}
+impl BlockMap {
+	// Blocks could be inserted more than once
+	pub fn insert(&mut self, block: Block) -> u32 {
+		let index = self.blocks_id.len() as u32;
+		self.blocks_name.insert(block.name.clone(), index);
+		self.blocks_id.push(block);
+		index
+	}
+
+	pub fn get_block(&self, id: u32) -> &Block {
+		&self.blocks_id[id as usize]
+	}
+	
+	pub fn get_id(&self, name: &String) -> u32 {
+		self.blocks_name[name]
+	}
 }
 
 
@@ -159,6 +115,8 @@ struct BlockRun {
 	block_type: String,
 	length: u32,
 }
+
+
 struct ChunkMesher {
 	runs: Vec<BlockRun>,
 	sides: [[bool; CHUNKSIZE_SQUARED]; 6],

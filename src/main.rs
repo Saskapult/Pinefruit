@@ -1,6 +1,6 @@
 mod geometry;
 mod texture;
-mod texturemanagers;
+mod resource_manager;
 mod render;
 mod window;
 mod world;
@@ -8,7 +8,6 @@ mod game;
 
 use window::*;
 use std::thread;
-use std::sync::{Arc, Mutex};
 
 
 #[macro_use]

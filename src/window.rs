@@ -9,18 +9,14 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
 
 
+
 pub struct GameWindow {
 	pub window: Window,
 	pub surface: wgpu::Surface,
 	pub surface_config: wgpu::SurfaceConfiguration,
 }
 impl GameWindow {
-	pub fn new(instance: &wgpu::Instance, adapter: &wgpu::Adapter, event_loop: &EventLoop<()>) -> Self {
-		let window = new_window(&event_loop);
-		Self::from_window(instance, adapter, window)
-	}
-
-	pub fn from_window(instance: &wgpu::Instance, adapter: &wgpu::Adapter, window: Window) -> Self {
+	pub fn new(instance: &wgpu::Instance, adapter: &wgpu::Adapter, window: Window) -> Self {
 		let surface = unsafe { instance.create_surface(&window) };
 		let size = window.inner_size();
 		let surface_config = wgpu::SurfaceConfiguration {
@@ -43,17 +39,10 @@ impl GameWindow {
 		if new_size.width > 0 && new_size.height > 0 {
 			self.surface_config.width = new_size.width;
 			self.surface_config.height = new_size.height;
-			self.surface.configure(&device, &self.surface_config);
-			// Depth texture?			
+			self.surface.configure(&device, &self.surface_config);		
 		}
 	}
 }
-
-
-
-
-
-
 
 
 #[derive(Debug)]
@@ -64,31 +53,14 @@ pub struct EventWhen {
 }
 
 
-
-
-
-
-pub fn new_event_loop() -> EventLoop<EventLoopEvent> {
-	EventLoop::<EventLoopEvent>::with_user_event()
-}
-
-pub fn new_window(event_loop: &EventLoop<()>) -> Window {
-	WindowBuilder::new()
-		.build(event_loop)
-		.unwrap()
-}
-
-pub fn new_queue() -> Arc<Mutex<Vec<EventWhen>>> {
-	Arc::new(Mutex::new(Vec::<EventWhen>::new()))
-}
-
+// A custom event which can be injected into the event loop
 #[derive(Debug)]
 pub enum EventLoopEvent {
 	Close,
 	NewWindow(mpsc::Sender<Window>),
 }
 
-// Could use custom event to send cf::exit from within the program
+
 pub fn run_event_loop(
 	event_loop: EventLoop<EventLoopEvent>, 
 	event_queue: Arc<Mutex<Vec<EventWhen>>>,
@@ -104,8 +76,7 @@ pub fn run_event_loop(
 					}
 					_ => {},
 				}
-				
-			}
+			},
 			Event::WindowEvent {
 				event,
 				window_id,
@@ -128,6 +99,15 @@ pub fn run_event_loop(
 	
 }
 
+
+pub fn new_event_loop() -> EventLoop<EventLoopEvent> {
+	EventLoop::<EventLoopEvent>::with_user_event()
+}
+
+
+pub fn new_queue() -> Arc<Mutex<Vec<EventWhen>>> {
+	Arc::new(Mutex::new(Vec::<EventWhen>::new()))
+}
 
 
 

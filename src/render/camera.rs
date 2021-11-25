@@ -3,7 +3,6 @@ use winit::event::*;
 use winit::dpi::PhysicalPosition;
 use std::time::Duration;
 use nalgebra::*;
-use wgpu::util::DeviceExt;
 
 
 #[rustfmt::skip]
@@ -19,78 +18,38 @@ pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
 pub struct Camera {
     pub position: Vector3<f32>,
     pub rotation: UnitQuaternion<f32>,
-	pub projection: Projection,
-    pub camera_uniform: CameraUniform,
-    pub camera_uniform_buffer: wgpu::Buffer,
-    pub camera_bind_group_layout: wgpu::BindGroupLayout,
-    pub camera_bind_group: wgpu::BindGroup,
+    fovy: f32,
+	znear: f32,
+	zfar: f32,
 }
 impl Camera {
     pub fn new<P: Into<Vector3<f32>>, R: Into<UnitQuaternion<f32>>,>(
         position: P,
         rotation: R,
-		aspect: f32,
 		fovy: f32,
 		znear: f32,
 		zfar: f32,
-        device: &wgpu::Device,
     ) -> Self {
-        let camera_uniform = CameraUniform::new();
-
-        let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-            label: Some("camera_bind_group_layout"),
-        });
-
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &camera_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_uniform_buffer.as_entire_binding(),
-            }],
-            label: Some("camera_bind_group"),
-        });
-
-        let projection = Projection::new(aspect, 1.0, fovy, znear, zfar);
 
         Self {
             position: position.into(),
             rotation: rotation.into(),
-			projection,
-            camera_uniform,
-            camera_uniform_buffer,
-            camera_bind_group_layout,
-            camera_bind_group,
+            fovy,
+            znear,
+            zfar,
         }
     }
 
     pub fn view_matrix(&self) -> Matrix4<f32> {
         self.rotation.to_homogeneous() * Matrix4::new_translation(&self.position)
     }
-    pub fn projection_matrix(&self) -> Matrix4<f32> {
-        self.projection.matrix()
-    }
-    pub fn view_projection_matrix(&self) -> Matrix4<f32> {
-        self.projection_matrix() * self.view_matrix()
+
+    pub fn projection_matrix(&self, width: f32, height: f32) -> Matrix4<f32> {
+        OPENGL_TO_WGPU_MATRIX * Matrix4::new_perspective(width / height, self.fovy, self.znear, self.zfar)
     }
 
-	pub fn resize(&mut self, width: u32, height: u32) {
-        self.projection.resize_wh(width as f32, height as f32);
+    pub fn view_projection_matrix(&self, width: f32, height: f32) -> Matrix4<f32> {
+        self.projection_matrix(width, height) * self.view_matrix()
     }
 }
 
@@ -109,43 +68,13 @@ impl CameraUniform {
             view_projection: Matrix4::identity().into(),
         }
     }
-    pub fn update(&mut self, camera: &Camera) {
+    pub fn update(&mut self, camera: &Camera, width: f32, height: f32,) {
         self.position = camera.position.to_homogeneous().into();
-        self.view_projection = (camera.view_projection_matrix()).into();
+        self.view_projection = (camera.view_projection_matrix(width, height)).into();
     }
 }
 
 
-
-#[derive(Debug)]
-pub struct Projection {
-    aspect: f32,    // Width / Height
-    fovy: f32,
-    znear: f32,
-    zfar: f32,
-}
-impl Projection {
-    pub fn new(width: f32, height: f32, fovy: f32, znear: f32, zfar: f32) -> Self {
-        Self {
-            aspect: width / height,
-            fovy,
-            znear,
-            zfar,
-        }
-    }
-
-    pub fn resize_wh(&mut self, width: f32, height: f32) {
-        self.aspect = width / height;   
-    }
-
-    pub fn resize_a(&mut self, aspect: f32) {
-        self.aspect = aspect; 
-    }
-
-    pub fn matrix(&self) -> Matrix4<f32> {
-        OPENGL_TO_WGPU_MATRIX * Matrix4::new_perspective(self.aspect, self.fovy, self.znear, self.zfar)
-    }
-}
 
 
 
