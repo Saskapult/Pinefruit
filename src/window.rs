@@ -10,6 +10,7 @@ use std::sync::mpsc;
 
 
 
+#[derive(Debug)]
 pub struct GameWindow {
 	pub window: Window,
 	pub surface: wgpu::Surface,
@@ -26,7 +27,8 @@ impl GameWindow {
 			height: size.height,
 			present_mode: wgpu::PresentMode::Fifo,
 		};
-		
+		info!("Created new game window with format {:?}", &surface_config.format);
+
 		Self {
 			window,
 			surface,
@@ -47,8 +49,7 @@ impl GameWindow {
 
 #[derive(Debug)]
 pub struct EventWhen {
-	pub window_id: WindowId,
-	pub event: WindowEvent<'static>,
+	pub event: Event<'static, EventLoopEvent>,
 	pub ts: std::time::Instant,
 }
 
@@ -57,7 +58,9 @@ pub struct EventWhen {
 #[derive(Debug)]
 pub enum EventLoopEvent {
 	Close,
-	NewWindow(mpsc::Sender<Window>),
+	CreateWindow,
+	RegisterWindow(Window),
+	SupplyWindow(mpsc::Sender<Window>),
 }
 
 
@@ -70,30 +73,30 @@ pub fn run_event_loop(
 			Event::UserEvent(event) => {
 				match event {
 					EventLoopEvent::Close => *control_flow = ControlFlow::Exit,
-					EventLoopEvent::NewWindow(sender) => {
+					EventLoopEvent::CreateWindow => {
 						let window = WindowBuilder::new().build(event_loop).unwrap();
-						sender.send(window).expect("Failed to send window");
+						let ew = EventWhen {
+							event: Event::UserEvent(EventLoopEvent::RegisterWindow(window)),
+							ts: std::time::Instant::now(),
+						};
+						event_queue.lock().unwrap().push(ew);
+					}
+					EventLoopEvent::SupplyWindow(sender) => {
+						let window = WindowBuilder::new().build(event_loop).unwrap();
+						sender.send(window).expect("error sending window");
 					}
 					_ => {},
 				}
 			},
-			Event::WindowEvent {
-				event,
-				window_id,
-			} => match event {
-				WindowEvent::CloseRequested  => *control_flow = ControlFlow::Exit,
-				_ => {
-					if let Some(event) = event.to_static() {
-						let g = EventWhen {
-							window_id,
-							event,
-							ts: std::time::Instant::now(),
-						};
-						event_queue.lock().unwrap().push(g);
-					}
-				},
-			}
-			_ => {},
+			_ => {
+				if let Some(event) = event.to_static() {
+					let ew = EventWhen {
+						event,
+						ts: std::time::Instant::now(),
+					};
+					event_queue.lock().unwrap().push(ew);
+				}
+			},
 		}
 	});
 	

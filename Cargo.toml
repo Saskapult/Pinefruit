@@ -21,6 +21,7 @@ nalgebra = "0.29.0"
 #dashmap = "4.0.2"	# Concurrent hashmap
 specs = { version = "0.17.0", features = ["specs-derive"]}
 #derivative = "2.2.0"
+nalgebra-glm = "0.15.0"
 
 
 [build-dependencies]

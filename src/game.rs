@@ -1,4 +1,5 @@
 
+
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use nalgebra::*;
@@ -14,41 +15,211 @@ use winit::{
 };
 use crate::window::*;
 use std::sync::mpsc;
+use std::thread;
 
 
-// Resources
 
-// A resource is available to all systems
-// Use WriteExpect because Default is hard to do
-
+// Manages windows
+// Creates/destroys windows and can read their events
+const CLOSE_ON_NO_WINDOWS: bool = true;
 struct WindowResource {
 	windows: Vec<GameWindow>,
 	id_idx: HashMap<WindowId, usize>,
-	process_queue: Vec<EventWhen>,
+	event_loop_sender: mpsc::SyncSender<EventLoopEvent>,
+	event_thread_handle: thread::JoinHandle<i32>,
+	instance: wgpu::Instance,
+	adapter: wgpu::Adapter,
+	event_queue: Arc<Mutex<Vec<EventWhen>>>,
 }
 impl WindowResource {
-	pub fn new() -> Self {
+	pub fn new(
+		event_loop_proxy: EventLoopProxy<EventLoopEvent>,
+		instance: wgpu::Instance,
+		adapter: wgpu::Adapter,
+		event_queue: Arc<Mutex<Vec<EventWhen>>>,
+	) -> Self {
 		let windows = Vec::new();
 		let id_idx = HashMap::new();
-		let process_queue = Vec::new();
+
+		let (event_loop_sender, event_loop_receiver) = mpsc::sync_channel(10);
+
+		// This needs to stay in its own thread because it cannot sync
+		let event_thread_handle = thread::spawn(move || {
+			loop {
+				let event = event_loop_receiver.recv()
+					.expect("recv error");
+				event_loop_proxy.send_event(event)
+					.expect("Could not send window creation request");
+			}
+		});
+
 		Self {
 			windows,
 			id_idx,
-			process_queue,
+			event_loop_sender,
+			event_thread_handle,
+			instance,
+			adapter,
+			event_queue,
 		}
 	}
 
-	pub fn register_window(&mut self, window: GameWindow) {
-		let idx = self.windows.len();
-		self.id_idx.insert(window.window.id(), idx);
-		self.windows.push(window);
+
+	pub fn request_window(&mut self) {
+		// Insert an event to create a new window
+		// A RegisterWindow event with the window should be inserted into the queue
+		// It should be processed in the next iteration
+		self.event_loop_sender.send(EventLoopEvent::CreateWindow)
+			.expect("Could not send window creation request");
 	}
+
+
+	pub fn request_window_immediate(&mut self) {
+		let (sender, receiver) = mpsc::channel();
+		self.event_loop_sender.send(EventLoopEvent::SupplyWindow(sender))
+			.expect("Could not send window creation request");
+		let window = receiver.recv().unwrap();
+		self.register_window(window);
+	}
+
+
+	pub fn register_window(&mut self, window: Window) -> usize {
+		let gamewindow = GameWindow::new(&self.instance, &self.adapter, window);
+
+		let idx = self.windows.len();
+		self.id_idx.insert(gamewindow.window.id(), idx);
+		self.windows.push(gamewindow);
+		idx
+	}
+
+
+	pub fn close_window(&mut self, idx: usize) {
+		let wid = self.windows[idx].window.id();
+		self.id_idx.remove(&wid);
+		self.windows.remove(idx);
+		// Dropping the value should cause the window to close
+
+		if CLOSE_ON_NO_WINDOWS && self.windows.len() == 0 {
+			self.shutdown();
+		}
+	}
+
+
+	// Due to this aborting the event loop, the game will also be dropped
+	pub fn shutdown(&mut self) {
+		// Drop all windows
+		for i in 0..self.windows.len() {
+			self.close_window(i);
+		}
+		// Shut down event loop
+		self.event_loop_sender.send(EventLoopEvent::Close)
+			.expect("Could not send event loop close request");
+		// Everything else should stop/drop when self is dropped (here)
+	}
+	
+
+	// Processes events
+	// Gets the press percentages for all keys pressed during a timestep
+	// It is possible for a percentage to be greater than 100%
+	// This happends if startt is after the earliest queue value
+	// Should probably be modified to return more than that
+	pub fn process(
+		&mut self, 
+		startt: Instant,
+		endt: Instant,
+	) -> HashMap<VirtualKeyCode, f32> {
+
+		let dt = (endt - startt).as_secs_f32();
+		let mut pressmap = HashMap::new();
+		let mut kpmap = HashMap::new();
+		// Drain items not passed the start of the step
+		let events: Vec<EventWhen> = self.event_queue.lock().unwrap().drain_filter(|e| e.ts < endt).collect();
+		for event in events {
+			let ts = event.ts;
+			match event.event {
+				Event::UserEvent(event) => {
+					match event {
+						EventLoopEvent::RegisterWindow(window) => {
+							self.register_window(window);
+						},
+						_ => {},
+					}
+				},
+				Event::WindowEvent {ref event, window_id} => {
+					match event {
+						WindowEvent::KeyboardInput {input, ..} => {
+							// Send changed key data
+							let key = input.virtual_keycode.expect("no virtual keycode?!");
+							match input.state {
+								ElementState::Pressed => {
+									// If this button was not already pressed, record the pressing
+									if !pressmap.contains_key(&key) {
+										pressmap.insert(key, ts);
+									}
+								},
+								ElementState::Released => {
+									// Only do something if this key had been pressed in the first place
+									if kpmap.contains_key(&key) {
+										let mut kp = (ts - pressmap[&key]).as_secs_f32() / dt;
+		
+										// If this key had been pressed and released, account for that
+										if kpmap.contains_key(&key) {
+											kp += kpmap[&key];
+										}
+										// Send the percent of time pressed to input
+										kpmap.insert(key, kp);
+		
+										// Remove key from pressed keys
+										kpmap.remove(&key);
+									}
+									
+								},
+							}
+						},
+						WindowEvent::MouseInput {state, button, ..} => {
+							// Mouse button presses
+						},
+						WindowEvent::MouseWheel {delta, phase, ..} => {
+						},
+						WindowEvent::CursorEntered {..} => {
+						},
+						WindowEvent::CursorLeft {..} => {
+						},
+						WindowEvent::CursorMoved {position, ..} => {
+						},
+						WindowEvent::Resized (newsize) => {
+							//self.windows[self.id_idx[&window_id]].resize(newsize);
+						},
+						WindowEvent::CloseRequested => {
+							self.close_window(self.id_idx[&window_id]);
+						},
+						_ => {},
+					}
+				}
+				_ => {},
+			}
+		}
+
+		// Process the keys which are still pressed
+		for (key, t) in &pressmap {
+			let mut kp = (endt - *t).as_secs_f32() / dt;
+			// If this key had been pressed and released, account for that
+			if kpmap.contains_key(&key) {
+				kp += kpmap[&key];
+			}
+			// Send the percent of time pressed to input
+			kpmap.insert(*key, kp);
+		}
+
+		kpmap
+    }
 }
 
 
+
+// Holds input data
 struct InputResource {
 	keys: HashMap<VirtualKeyCode, f32>, // Percentage of step time a key was pressed
-	// control mapping hashmap?
 	// controlmap: HashMap<VirtualKeyCode, (some kind of enum option?)>
 }
 impl InputResource {
@@ -61,12 +232,14 @@ impl InputResource {
 }
 
 
-struct SimulationResource {
+
+// Holds timestep data
+struct StepResource {
 	last_step: Instant, // Time of last step
 	this_step: Instant, // Time of current step
 	step_diff: Duration, // this-last
 }
-impl SimulationResource {
+impl StepResource {
 	pub fn new() -> Self {
 		let heh = Instant::now();
 		Self {
@@ -78,40 +251,15 @@ impl SimulationResource {
 }
 
 
+
 use crate::render::Renderer;
 struct RenderResource {
 	renderer: Renderer,
 }
 impl RenderResource {
-	pub fn new(instance: &wgpu::Instance, adapter: &wgpu::Adapter) -> Self {
+	pub fn new(adapter: &wgpu::Adapter) -> Self {
 
-		let mut renderer = pollster::block_on(Renderer::new(adapter));
-
-		// Make pipeline and prereqs
-		renderer.create_tarray_bgl(&"tarray_bgl".to_string(), 1024);
-		renderer.create_camera_bgl(&"camera_bgl".to_string());
-		renderer.create_pipeline_layout(
-			&"tarray_pipeline_layout".to_string(), 
-			&vec![&"tarray_bgl".to_string(), &"camera_bgl".to_string()],
-		);
-		renderer.create_pipeline(
-			&"tarray_pipeline".to_string(), 
-			&"../shaders/texture_array_shader.wgsl".to_string(), 
-			&"tarray_pipeline_layout".to_string(), 
-			wgpu::TextureFormat::Rgba8UnormSrgb,
-			Some(crate::texture::Texture::DEPTH_FORMAT),
-			&[crate::geometry::Vertex::desc()],
-		);
-
-		// Add textures
-		renderer.load_texture_disk(&"dirt".to_string(), &"resources/blockfaces/dirt.png".to_string());
-		renderer.create_tarray_bg(
-			&"tarray_bg".to_string(), 
-			&(0..renderer.textures.data.len()).collect(),
-			&"tarray_bgl".to_string(),
-		);
-
-		//let crp = crate::render::make_crp(&renderer.device, &renderer.texture_manager.bind_group_layout, &renderer.camera_bind_group_layout);
+		let renderer = pollster::block_on(Renderer::new(adapter));
 
 		Self {
 			renderer,
@@ -121,123 +269,158 @@ impl RenderResource {
 
 
 
-// Components
-
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 struct TransformComponent {
 	position: Vector3<f32>,
-	rotation: Vector3<f32>,
+	rotation: UnitQuaternion<f32>,
 	scale: Vector3<f32>,
 }
 impl TransformComponent {
 	pub fn new() -> Self {
-		let v = Vector3::new(0.0, 0.0, 0.0);
+		let position = Vector3::new(0.0, 0.0, 0.0);
+		// let rotation = UnitQuaternion::look_at_lh(
+		// 	&Vector3::new(0.0, 0.0, 1.0),
+		// 	&Vector3::new(0.0, 1.0, 0.0),
+		// );
+		let rotation = UnitQuaternion::identity();
+		let scale = Vector3::new(1.0, 1.0, 1.0);
+		
 		Self {
-			position: v,
-			rotation: v,
-			scale: v,
+			position,
+			rotation,
+			scale,
 		}
 	}
+	pub fn with_position(self, position: Vector3<f32>) -> Self {
+		let rotation = self.rotation;
+		let scale = self.scale;
+		Self {
+			position,
+			rotation,
+			scale,
+		}
+	}
+	pub fn with_rotation(self, rotation: UnitQuaternion<f32>) -> Self {
+		let position = self.position;
+		let scale = self.scale;
+		Self {
+			position,
+			rotation,
+			scale,
+		}
+	}
+	pub fn with_scale(self, scale: Vector3<f32>) -> Self {
+		let position = self.position;
+		let rotation = self.rotation;
+		Self {
+			position,
+			rotation,
+			scale,
+		}
+	}
+	pub fn matrix(&self) -> Matrix4<f32> {
+		Matrix4::new_nonuniform_scaling(&self.scale) * self.rotation.to_homogeneous() * Matrix4::new_translation(&self.position)
+	}
 }
+
+
 
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 struct MovementComponent {
-	speed: f32,
+	speed: f32,	// Units per second
+}
+impl MovementComponent {
+	pub fn new() -> Self {
+		let speed = 1.0;
+		MovementComponent {
+			speed,
+		}
+	}
+	pub fn with_speed(self, speed: f32) -> Self {
+		Self {
+			speed,
+		}
+	}
 }
 
 
-// Systems
 
-// Accounts for percentage of time a key was pressed for since the last time step
-// I think it's neat and will make movements more precise
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+struct RenderComponent {
+	mesh_id: usize,
+	texture_id: usize,
+}
 
-// Still collects input from after start of next timestep, breaks thing
+
+
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+struct CameraComponent {
+	target: RenderTarget,
+	fovy: f32,
+	znear: f32,
+	zfar: f32,
+}
+impl CameraComponent {
+	pub fn new() -> Self {
+		Self {
+			target: RenderTarget::Window(0),
+			fovy: 45.0,
+			znear: 0.1,
+			zfar: 100.0,
+		}
+	}
+}
+
+
+
+// Handles window events
+// Prepares the input resource
 struct WindowEventSystem;
 impl<'a> System<'a> for WindowEventSystem {
     type SystemData = (
 		WriteExpect<'a, WindowResource>,
 		WriteExpect<'a, InputResource>,
-		ReadExpect<'a, SimulationResource>
+		ReadExpect<'a, StepResource>
 	);
 
-	// Distribute events to window queues?
-    fn run(&mut self, (mut window_resource, mut input_resource, simulation_resource): Self::SystemData) {
-
-		// Pressed keys for this timestep
-		let mut keymap = HashMap::new();
-		
-		// Duration of this timestep
-		let dt = simulation_resource.step_diff.as_secs_f32();
-
-		for event in &window_resource.process_queue {
-			match &event.event {
-				WindowEvent::Resized(physical_size) => {
-					//renderer_resource.size = physical_size;
-				},
-				WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-					//renderer_resource.size = *new_inner_size;
-				},
-				WindowEvent::KeyboardInput {input, ..} => {
-					// Send changed key data
-					let key = input.virtual_keycode.expect("no virtual keycode?!");
-					match input.state {
-						ElementState::Pressed => {
-							trace!("key pressed: {:?}", &key);
-							// If this button was not already pressed, record the pressing
-							if !keymap.contains_key(&key) {
-								keymap.insert(key, event.ts);
-							}
-						},
-						ElementState::Released => {
-							trace!("key released: {:?}", &key);
-							// Only do something if this key had been pressed in the first place
-							if keymap.contains_key(&key) {
-								let mut kp = (event.ts - keymap[&key]).as_secs_f32() / dt;
-
-								// If this key had been pressed and released, account for that
-								if input_resource.keys.contains_key(&key) {
-									kp += input_resource.keys[&key];
-								}
-								// Send the percent of time pressed to input
-								input_resource.keys.insert(key, kp);
-
-								// Remove key from pressed keys
-								keymap.remove(&key);
-							}
-							
-						},
-					}
-				},
-				_ => {},
-			}
-		}
-		
-		// Process the keys which are still pressed
-		for (key, t) in &keymap {
-			let mut kp = (simulation_resource.this_step - *t).as_secs_f32() / dt;
-			// If this key had been pressed and released, account for that
-			if input_resource.keys.contains_key(&key) {
-				kp += input_resource.keys[&key];
-			}
-			// Send the percent of time pressed to input
-			input_resource.keys.insert(*key, kp);
-		}
-
+    fn run(
+		&mut self, 
+		(
+			mut window_resource, 
+			mut input_resource, 
+			step_resource
+		): Self::SystemData
+	) {
+		// Put in input resource
+		let mut keymap = window_resource.process(step_resource.last_step, step_resource.this_step);
+		input_resource.keys = keymap;
     }
 }
+
+
 
 struct InputSystem;
 impl<'a> System<'a> for InputSystem {
     type SystemData = (
 		WriteExpect<'a, InputResource>,
+		ReadExpect<'a, StepResource>,
 		WriteStorage<'a, TransformComponent>,
 		ReadStorage<'a, MovementComponent>,
 	);
 
-	fn run(&mut self, (mut input_resource, mut transform, movement): Self::SystemData) { 
-
+	fn run(
+		&mut self, 
+		(
+			mut input_resource, 
+			step_resource,
+			mut transform, 
+			movement
+		): Self::SystemData
+	) { 
 		let mut displacement = Vector3::new(0.0, 0.0, 0.0);
 		for (key, kp) in &input_resource.keys {
 			match key {
@@ -264,9 +447,88 @@ impl<'a> System<'a> for InputSystem {
 		}
 		input_resource.keys.clear();
 
+		let secs = step_resource.step_diff.as_secs_f32();
+
 		for (transform_c, movement_c) in (&mut transform, &movement).join() {
-			transform_c.position += displacement * movement_c.speed;
-			//println!("Position: {:?}", &transform_c.position);
+			transform_c.position += displacement * movement_c.speed * secs;
+			info!("Camera position: {:?}", &transform_c.position);
+		}
+	}
+}
+
+
+
+struct RenderSystem;
+impl<'a> System<'a> for RenderSystem {
+    type SystemData = (
+		WriteExpect<'a, RenderResource>,
+		ReadExpect<'a, WindowResource>,
+		ReadStorage<'a, RenderComponent>,
+		ReadStorage<'a, CameraComponent>,
+		ReadStorage<'a, TransformComponent>,
+	);
+
+	fn run(
+		&mut self, 
+		(
+			mut render_resource, 
+			window_resource,
+			render, 
+			camera,
+			transform,
+		): Self::SystemData,
+	) { 
+		for (camera_c, transform_c) in (&camera, &transform).join() {
+			// Find destination
+			let view;
+			let width;
+			let height;
+			match camera_c.target {
+				RenderTarget::Window(id) => {
+					if id < window_resource.windows.len() {
+						info!("Rendering to window idx {}", id);
+
+						// Get window
+						let window = &window_resource.windows[id];
+						window.surface.configure(&render_resource.renderer.device, &window.surface_config);
+						width = window.surface_config.width;
+						height = window.surface_config.height;
+						let stex = window.surface.get_current_texture().expect("fugg");
+						view = stex.texture.create_view(&wgpu::TextureViewDescriptor::default());
+					
+						// Collect render data
+						let mut data = Vec::new();
+						for (render_c, transform_c) in (&render, &transform).join() {
+							data.push(crate::render::RenderData {
+								mesh_id: render_c.mesh_id,
+								instance: crate::render::Instance::new(),
+							});
+						}
+
+						let camera = crate::render::Camera {
+							position: transform_c.position,
+							rotation: transform_c.rotation,
+							fovy: camera_c.fovy,
+							znear: camera_c.znear,
+							zfar: camera_c.zfar,
+						};
+
+						info!("Rendering at {:?}", &camera.position);
+
+						render_resource.renderer.render(&view, width, height, &camera, &data);
+
+						stex.present();
+					} else {
+						error!("Tried to render to nonexistent window! idx: {}", id);
+					}
+				},
+				RenderTarget::Texture(id) => {
+					todo!();
+				},
+			}
+
+			
+			
 		}
 	}
 }
@@ -274,18 +536,13 @@ impl<'a> System<'a> for InputSystem {
 
 
 pub struct Game {
-	instance: wgpu::Instance,
-	adapter: wgpu::Adapter,
-
 	world: World,
-	simulation_dispatcher: Dispatcher<'static, 'static>,
-	event_loop_proxy: EventLoopProxy<EventLoopEvent>,
-	window_event_queue: Arc<Mutex<Vec<EventWhen>>>,
+	dispatcher: Dispatcher<'static, 'static>,
 }
 impl Game {
 	pub fn new(
 		event_loop_proxy: EventLoopProxy<EventLoopEvent>, 
-		window_event_queue: Arc<Mutex<Vec<EventWhen>>>,
+		event_queue: Arc<Mutex<Vec<EventWhen>>>,
 	) -> Self {
 		let instance = wgpu::Instance::new(wgpu::Backends::all());
 		let adapter = pollster::block_on(instance.request_adapter(
@@ -303,123 +560,106 @@ impl Game {
 
 		let mut world = World::new();
 
-
 		// Register components
-
 		world.register::<TransformComponent>();
 		world.register::<MovementComponent>();
-
+		world.register::<RenderComponent>();
+		world.register::<CameraComponent>();
 
 		// Attach resources
+		let step_resource = StepResource::new();
+		world.insert(step_resource);
 
-		let simulation_resource = SimulationResource::new();
-		world.insert(simulation_resource);
+		let mut render_resource = RenderResource::new(&adapter);
+		// Add meshes
+		let pentagon_id = render_resource.renderer.add_mesh(
+			&"pentagon".to_string(),
+			crate::geometry::Mesh::pentagon(&render_resource.renderer.device),
+		);
+		let quad_id = render_resource.renderer.add_mesh(
+			&"quad".to_string(),
+			crate::geometry::Mesh::quad(&render_resource.renderer.device),
+		);
+		// Add textures
+		render_resource.renderer.load_texture_disk(
+			&"dirt".to_string(), 
+			&"resources/blockfaces/dirt.png".to_string(),
+		);
+		render_resource.renderer.recreate_tbg();
+		world.insert(render_resource);
 
-		let window_resource = WindowResource::new();
+		let window_resource = WindowResource::new(
+			event_loop_proxy,
+			instance,
+			adapter,
+			event_queue,
+		);
 		world.insert(window_resource);
-
 		let input_resource = InputResource::new();
 		world.insert(input_resource);
 
-		let render_resource = RenderResource::new(&instance, &adapter);
-		world.insert(render_resource);
 
-		
-		// Enitities
-
+		// Entities
+		// Camera
+		world.create_entity()
+			.with(CameraComponent::new())
+			.with(TransformComponent::new().with_position(Vector3::new(0.0, 0.0, -1.0)))
+			.with(MovementComponent{speed: 0.4})
+			.build();
+		// Mesh
 		world.create_entity()
 			.with(TransformComponent::new())
-			.with(MovementComponent{speed: 0.4})
+			.with(RenderComponent {
+				mesh_id: quad_id,
+				texture_id: 1,
+			})
 			.build();
 
 		// Called to tick the world
-		let simulation_dispatcher = DispatcherBuilder::new()
+		let dispatcher = DispatcherBuilder::new()
 			.with(WindowEventSystem, "window_system", &[])
 			.with(InputSystem, "input_system", &["window_system"])
+			.with(RenderSystem, "render_system", &["input_system"])
 			.build();
 
 
 		Self {
-			instance,
-			adapter,
 			world,
-			simulation_dispatcher,
-			event_loop_proxy,
-			window_event_queue,
+			dispatcher,
 		}
 	}
 
-	pub fn simulation_tick(&mut self) {
-		
-		// Fetch data from queue (in new scope because of mutex paranoia)
-		// Must be retreived before this_step is decided because events might be recorded after this_step and cause an error
+
+	pub fn tick(&mut self) {
+		info!("Tick!");
+		// Prepare step info
 		{
-			let mut window_resource = self.world.write_resource::<WindowResource>();
-			window_resource.process_queue.clear();
-			window_resource.process_queue.append(&mut self.window_event_queue.lock().unwrap());
+			let mut step_resource = self.world.write_resource::<StepResource>();
+			step_resource.last_step = step_resource.this_step;
+			step_resource.this_step = std::time::Instant::now();
+			step_resource.step_diff = step_resource.this_step - step_resource.last_step;
 		}
 
-		// Prepare simulation step info
-		{
-			let mut simulation_resource = self.world.write_resource::<SimulationResource>();
-			simulation_resource.last_step = simulation_resource.this_step;
-			simulation_resource.this_step = std::time::Instant::now();
-			simulation_resource.step_diff = simulation_resource.this_step - simulation_resource.last_step;
-		}
-		self.simulation_dispatcher.dispatch(&mut self.world);
-
+		// Step to it
+		self.dispatcher.dispatch(&mut self.world);
+		info!("Tock!");
 	}
+
 
 	pub fn new_window(&mut self) {
-		info!("Creating new game window");
-
-		let (sender, receiver) = mpsc::channel();
-
-		self.event_loop_proxy.send_event(EventLoopEvent::NewWindow(sender))
-			.expect("Could not send window creation event");
-
-		let window = receiver.recv().unwrap();
-		let gamewindow = GameWindow::new(&self.instance, &self.adapter, window);
-
-		self.render(&gamewindow);
-
-		info!("Created new game window with format {:?}", &gamewindow.surface_config.format);
+		info!("Requesting new game window");
 
 		let mut window_resource = self.world.write_resource::<WindowResource>();
-		window_resource.register_window(gamewindow);
+		window_resource.request_window();
 
-		
-		
 	}
 
-	pub fn render(&mut self, window: &GameWindow) {
-		let tf = self.world.read_storage::<TransformComponent>();
-		let mo = self.world.read_storage::<MovementComponent>();
-
-		let mut render_resource = self.world.write_resource::<RenderResource>();
-	
-		window.surface.configure(&render_resource.renderer.device, &window.surface_config);
-		let stex = window.surface.get_current_texture().expect("fugg");
-		let view = stex.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let width = window.surface_config.width;
-		let height = window.surface_config.height;
-
-		let camera = crate::render::camera::Camera::new(
-			Vector3::new(0.0, 0.0, 0.0),
-			UnitQuaternion::look_at_lh(
-				&Vector3::new(0.0, 0.0, 1.0),
-				&Vector3::new(0.0, 1.0, 0.0),
-			),
-			45.0,
-			0.1,
-			100.0,
-		);
-
-		render_resource.renderer.render(&view, width, height, &camera, &vec![]);
-
-		stex.present();
-		info!("prensented");
-	}
 }
 
+
+
+#[derive(Debug)]
+enum RenderTarget {
+	Window(usize),
+	Texture(usize),
+}

@@ -1,22 +1,8 @@
 
 
+Queue of all events
 
-Resources
-	Renderer
-	TextureManager
-	World
-	Input
-
-Components
-	Transform
-	Camera
-	Movement
-
-Systems
-	ChunkRenderer
-	InputHandler
-
-
+List of windows
 
 
 
