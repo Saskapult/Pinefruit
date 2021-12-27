@@ -16,6 +16,7 @@ use winit::{
 use crate::window::*;
 use std::sync::mpsc;
 use std::thread;
+use std::path::PathBuf;
 
 
 
@@ -65,6 +66,7 @@ impl WindowResource {
 	}
 
 
+	// Request a window (to be processed in the next iteration)
 	pub fn request_window(&mut self) {
 		// Insert an event to create a new window
 		// A RegisterWindow event with the window should be inserted into the queue
@@ -74,6 +76,7 @@ impl WindowResource {
 	}
 
 
+	// Get a window fastly (in this iteration)
 	pub fn request_window_immediate(&mut self) {
 		let (sender, receiver) = mpsc::channel();
 		self.event_loop_sender.send(EventLoopEvent::SupplyWindow(sender))
@@ -116,117 +119,45 @@ impl WindowResource {
 			.expect("Could not send event loop close request");
 		// Everything else should stop/drop when self is dropped (here)
 	}
-	
 
-	// Processes events
-	// Gets the press percentages for all keys pressed during a timestep
-	// It is possible for a percentage to be greater than 100%
-	// This happends if startt is after the earliest queue value
-	// Should probably be modified to return more than that
-	pub fn process(
-		&mut self, 
-		startt: Instant,
-		endt: Instant,
-	) -> HashMap<VirtualKeyCode, f32> {
-
-		let dt = (endt - startt).as_secs_f32();
-		let mut pressmap = HashMap::new();
-		let mut kpmap = HashMap::new();
-		// Drain items not passed the start of the step
-		let events: Vec<EventWhen> = self.event_queue.lock().unwrap().drain_filter(|e| e.ts < endt).collect();
-		for event in events {
-			let ts = event.ts;
-			match event.event {
-				Event::UserEvent(event) => {
-					match event {
-						EventLoopEvent::RegisterWindow(window) => {
-							self.register_window(window);
-						},
-						_ => {},
-					}
-				},
-				Event::WindowEvent {ref event, window_id} => {
-					match event {
-						WindowEvent::KeyboardInput {input, ..} => {
-							// Send changed key data
-							let key = input.virtual_keycode.expect("no virtual keycode?!");
-							match input.state {
-								ElementState::Pressed => {
-									// If this button was not already pressed, record the pressing
-									if !pressmap.contains_key(&key) {
-										pressmap.insert(key, ts);
-									}
-								},
-								ElementState::Released => {
-									// Only do something if this key had been pressed in the first place
-									if kpmap.contains_key(&key) {
-										let mut kp = (ts - pressmap[&key]).as_secs_f32() / dt;
-		
-										// If this key had been pressed and released, account for that
-										if kpmap.contains_key(&key) {
-											kp += kpmap[&key];
-										}
-										// Send the percent of time pressed to input
-										kpmap.insert(key, kp);
-		
-										// Remove key from pressed keys
-										kpmap.remove(&key);
-									}
-									
-								},
-							}
-						},
-						WindowEvent::MouseInput {state, button, ..} => {
-							// Mouse button presses
-						},
-						WindowEvent::MouseWheel {delta, phase, ..} => {
-						},
-						WindowEvent::CursorEntered {..} => {
-						},
-						WindowEvent::CursorLeft {..} => {
-						},
-						WindowEvent::CursorMoved {position, ..} => {
-						},
-						WindowEvent::Resized (newsize) => {
-							//self.windows[self.id_idx[&window_id]].resize(newsize);
-						},
-						WindowEvent::CloseRequested => {
-							self.close_window(self.id_idx[&window_id]);
-						},
-						_ => {},
-					}
-				}
-				_ => {},
-			}
-		}
-
-		// Process the keys which are still pressed
-		for (key, t) in &pressmap {
-			let mut kp = (endt - *t).as_secs_f32() / dt;
-			// If this key had been pressed and released, account for that
-			if kpmap.contains_key(&key) {
-				kp += kpmap[&key];
-			}
-			// Send the percent of time pressed to input
-			kpmap.insert(*key, kp);
-		}
-
-		kpmap
-    }
 }
 
 
 
 // Holds input data
 struct InputResource {
-	keys: HashMap<VirtualKeyCode, f32>, // Percentage of step time a key was pressed
+	// The press percentages for all keys pressed during a timestep
+	// It is possible for a percentage to be greater than 100%
+	// This happends if startt is after the earliest queue value
+	board_keys: HashMap<VirtualKeyCode, f32>,
+	board_presscache: Vec<VirtualKeyCode>,
+	mouse_keys: HashMap<MouseButton, f32>,
+	mouse_presscache: Vec<MouseButton>,
+	mx: f64,
+	my: f64,
+	mdx: f64,
+	mdy: f64,
 	// controlmap: HashMap<VirtualKeyCode, (some kind of enum option?)>
 }
 impl InputResource {
 	pub fn new() -> Self {
-		let keys = HashMap::new();
+		let board_keys = HashMap::new();
+		let board_presscache = Vec::new();
+		let mouse_keys = HashMap::new();
+		let mouse_presscache = Vec::new();
+		let mx = 0.0;
+		let my = 0.0;
+		let mdx = 0.0;
+		let mdy = 0.0;
 		Self {
-			keys
+			board_keys,
+			board_presscache,
+			mouse_keys,
+			mouse_presscache,
+			mx, 
+			my, 
+			mdx, 
+			mdy
 		}
 	}
 }
@@ -279,10 +210,6 @@ struct TransformComponent {
 impl TransformComponent {
 	pub fn new() -> Self {
 		let position = Vector3::new(0.0, 0.0, 0.0);
-		// let rotation = UnitQuaternion::look_at_lh(
-		// 	&Vector3::new(0.0, 0.0, 1.0),
-		// 	&Vector3::new(0.0, 1.0, 0.0),
-		// );
 		let rotation = UnitQuaternion::identity();
 		let scale = Vector3::new(1.0, 1.0, 1.0);
 		
@@ -346,10 +273,37 @@ impl MovementComponent {
 }
 
 
+enum ChunkMeshEntry {
+	Empty,
+	NotLoaded,
+	Mesh(usize),
+}
+
 
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
-struct RenderComponent {
+struct MapComponent {
+	map: crate::world::Map,
+	chunk_meshes: HashMap<[i32; 3], usize>,
+}
+impl MapComponent {
+	pub fn new() -> Self {
+
+		let map = crate::world::Map::new();
+		let chunk_meshes = HashMap::new();
+
+		Self {
+			map,
+			chunk_meshes,
+		}		
+	}
+}
+
+
+
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+struct MeshComponent {
 	mesh_id: usize,
 	texture_id: usize,
 }
@@ -395,18 +349,178 @@ impl<'a> System<'a> for WindowEventSystem {
 			step_resource
 		): Self::SystemData
 	) {
-		// Put in input resource
-		let mut keymap = window_resource.process(step_resource.last_step, step_resource.this_step);
-		input_resource.keys = keymap;
+		let startt = step_resource.last_step;
+		let endt = step_resource.this_step;
+		let dt = (endt - startt).as_secs_f32();
+
+		// Keyboard buttons
+		let mut board_pressmap = HashMap::new();
+		for key in &input_resource.board_presscache {
+			board_pressmap.insert(*key, startt);
+		}
+		let mut kpmap = HashMap::new();
+		
+		// Mouse buttons
+		let mut mouse_pressmap = HashMap::new();
+		// Unlike key presses, mouse button presses are not constantly resubmitted
+		for button in &input_resource.mouse_presscache {
+			mouse_pressmap.insert(*button, startt);
+		}
+		let mut mpmap = HashMap::new();
+		
+		// Mouse position
+		let mut mx = input_resource.mx;
+		let mut my = input_resource.my;
+		
+		// Mouse movement
+		let mut mdx = 0.0;
+		let mut mdy = 0.0;
+		
+		
+		// Drain items not passed the start of the step
+		let events: Vec<EventWhen> = window_resource.event_queue.lock().unwrap().drain_filter(|e| e.ts < endt).collect();
+		for event in events {
+			let ts = event.ts;
+			match event.event {
+				Event::UserEvent(event) => {
+					match event {
+						EventLoopEvent::RegisterWindow(window) => {
+							window_resource.register_window(window);
+						},
+						_ => {},
+					}
+				},
+				Event::WindowEvent {ref event, window_id} => {
+					match event {
+						WindowEvent::KeyboardInput {input, ..} => {
+							// Send changed key data
+							let key = input.virtual_keycode.expect("no virtual keycode?!");
+							match input.state {
+								ElementState::Pressed => {
+									// If this button was not already pressed, record the pressing
+									if !board_pressmap.contains_key(&key) {
+										board_pressmap.insert(key, ts);
+									}
+								},
+								ElementState::Released => {
+									// Only do something if this key had been pressed in the first place
+									if board_pressmap.contains_key(&key) {
+										let mut kp = (ts - board_pressmap[&key]).as_secs_f32() / dt;
+		
+										// If this key had been pressed and released, account for that
+										if kpmap.contains_key(&key) {
+											kp += kpmap[&key];
+										}
+										// Send the percent of time pressed to input
+										kpmap.insert(key, kp);
+		
+										// Remove key from pressed keys
+										board_pressmap.remove(&key);
+									}
+									
+								},
+							}
+						},
+						WindowEvent::MouseInput {state, button, ..} => {
+							let button = *button;
+							info!("mb {:?}", &button);
+							// Mouse button presses
+							match state {
+								ElementState::Pressed => {
+									if !mouse_pressmap.contains_key(&button) {
+										mouse_pressmap.insert(button, ts);
+									}
+								},
+								ElementState::Released => {
+									if mouse_pressmap.contains_key(&button) {
+										let mut mp = (ts - mouse_pressmap[&button]).as_secs_f32() / dt;
+										if mpmap.contains_key(&button) {
+											mp += mpmap[&button];
+										}
+										mpmap.insert(button, mp);
+										mouse_pressmap.remove(&button);
+									}
+								},
+							}
+						},
+						WindowEvent::MouseWheel {delta, phase, ..} => {
+						},
+						WindowEvent::CursorEntered {..} => {
+						},
+						WindowEvent::CursorLeft {..} => {
+						},
+						WindowEvent::CursorMoved {position, ..} => {
+							// Don't use this for camera control!
+							// This can be used for ui stuff though
+							mx = position.x;
+							my = position.y;
+						},
+						WindowEvent::Resized (newsize) => {
+							//self.windows[self.id_idx[&window_id]].resize(newsize);
+						},
+						WindowEvent::CloseRequested => {
+							let idx = window_resource.id_idx[&window_id];
+							window_resource.close_window(idx);
+						},
+						_ => {},
+					}
+				},
+				Event::DeviceEvent {event, ..} => {
+					match event {
+						DeviceEvent::MouseMotion {delta} => {
+							if mouse_pressmap.contains_key(&MouseButton::Left) {
+								mdx += delta.0;
+								mdy += delta.1;
+							}
+						},
+						_ => {},
+					}
+				}
+				_ => {},
+			}
+		}
+
+		// Process the keys which are still pressed
+		for (key, t) in &board_pressmap {
+			let mut kp = (endt - *t).as_secs_f32() / dt;
+			// If this key had been pressed and released, account for that
+			if kpmap.contains_key(&key) {
+				kp += kpmap[&key];
+			}
+			// Send the percent of time pressed to input
+			kpmap.insert(*key, kp);
+		}
+		let board_stillpressed = board_pressmap.keys().map(|x| x.clone()).collect();
+		// Again for mouse keys
+		for (button, t) in &mouse_pressmap {
+			let mut mp = (endt - *t).as_secs_f32() / dt;
+			if mpmap.contains_key(&button) {
+				mp += mpmap[&button];
+			}
+			mpmap.insert(*button, mp);
+		}
+		let mouse_stillpressed = mouse_pressmap.keys().map(|x| x.clone()).collect();
+
+		// Update input resource
+		input_resource.board_keys = kpmap;
+		input_resource.board_presscache = board_stillpressed;
+		input_resource.mouse_keys = mpmap;
+		input_resource.mouse_presscache = mouse_stillpressed;
+		input_resource.mx = mx;
+		input_resource.my = my;
+		info!("mdx {}, mdy {}", mdx, mdy);
+		input_resource.mdx = mdx;
+		input_resource.mdy = mdy;
     }
 }
 
 
 
+// Reads input and decides what to do with it
 struct InputSystem;
 impl<'a> System<'a> for InputSystem {
     type SystemData = (
-		WriteExpect<'a, InputResource>,
+		ReadExpect<'a, InputResource>,
 		ReadExpect<'a, StepResource>,
 		WriteStorage<'a, TransformComponent>,
 		ReadStorage<'a, MovementComponent>,
@@ -415,14 +529,19 @@ impl<'a> System<'a> for InputSystem {
 	fn run(
 		&mut self, 
 		(
-			mut input_resource, 
+			input_resource, 
 			step_resource,
 			mut transform, 
 			movement
 		): Self::SystemData
 	) { 
+		let secs = step_resource.step_diff.as_secs_f32();
+
+		let rx = input_resource.mdx as f32 * secs * 0.01;
+		let ry = input_resource.mdy as f32 * secs * 0.01;
+
 		let mut displacement = Vector3::new(0.0, 0.0, 0.0);
-		for (key, kp) in &input_resource.keys {
+		for (key, kp) in &input_resource.board_keys {
 			match key {
 				VirtualKeyCode::W => {
 					displacement.z += kp;
@@ -445,13 +564,69 @@ impl<'a> System<'a> for InputSystem {
 				_ => {},
 			}
 		}
-		input_resource.keys.clear();
-
-		let secs = step_resource.step_diff.as_secs_f32();
 
 		for (transform_c, movement_c) in (&mut transform, &movement).join() {
-			transform_c.position += displacement * movement_c.speed * secs;
-			info!("Camera position: {:?}", &transform_c.position);
+
+			let quat_ry = UnitQuaternion::from_euler_angles(ry, 0.0, 0.0);
+			let quat_rx = UnitQuaternion::from_euler_angles(0.0, rx, 0.0);
+			transform_c.rotation = quat_rx * transform_c.rotation * quat_ry;
+
+			transform_c.position += transform_c.rotation * displacement * movement_c.speed * secs;
+		}
+	}
+}
+
+
+
+struct MapSystem;
+impl<'a> System<'a> for MapSystem {
+    type SystemData = (
+		WriteExpect<'a, RenderResource>,
+		WriteStorage<'a, MapComponent>,
+		ReadStorage<'a, CameraComponent>,
+		ReadStorage<'a, TransformComponent>,
+	);
+	fn run(
+		&mut self, 
+		(
+			mut render_resource,
+			mut map,
+			camera,
+			transform,
+		): Self::SystemData,
+	) { 
+		for map_c in (&mut map).join() {
+			// Find the chunks which must be displayed
+			let mut ctoshow = Vec::new();
+			for (camera_c, transform_c) in (&camera, &transform).join() {
+				let cchunk = map_c.map.chunk_of(transform_c.position);
+				let mut cposs = map_c.map.chunks_around(cchunk, 4);
+				ctoshow.append(&mut cposs);
+			}
+			
+			// // If they don't have meshes, mesh them
+			// for chunkpos in ctoshow {
+			// 	if !map_c.chunk_meshes.contains_key(&chunkpos) {
+			// 		// If the chunk doesn't exist yet don't try anything
+					
+			// 		if map_c.map.is_chunk_loaded(&chunkpos) {
+			// 			let (cv, ci) = map_c.map.mesh_chunk(&chunkpos);
+			// 			// let (cv, ci) = chunk.simple_mesh();
+			// 			let chunk_mesh = crate::render::Mesh::new(
+			// 				&render_resource.renderer.device,
+			// 				format!("chunk {:?}", &chunkpos),
+			// 				cv,
+			// 				ci,
+			// 			);
+			// 			let chunk_id = render_resource.renderer.add_mesh(
+			// 				&chunk_mesh.name.clone(),
+			// 				chunk_mesh,
+			// 			);
+			// 			map_c.chunk_meshes.insert(chunkpos, chunk_id);
+			// 		}
+					
+			// 	}
+			// }
 		}
 	}
 }
@@ -463,7 +638,8 @@ impl<'a> System<'a> for RenderSystem {
     type SystemData = (
 		WriteExpect<'a, RenderResource>,
 		ReadExpect<'a, WindowResource>,
-		ReadStorage<'a, RenderComponent>,
+		ReadStorage<'a, MeshComponent>,
+		ReadStorage<'a, MapComponent>,
 		ReadStorage<'a, CameraComponent>,
 		ReadStorage<'a, TransformComponent>,
 	);
@@ -474,6 +650,7 @@ impl<'a> System<'a> for RenderSystem {
 			mut render_resource, 
 			window_resource,
 			render, 
+			map,
 			camera,
 			transform,
 		): Self::SystemData,
@@ -498,11 +675,25 @@ impl<'a> System<'a> for RenderSystem {
 					
 						// Collect render data
 						let mut data = Vec::new();
+						// Meshes
 						for (render_c, transform_c) in (&render, &transform).join() {
-							data.push(crate::render::RenderData {
-								mesh_id: render_c.mesh_id,
-								instance: crate::render::Instance::new(),
-							});
+							// data.push(crate::render::RenderData {
+							// 	mesh_id: render_c.mesh_id,
+							// 	instance: crate::render::Instance::new(),
+							// });
+						}
+						// Map chunks
+						for (map_c, transform_c) in (&map, &transform).join() {
+							for (cp, mid) in &map_c.chunk_meshes {
+								let instance = crate::render::Instance{
+									position: transform_c.position + map_c.map.chunk_worldpos(*cp),
+									rotation: transform_c.rotation,
+								};
+								// data.push(crate::render::RenderData {
+								// 	mesh_id: *mid,
+								// 	instance,
+								// });
+							}
 						}
 
 						let camera = crate::render::Camera {
@@ -512,8 +703,6 @@ impl<'a> System<'a> for RenderSystem {
 							znear: camera_c.znear,
 							zfar: camera_c.zfar,
 						};
-
-						info!("Rendering at {:?}", &camera.position);
 
 						render_resource.renderer.render(&view, width, height, &camera, &data);
 
@@ -563,7 +752,8 @@ impl Game {
 		// Register components
 		world.register::<TransformComponent>();
 		world.register::<MovementComponent>();
-		world.register::<RenderComponent>();
+		world.register::<MeshComponent>();
+		world.register::<MapComponent>();
 		world.register::<CameraComponent>();
 
 		// Attach resources
@@ -572,20 +762,16 @@ impl Game {
 
 		let mut render_resource = RenderResource::new(&adapter);
 		// Add meshes
-		let pentagon_id = render_resource.renderer.add_mesh(
-			&"pentagon".to_string(),
-			crate::geometry::Mesh::pentagon(&render_resource.renderer.device),
-		);
-		let quad_id = render_resource.renderer.add_mesh(
-			&"quad".to_string(),
-			crate::geometry::Mesh::quad(&render_resource.renderer.device),
-		);
+		// let quad_id = render_resource.renderer.add_mesh(
+		// 	&"quad".to_string(),
+		// 	crate::render::Mesh::quad(&render_resource.renderer.device),
+		// );
 		// Add textures
-		render_resource.renderer.load_texture_disk(
-			&"dirt".to_string(), 
-			&"resources/blockfaces/dirt.png".to_string(),
-		);
-		render_resource.renderer.recreate_tbg();
+		// render_resource.renderer.load_texture_disk(
+		// 	&"dirt".to_string(), 
+		// 	&"resources/blockfaces/dirt.png".to_string(),
+		// );
+		// render_resource.renderer.recreate_tbg();
 		world.insert(render_resource);
 
 		let window_resource = WindowResource::new(
@@ -603,23 +789,37 @@ impl Game {
 		// Camera
 		world.create_entity()
 			.with(CameraComponent::new())
-			.with(TransformComponent::new().with_position(Vector3::new(0.0, 0.0, -1.0)))
-			.with(MovementComponent{speed: 0.4})
+			.with(TransformComponent::new()
+				.with_position(Vector3::new(0.0, 0.0, -1.0)))
+			.with(MovementComponent{speed: 1.0})
 			.build();
 		// Mesh
+		// world.create_entity()
+		// 	.with(TransformComponent::new())
+		// 	.with(MeshComponent {
+		// 		mesh_id: quad_id,
+		// 		texture_id: 0,
+		// 	})
+		// 	.build();
+		// world.create_entity()
+		// 	.with(TransformComponent::new())
+		// 	.with(MeshComponent {
+		// 		mesh_id: chunk_id,
+		// 		texture_id: 0,
+		// 	})
+		// 	.build();
+		// Map
 		world.create_entity()
 			.with(TransformComponent::new())
-			.with(RenderComponent {
-				mesh_id: quad_id,
-				texture_id: 1,
-			})
+			.with(MapComponent::new())
 			.build();
 
 		// Called to tick the world
 		let dispatcher = DispatcherBuilder::new()
 			.with(WindowEventSystem, "window_system", &[])
 			.with(InputSystem, "input_system", &["window_system"])
-			.with(RenderSystem, "render_system", &["input_system"])
+			.with(MapSystem, "map_system", &["input_system"])
+			.with(RenderSystem, "render_system", &["input_system", "map_system"])
 			.build();
 
 
@@ -627,6 +827,12 @@ impl Game {
 			world,
 			dispatcher,
 		}
+	}
+
+
+	pub fn add_block(&mut self, name: &String, path: &PathBuf) {
+		let mut render_resource = self.world.write_resource::<RenderResource>();
+		let mut map_resource = self.world.write_resource::<RenderResource>();
 	}
 
 

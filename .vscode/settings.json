@@ -1,0 +1,7 @@
+{
+	"files.watcherExclude": {
+		"**/_stuff/**": true,
+		"**/resources/**": true,
+		"**/target/**": true
+	}
+}

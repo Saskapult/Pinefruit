@@ -10,10 +10,6 @@ pub struct Instance {
 impl Instance {
 	pub fn new() -> Self {
 		let position = Vector3::new(0.0, 0.0, 0.0);
-		// let rotation = UnitQuaternion::look_at_lh(
-		//     &Vector3::new(0.0, 0.0, 1.0),
-		//     &Vector3::new(0.0, 1.0, 0.0),
-		// );
 		let rotation = UnitQuaternion::identity();
 
 		Self {
@@ -22,7 +18,7 @@ impl Instance {
 		}
 	}
 	pub fn to_raw(&self) -> InstanceRaw {
-		let model = Matrix4::new_translation(&self.position) * self.rotation.to_homogeneous();
+		let model = self.rotation.to_homogeneous() * Matrix4::new_translation(&self.position);
 		InstanceRaw {
 			model: model.into(),
 		}

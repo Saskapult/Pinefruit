@@ -1,4 +1,8 @@
-use wgpu::{self, util::DeviceExt};
+use std::{sync::Arc, collections::HashMap, path::PathBuf};
+use wgpu::util::DeviceExt;
+use crate::indexmap::SonOfIndexMap;
+
+
 
 
 #[repr(C)]
@@ -46,6 +50,23 @@ impl Vertex {
 }
 
 
+
+#[derive(Debug)]
+pub struct MeshDataEntry {
+	pub name: String,
+	pub vertices: Vec<Vertex>,
+	pub indices: Vec<u16>,
+	pub path: Option<PathBuf>,
+}
+#[derive(Debug)]
+pub struct MeshDataManager {
+	pub entries: Vec<MeshDataEntry>,
+	pub index_name: HashMap<String, usize>,
+	pub index_path: HashMap<PathBuf, usize>,
+}
+
+
+
 #[derive(Debug)]
 pub struct Mesh {
 	pub name: String,
@@ -54,6 +75,33 @@ pub struct Mesh {
     pub num_elements: u32,
 }
 impl Mesh {
+	pub fn new(
+		device: &wgpu::Device, 
+		name: String, 
+		vertices: Vec<Vertex>, 
+		indices: Vec<u16>,
+	) -> Self {
+		let num_elements = indices.len() as u32;
+		let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some(&format!("{} vertex buffer", &name)),
+			contents: bytemuck::cast_slice(vertices.as_slice()),
+			usage: wgpu::BufferUsages::VERTEX,
+		});
+		let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some(&format!("{} index buffer", &name)),
+			contents: bytemuck::cast_slice(indices.as_slice()),
+			usage: wgpu::BufferUsages::INDEX,
+		});
+
+		Self {
+			name,
+			vertex_buffer,
+			index_buffer,
+			num_elements,
+		}
+	}
+
+
 	pub fn quad(device: &wgpu::Device) -> Self {
 		let name = "quad".to_string();
 
@@ -102,7 +150,19 @@ impl Mesh {
 		}
 	}
 }
-
+pub struct MeshManager {
+	device: Arc<wgpu::Device>,
+	queue: Arc<wgpu::Queue>,
+	meshes: SonOfIndexMap<String, Mesh>, // These should be stored in an arena
+}
+impl MeshManager {
+	pub fn new(
+		device: &Arc<wgpu::Device>,
+		queue: &Arc<wgpu::Queue>,
+	) -> Self {
+		todo!()
+	}
+}
 
 
 
@@ -152,31 +212,32 @@ const INDICES: &[u16] = &[
 const QUAD_VERTICES: &[Vertex] = &[
 	Vertex { // Top left
 		position: [-0.5, 0.5, 0.0], 
-		tex_coords: [1.0, 1.0], 
+		tex_coords: [0.0, 0.0], 
 		normal: [0.0, 0.0, 1.0],
 		tex_id: 0,
 	},
 	Vertex { // Bottom left
 		position: [-0.5, -0.5, 0.0], 
-		tex_coords: [1.0, 0.0], 
+		tex_coords: [0.0, 1.0], 
 		normal: [0.0, 0.0, 1.0],
 		tex_id: 0,
 	},
 	Vertex { // Bottom right
 		position: [0.5, -0.5, 0.0], 
-		tex_coords: [0.0, 0.0], 
+		tex_coords: [1.0, 1.0], 
 		normal: [0.0, 0.0, 1.0],
 		tex_id: 0,
 	},
 	Vertex { // Top right
 		position: [0.5, 0.5, 0.0], 
-		tex_coords: [0.0, 1.0], 
+		tex_coords: [1.0, 0.0], 
 		normal: [0.0, 0.0, 1.0],
 		tex_id: 0,
 	}, 
 ];
-
-const QUAD_INDICES: &[u16] = &[
+pub const QUAD_INDICES: &[u16] = &[
 	0, 1, 2, 
 	2, 3, 0,
 ];
+
+

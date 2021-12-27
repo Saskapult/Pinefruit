@@ -1,12 +1,13 @@
 #![feature(drain_filter)]
+#![allow(dead_code)]
 
-mod geometry;
-mod texture;
-mod resource_manager;
 mod render;
 mod window;
 mod world;
 mod game;
+mod indexmap;
+mod world;
+
 
 use window::*;
 use std::thread;
@@ -15,34 +16,18 @@ use std::thread;
 #[macro_use]
 extern crate log;
 
-// extern crate nalgebra_glm as glm;
-
 
 
 
 fn main() {
 	println!("Hello, world!");
 	env_logger::init();
+
 	trace!("some trace log");		// Low priority
     debug!("some debug log");
     info!("some information log");
     warn!("some warning log");
     error!("some error log");		// High priority
-
-	// let aspect = 1.0;
-	// let fovy = 45.0;
-	// let near = 0.1;
-	// let far = 100.0;
-
-	// let lh = glm::perspective_lh(aspect, fovy, near, far);
-	// let rh = glm::perspective_rh(aspect, fovy, near, far);
-	// let dh = nalgebra::Matrix4::new_perspective(aspect, fovy, near, far);
-	
-	// println!("lh: {}", &lh);
-	// println!("rh: {}", &rh);
-	// println!("dh: {}", &dh);
-
-	// return;
 
 	let event_loop = new_event_loop();
 	let event_loop_proxy = event_loop.create_proxy();
@@ -58,7 +43,7 @@ fn main() {
 			loop {
 				game.tick();
 				// Sleep half second
-				std::thread::sleep(std::time::Duration::from_millis(500));
+				std::thread::sleep(std::time::Duration::from_millis(100));
 			}
 		})
 		.expect("fugg in game thread spawn");

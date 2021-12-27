@@ -89,6 +89,7 @@ pub fn run_event_loop(
 				}
 			},
 			_ => {
+				// Not a memory leak because 'static implies that it *can* live forever, not that it does live forever
 				if let Some(event) = event.to_static() {
 					let ew = EventWhen {
 						event,

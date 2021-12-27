@@ -1,9 +1,12 @@
 
+Pipeline needs pipeline layout, vertex layouts, colour format
 
-Queue of all events
+Pipeline Layout needs camera bind group layout, texture bind group layout
 
-List of windows
+Texture Bind Group Layout needs layout entries
+
+Layout entry needs type, count
 
 
-
-
+Material is map of string to texture id
+Shader specifies "texture albedo" for type and material map key?
