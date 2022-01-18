@@ -1,12 +1,11 @@
 
-
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use nalgebra::*;
 use std::collections::HashMap;
 use std::time::{Instant, Duration};
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use winit::{
 	event::*,
@@ -14,9 +13,11 @@ use winit::{
 	window::*,
 };
 use crate::window::*;
+use crate::world::Voxel;
 use std::sync::mpsc;
 use std::thread;
 use std::path::PathBuf;
+use crate::render::Renderer;
 
 
 
@@ -183,17 +184,58 @@ impl StepResource {
 
 
 
-use crate::render::Renderer;
+// Todo: add a render queue which other systems write to and is used by the render system
 struct RenderResource {
-	renderer: Renderer,
+	pub renderer: Renderer,
+	pub materials_manager: Arc<RwLock<crate::render::MaterialManager>>,
+	pub textures_manager: Arc<RwLock<crate::render::TextureManager>>,
+	pub meshes_manager: Arc<RwLock<crate::render::MeshManager>>,
 }
 impl RenderResource {
 	pub fn new(adapter: &wgpu::Adapter) -> Self {
 
-		let renderer = pollster::block_on(Renderer::new(adapter));
+		let textures_manager = Arc::new(RwLock::new(crate::render::TextureManager::new()));
+		{
+			let mut tm = textures_manager.write().unwrap();
+			let texs = [
+				["dirt", "resources/blockfaces/dirt.png"], 
+				["sand", "resources/blockfaces/sand.png"],
+			];
+			for tex in texs {
+				let texture = crate::render::Texture {
+					name: tex[0].to_string(),
+					path: Some(PathBuf::from(tex[1])),
+					data: image::open(tex[1]).expect("Failed to open file")
+				};
+				tm.insert(texture);
+			}
+		}
+
+		let materials_manager = Arc::new(RwLock::new(crate::render::MaterialManager::new()));
+		{
+			let mut mm = materials_manager.write().unwrap();
+			let mats = crate::render::material::read_materials_file(&PathBuf::from("resources/kmaterials.ron"));
+			for mat in mats {
+				mm.insert(mat);
+			}
+		}
+		
+		let meshes_manager = Arc::new(RwLock::new(crate::render::MeshManager::new()));
+
+		let renderer = pollster::block_on(
+			crate::render::Renderer::new(
+				adapter,
+				&textures_manager,
+				&meshes_manager,
+				&materials_manager,
+			)
+		);
 
 		Self {
 			renderer,
+			materials_manager,
+			textures_manager,
+			meshes_manager,
 		}		
 	}
 }
@@ -209,40 +251,30 @@ struct TransformComponent {
 }
 impl TransformComponent {
 	pub fn new() -> Self {
-		let position = Vector3::new(0.0, 0.0, 0.0);
-		let rotation = UnitQuaternion::identity();
-		let scale = Vector3::new(1.0, 1.0, 1.0);
-		
 		Self {
-			position,
-			rotation,
-			scale,
+			position: Vector3::from_element(0.0),
+			rotation: UnitQuaternion::identity(),
+			scale: Vector3::from_element(1.0),
 		}
 	}
 	pub fn with_position(self, position: Vector3<f32>) -> Self {
-		let rotation = self.rotation;
-		let scale = self.scale;
 		Self {
 			position,
-			rotation,
-			scale,
+			rotation: self.rotation,
+			scale: self.scale,
 		}
 	}
 	pub fn with_rotation(self, rotation: UnitQuaternion<f32>) -> Self {
-		let position = self.position;
-		let scale = self.scale;
 		Self {
-			position,
+			position: self.position,
 			rotation,
-			scale,
+			scale: self.scale,
 		}
 	}
 	pub fn with_scale(self, scale: Vector3<f32>) -> Self {
-		let position = self.position;
-		let rotation = self.rotation;
 		Self {
-			position,
-			rotation,
+			position: self.position,
+			rotation: self.rotation,
 			scale,
 		}
 	}
@@ -260,9 +292,8 @@ struct MovementComponent {
 }
 impl MovementComponent {
 	pub fn new() -> Self {
-		let speed = 1.0;
 		MovementComponent {
-			speed,
+			speed: 1.0,
 		}
 	}
 	pub fn with_speed(self, speed: f32) -> Self {
@@ -273,39 +304,63 @@ impl MovementComponent {
 }
 
 
-enum ChunkMeshEntry {
+
+// An entry in the mesh storage for a map component
+#[derive(Debug)]
+enum ChunkModelEntry {
 	Empty,
-	NotLoaded,
-	Mesh(usize),
+	Unloaded,
+	UnModeled,
+	Complete(Vec<usize>),
 }
+
 
 
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 struct MapComponent {
 	map: crate::world::Map,
-	chunk_meshes: HashMap<[i32; 3], usize>,
+	// A field for storing generated mesh index collections (or a lack thereof)
+	chunk_models: HashMap<[i32; 3], ChunkModelEntry>,
 }
 impl MapComponent {
-	pub fn new() -> Self {
-
-		let map = crate::world::Map::new();
-		let chunk_meshes = HashMap::new();
-
+	pub fn new(blockmanager: &Arc<RwLock<crate::world::BlockManager>>) -> Self {
+		let mut map = crate::world::Map::new([4; 3], blockmanager);
+		map.generate();
+		let chunk_models = HashMap::new();
 		Self {
 			map,
-			chunk_meshes,
+			chunk_models,
 		}		
 	}
-}
 
-
-
-#[derive(Component, Debug)]
-#[storage(VecStorage)]
-struct MeshComponent {
-	mesh_id: usize,
-	texture_id: usize,
+	// Regenerates chunk models if needed
+	fn set_voxel(&mut self, pos: [i32; 3], voxel: Voxel) {
+		self.map.set_voxel_world(pos, voxel);
+		let (c, v) = self.map.world_chunk_voxel(pos);
+		let [cdx, cdy, cdz] = self.map.chunk_dimensions;
+		if v[0] as u32 >= cdx {
+			let cx = [c[0]+1, c[1], c[2]];
+			if self.chunk_models.contains_key(&cx) {
+				self.chunk_models.insert(cx, ChunkModelEntry::UnModeled);
+			}
+		}
+		if v[1] as u32 >= cdy {
+			let cy = [c[0], c[1]+1, c[2]];
+			if self.chunk_models.contains_key(&cy) {
+				self.chunk_models.insert(cy, ChunkModelEntry::UnModeled);
+			}
+		}
+		if v[2] as u32 >= cdx {
+			let cz = [c[0], c[1], c[2]+1];
+			if self.chunk_models.contains_key(&cz) {
+				self.chunk_models.insert(cz, ChunkModelEntry::UnModeled);
+			}
+		}
+		if self.chunk_models.contains_key(&c) {
+			self.chunk_models.insert(c, ChunkModelEntry::UnModeled);
+		}
+	}
 }
 
 
@@ -332,7 +387,7 @@ impl CameraComponent {
 
 
 // Handles window events
-// Prepares the input resource
+// Feeds the input resource
 struct WindowEventSystem;
 impl<'a> System<'a> for WindowEventSystem {
     type SystemData = (
@@ -376,7 +431,6 @@ impl<'a> System<'a> for WindowEventSystem {
 		let mut mdx = 0.0;
 		let mut mdy = 0.0;
 		
-		
 		// Drain items not passed the start of the step
 		let events: Vec<EventWhen> = window_resource.event_queue.lock().unwrap().drain_filter(|e| e.ts < endt).collect();
 		for event in events {
@@ -394,31 +448,34 @@ impl<'a> System<'a> for WindowEventSystem {
 					match event {
 						WindowEvent::KeyboardInput {input, ..} => {
 							// Send changed key data
-							let key = input.virtual_keycode.expect("no virtual keycode?!");
-							match input.state {
-								ElementState::Pressed => {
-									// If this button was not already pressed, record the pressing
-									if !board_pressmap.contains_key(&key) {
-										board_pressmap.insert(key, ts);
-									}
-								},
-								ElementState::Released => {
-									// Only do something if this key had been pressed in the first place
-									if board_pressmap.contains_key(&key) {
-										let mut kp = (ts - board_pressmap[&key]).as_secs_f32() / dt;
-		
-										// If this key had been pressed and released, account for that
-										if kpmap.contains_key(&key) {
-											kp += kpmap[&key];
+							if let Some(key) = input.virtual_keycode {
+								match input.state {
+									ElementState::Pressed => {
+										// If this button was not already pressed, record the pressing
+										if !board_pressmap.contains_key(&key) {
+											board_pressmap.insert(key, ts);
 										}
-										// Send the percent of time pressed to input
-										kpmap.insert(key, kp);
-		
-										// Remove key from pressed keys
-										board_pressmap.remove(&key);
-									}
-									
-								},
+									},
+									ElementState::Released => {
+										// Only do something if this key had been pressed in the first place
+										if board_pressmap.contains_key(&key) {
+											let mut kp = (ts - board_pressmap[&key]).as_secs_f32() / dt;
+			
+											// If this key had been pressed and released, account for that
+											if kpmap.contains_key(&key) {
+												kp += kpmap[&key];
+											}
+											// Send the percent of time pressed to input
+											kpmap.insert(key, kp);
+			
+											// Remove key from pressed keys
+											board_pressmap.remove(&key);
+										}
+									},
+								}
+							}
+							else {
+								warn!("Key input with no virtual key code");
 							}
 						},
 						WindowEvent::MouseInput {state, button, ..} => {
@@ -508,7 +565,7 @@ impl<'a> System<'a> for WindowEventSystem {
 		input_resource.mouse_presscache = mouse_stillpressed;
 		input_resource.mx = mx;
 		input_resource.my = my;
-		info!("mdx {}, mdy {}", mdx, mdy);
+		//info!("mdx {}, mdy {}", mdx, mdy);
 		input_resource.mdx = mdx;
 		input_resource.mdy = mdy;
     }
@@ -516,7 +573,7 @@ impl<'a> System<'a> for WindowEventSystem {
 
 
 
-// Reads input and decides what to do with it
+// Reads input resource queue and decides what to do with it
 struct InputSystem;
 impl<'a> System<'a> for InputSystem {
     type SystemData = (
@@ -540,7 +597,7 @@ impl<'a> System<'a> for InputSystem {
 		let rx = input_resource.mdx as f32 * secs * 0.01;
 		let ry = input_resource.mdy as f32 * secs * 0.01;
 
-		let mut displacement = Vector3::new(0.0, 0.0, 0.0);
+		let mut displacement = Vector3::from_element(0.0);
 		for (key, kp) in &input_resource.board_keys {
 			match key {
 				VirtualKeyCode::W => {
@@ -578,7 +635,43 @@ impl<'a> System<'a> for InputSystem {
 
 
 
+// The map system is responsible for loading and meshing chunks of maps near the cameras 
 struct MapSystem;
+impl MapSystem {
+	fn model_chunk(
+		renderr: &mut RenderResource,
+		map: &crate::world::Map, 
+		chunk_position: [i32; 3],
+	) -> ChunkModelEntry {
+		//info!("Evaluating chunk {:?} for modeling", chunk_position);
+		if map.is_chunk_loaded(chunk_position) {
+			info!("Modeling chunk {:?}", chunk_position);
+			// Mesh it
+			let segments = map.mesh_chunk(chunk_position);
+			// Add resulting models
+			let mut models = Vec::new();
+			let mm = renderr.materials_manager.read().unwrap();
+			for (material_idx, mesh) in segments {
+				let material = mm.index(material_idx);
+			
+				let model_name = format!("mesh '{}' with material '{}'", &mesh.name, &material.name);
+				let model_idx = renderr.renderer.add_model(&model_name, &mesh, material);
+
+				models.push(model_idx);
+			}
+			if models.len() > 0 {
+				info!("Chunk {:?} modeled", chunk_position);
+				ChunkModelEntry::Complete(models)
+			} else {
+				info!("Chunk {:?} was empty", chunk_position);
+				ChunkModelEntry::Empty
+			}
+		} else {
+			//info!("Chunk {:?} was not available", chunk_position);
+			ChunkModelEntry::Unloaded
+		}
+	}
+}
 impl<'a> System<'a> for MapSystem {
     type SystemData = (
 		WriteExpect<'a, RenderResource>,
@@ -596,37 +689,32 @@ impl<'a> System<'a> for MapSystem {
 		): Self::SystemData,
 	) { 
 		for map_c in (&mut map).join() {
-			// Find the chunks which must be displayed
-			let mut ctoshow = Vec::new();
-			for (camera_c, transform_c) in (&camera, &transform).join() {
-				let cchunk = map_c.map.chunk_of(transform_c.position);
-				let mut cposs = map_c.map.chunks_around(cchunk, 4);
-				ctoshow.append(&mut cposs);
-			}
 			
-			// // If they don't have meshes, mesh them
-			// for chunkpos in ctoshow {
-			// 	if !map_c.chunk_meshes.contains_key(&chunkpos) {
-			// 		// If the chunk doesn't exist yet don't try anything
-					
-			// 		if map_c.map.is_chunk_loaded(&chunkpos) {
-			// 			let (cv, ci) = map_c.map.mesh_chunk(&chunkpos);
-			// 			// let (cv, ci) = chunk.simple_mesh();
-			// 			let chunk_mesh = crate::render::Mesh::new(
-			// 				&render_resource.renderer.device,
-			// 				format!("chunk {:?}", &chunkpos),
-			// 				cv,
-			// 				ci,
-			// 			);
-			// 			let chunk_id = render_resource.renderer.add_mesh(
-			// 				&chunk_mesh.name.clone(),
-			// 				chunk_mesh,
-			// 			);
-			// 			map_c.chunk_meshes.insert(chunkpos, chunk_id);
-			// 		}
-					
-			// 	}
-			// }
+			// Find all chunks which should be displayed
+			let mut chunks_to_show = Vec::new();
+			for (_, transform_c) in (&camera, &transform).join() {
+				let camera_chunk = map_c.map.point_chunk(transform_c.position);
+				let mut cposs = map_c.map.chunks_sphere(camera_chunk, 4);
+				chunks_to_show.append(&mut cposs);
+			}
+
+			info!("Need to show {} chunks!", chunks_to_show.len());
+
+			for chunk_position in chunks_to_show {
+				if map_c.chunk_models.contains_key(&chunk_position) {
+					match map_c.chunk_models[&chunk_position] {
+						ChunkModelEntry::UnModeled => {
+							// Model it
+							let res = MapSystem::model_chunk(&mut render_resource, &map_c.map, chunk_position);
+							map_c.chunk_models.insert(chunk_position, res);
+						}
+						_ => {},
+					}
+				} else { 
+					let res = MapSystem::model_chunk(&mut render_resource, &map_c.map, chunk_position);
+					map_c.chunk_models.insert(chunk_position, res);
+				}
+			}
 		}
 	}
 }
@@ -638,7 +726,7 @@ impl<'a> System<'a> for RenderSystem {
     type SystemData = (
 		WriteExpect<'a, RenderResource>,
 		ReadExpect<'a, WindowResource>,
-		ReadStorage<'a, MeshComponent>,
+		// ReadStorage<'a, MeshComponent>,
 		ReadStorage<'a, MapComponent>,
 		ReadStorage<'a, CameraComponent>,
 		ReadStorage<'a, TransformComponent>,
@@ -649,7 +737,6 @@ impl<'a> System<'a> for RenderSystem {
 		(
 			mut render_resource, 
 			window_resource,
-			render, 
 			map,
 			camera,
 			transform,
@@ -674,25 +761,24 @@ impl<'a> System<'a> for RenderSystem {
 						view = stex.texture.create_view(&wgpu::TextureViewDescriptor::default());
 					
 						// Collect render data
-						let mut data = Vec::new();
-						// Meshes
-						for (render_c, transform_c) in (&render, &transform).join() {
-							// data.push(crate::render::RenderData {
-							// 	mesh_id: render_c.mesh_id,
-							// 	instance: crate::render::Instance::new(),
-							// });
-						}
+						let mut render_data = Vec::new();
 						// Map chunks
 						for (map_c, transform_c) in (&map, &transform).join() {
-							for (cp, mid) in &map_c.chunk_meshes {
-								let instance = crate::render::Instance{
-									position: transform_c.position + map_c.map.chunk_worldpos(*cp),
-									rotation: transform_c.rotation,
-								};
-								// data.push(crate::render::RenderData {
-								// 	mesh_id: *mid,
-								// 	instance,
-								// });
+							// Renders ALL meshed chunks
+							for (cp, entry) in &map_c.chunk_models {
+								match entry {
+									ChunkModelEntry::Complete(model_indices) => {
+										use crate::render::*;
+										let position = InstanceModelMatrix::from_pr(&(transform_c.position + map_c.map.chunk_point(*cp)), &transform_c.rotation);
+										for model_idx in model_indices {
+											let mut instance_properties_data = Vec::new();
+											instance_properties_data.extend_from_slice(bytemuck::bytes_of(&position));
+											let instance_properties = vec![InstanceProperty::InstanceModelMatrix];
+											render_data.push(render_resource.renderer.instance(*model_idx, instance_properties, instance_properties_data));
+										}
+									},
+									_ => {},
+								}
 							}
 						}
 
@@ -703,21 +789,18 @@ impl<'a> System<'a> for RenderSystem {
 							znear: camera_c.znear,
 							zfar: camera_c.zfar,
 						};
-
-						render_resource.renderer.render(&view, width, height, &camera, &data);
+ 
+						render_resource.renderer.render(&view, width, height, &camera, &mut render_data);
 
 						stex.present();
 					} else {
 						error!("Tried to render to nonexistent window! idx: {}", id);
 					}
 				},
-				RenderTarget::Texture(id) => {
+				RenderTarget::Texture(_) => {
 					todo!();
 				},
 			}
-
-			
-			
 		}
 	}
 }
@@ -726,6 +809,7 @@ impl<'a> System<'a> for RenderSystem {
 
 pub struct Game {
 	world: World,
+	blocks_manager: Arc<RwLock<crate::world::BlockManager>>,
 	dispatcher: Dispatcher<'static, 'static>,
 }
 impl Game {
@@ -747,12 +831,17 @@ impl Game {
 		info!("Features: {:?}", adapter.features());
 		info!("Limits: {:?}", adapter.limits());
 
+		let blocks_manager = Arc::new(RwLock::new(crate::world::BlockManager::new()));
+		blocks_manager.write().unwrap().insert(crate::world::Block {
+			name: "debug".to_string(),
+			material_idx: 0,
+		});
+
 		let mut world = World::new();
 
 		// Register components
 		world.register::<TransformComponent>();
 		world.register::<MovementComponent>();
-		world.register::<MeshComponent>();
 		world.register::<MapComponent>();
 		world.register::<CameraComponent>();
 
@@ -760,18 +849,7 @@ impl Game {
 		let step_resource = StepResource::new();
 		world.insert(step_resource);
 
-		let mut render_resource = RenderResource::new(&adapter);
-		// Add meshes
-		// let quad_id = render_resource.renderer.add_mesh(
-		// 	&"quad".to_string(),
-		// 	crate::render::Mesh::quad(&render_resource.renderer.device),
-		// );
-		// Add textures
-		// render_resource.renderer.load_texture_disk(
-		// 	&"dirt".to_string(), 
-		// 	&"resources/blockfaces/dirt.png".to_string(),
-		// );
-		// render_resource.renderer.recreate_tbg();
+		let render_resource = RenderResource::new(&adapter);
 		world.insert(render_resource);
 
 		let window_resource = WindowResource::new(
@@ -784,37 +862,23 @@ impl Game {
 		let input_resource = InputResource::new();
 		world.insert(input_resource);
 
-
 		// Entities
 		// Camera
 		world.create_entity()
 			.with(CameraComponent::new())
-			.with(TransformComponent::new()
-				.with_position(Vector3::new(0.0, 0.0, -1.0)))
-			.with(MovementComponent{speed: 1.0})
+			.with(
+				TransformComponent::new()
+				.with_position(Vector3::new(0.0, 5.0, -5.0))
+			)
+			.with(MovementComponent{speed: 2.0})
 			.build();
-		// Mesh
-		// world.create_entity()
-		// 	.with(TransformComponent::new())
-		// 	.with(MeshComponent {
-		// 		mesh_id: quad_id,
-		// 		texture_id: 0,
-		// 	})
-		// 	.build();
-		// world.create_entity()
-		// 	.with(TransformComponent::new())
-		// 	.with(MeshComponent {
-		// 		mesh_id: chunk_id,
-		// 		texture_id: 0,
-		// 	})
-		// 	.build();
 		// Map
 		world.create_entity()
 			.with(TransformComponent::new())
-			.with(MapComponent::new())
+			.with(MapComponent::new(&blocks_manager))
 			.build();
 
-		// Called to tick the world
+		// Called to tick the stuff
 		let dispatcher = DispatcherBuilder::new()
 			.with(WindowEventSystem, "window_system", &[])
 			.with(InputSystem, "input_system", &["window_system"])
@@ -822,22 +886,16 @@ impl Game {
 			.with(RenderSystem, "render_system", &["input_system", "map_system"])
 			.build();
 
-
 		Self {
 			world,
+			blocks_manager,
 			dispatcher,
 		}
 	}
 
-
-	pub fn add_block(&mut self, name: &String, path: &PathBuf) {
-		let mut render_resource = self.world.write_resource::<RenderResource>();
-		let mut map_resource = self.world.write_resource::<RenderResource>();
-	}
-
-
 	pub fn tick(&mut self) {
 		info!("Tick!");
+		let st = Instant::now();
 		// Prepare step info
 		{
 			let mut step_resource = self.world.write_resource::<StepResource>();
@@ -845,21 +903,21 @@ impl Game {
 			step_resource.this_step = std::time::Instant::now();
 			step_resource.step_diff = step_resource.this_step - step_resource.last_step;
 		}
-
 		// Step to it
 		self.dispatcher.dispatch(&mut self.world);
-		info!("Tock!");
-	}
 
+		let en = Instant::now();
+		let dur = en - st;
+		let tps = 1.0 / dur.as_secs_f32();
+		info!("Tock! (duration {}ms, freq: {:.2}tps)", dur.as_millis(), tps);
+	}
 
 	pub fn new_window(&mut self) {
 		info!("Requesting new game window");
 
 		let mut window_resource = self.world.write_resource::<WindowResource>();
 		window_resource.request_window();
-
 	}
-
 }
 
 

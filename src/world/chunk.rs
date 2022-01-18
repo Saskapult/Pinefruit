@@ -1,7 +1,7 @@
 
 
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Voxel {
 	Empty,
 	Block(u32),
@@ -9,7 +9,7 @@ pub enum Voxel {
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Chunk {
 	pub size: [u32; 3],
 	pub contents: Vec<Voxel>,
@@ -20,14 +20,25 @@ impl Chunk {
 		let contents = vec![Voxel::Empty; (size[0] * size[1] * size[2]) as usize];
 		Self { size, contents, }
 	}
+
+	pub fn new_of(size: [u32; 3], contents: Voxel) -> Self {
+		let contents = vec![contents; (size[0] * size[1] * size[2]) as usize];
+		Self { size, contents, }
+	}
 	
 	pub fn get_voxel(&self, position: [i32; 3]) -> Voxel {
-		let idx = position[0] as usize;
+		let idx = 
+			(position[0] * self.size[0] as i32 * self.size[1] as i32 + 
+			position[1] * self.size[1] as i32 +
+			position[2]) as usize;
 		self.contents[idx]
 	}
 	
 	pub fn set_voxel(&mut self, position: [i32; 3], voxel: Voxel) {
-		let idx = position[0] as usize;
+		let idx = 
+			(position[0] * self.size[0] as i32 * self.size[1] as i32 + 
+			position[1] * self.size[1] as i32 +
+			position[2]) as usize;
 		self.contents[idx] = voxel;
 	}
 

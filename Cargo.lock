@@ -832,13 +832,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "derivative",
  "env_logger",
  "fs_extra",
  "glob",
  "image",
  "log",
  "nalgebra",
- "nalgebra-glm",
  "noise",
  "pollster",
  "rand 0.8.4",
@@ -1053,18 +1053,6 @@ dependencies = [
  "num-traits",
  "simba",
  "typenum",
-]
-
-[[package]]
-name = "nalgebra-glm"
-version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cec137f377549720ff9fbbcd1413a12bbb03b4feea3192cee987e8493158748"
-dependencies = [
- "approx",
- "nalgebra",
- "num-traits",
- "simba",
 ]
 
 [[package]]

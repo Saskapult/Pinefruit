@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::RwLock;
 
 
 
@@ -18,12 +19,12 @@ pub enum TextureType {
 
 
 #[derive(Debug)]
-pub struct Texture {
+pub struct BoundTexture {
+	pub name: String,
 	pub texture: wgpu::Texture,
 	pub view: wgpu::TextureView,
-	pub sampler: wgpu::Sampler,
 }
-impl Texture {
+impl BoundTexture {
 	// Depth texture stuff
 	pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;    
 	pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
@@ -44,47 +45,37 @@ impl Texture {
 		let texture = device.create_texture(&desc);
 
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-		let sampler = device.create_sampler(
-			&wgpu::SamplerDescriptor {
-				address_mode_u: wgpu::AddressMode::ClampToEdge,
-				address_mode_v: wgpu::AddressMode::ClampToEdge,
-				address_mode_w: wgpu::AddressMode::ClampToEdge,
-				mag_filter: wgpu::FilterMode::Linear,
-				min_filter: wgpu::FilterMode::Linear,
-				mipmap_filter: wgpu::FilterMode::Nearest,
-				compare: Some(wgpu::CompareFunction::LessEqual),
-				lod_min_clamp: -100.0,
-				lod_max_clamp: 100.0,
-				..Default::default()
-			}
-		);
 
-		Self { texture, view, sampler }
+		let name = format!("Depth texture {}, width {} height {}", &label, width, height);
+
+		Self { name, texture, view }
 	}
 
 	pub fn from_path(
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
 		path: &PathBuf,
-		label: Option<&String>,
+		name: &String,
 		ttype: TextureType,
 	) -> Self {
 		let image = image::open(path).expect("Failed to open file");
-		Texture::from_image(device, queue, &image, label, ttype)
+		BoundTexture::from_image(device, queue, &image, name, ttype)
 	}
 
 	pub fn from_image(
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
 		img: &image::DynamicImage,
-		label: Option<&String>,
+		name: &String,
 		ttype: TextureType,
 	) -> Self {
+		let name = name.clone();
+
 		let rgba = img.to_rgba8();
-		let dimensions = img.dimensions();
+		let (width, height) = img.dimensions();
 		let size = wgpu::Extent3d {
-			width: dimensions.0,
-			height: dimensions.1,
+			width,
+			height,
 			depth_or_array_layers: 1,
 		};
 		// Could use an enum to choose (normal => Rgba8Unorm)
@@ -96,7 +87,7 @@ impl Texture {
 
 		let texture = device.create_texture(
 			&wgpu::TextureDescriptor {
-				label: {match label { Some(s) => Some(s.as_str()), None => None,}},
+				label: Some(name.as_str()),
 				size,
 				mip_level_count: 1,
 				sample_count: 1,
@@ -106,17 +97,6 @@ impl Texture {
 			}
 		);
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-		let sampler = device.create_sampler(
-			&wgpu::SamplerDescriptor {
-				address_mode_u: wgpu::AddressMode::ClampToEdge,
-				address_mode_v: wgpu::AddressMode::ClampToEdge,
-				address_mode_w: wgpu::AddressMode::ClampToEdge,
-				mag_filter: wgpu::FilterMode::Linear,
-				min_filter: wgpu::FilterMode::Nearest,
-				mipmap_filter: wgpu::FilterMode::Nearest,
-				..Default::default()
-			}
-		);
 
 		queue.write_texture(
 			wgpu::ImageCopyTexture {
@@ -128,24 +108,25 @@ impl Texture {
 			&rgba,
 			wgpu::ImageDataLayout {
 				offset: 0,
-				bytes_per_row: std::num::NonZeroU32::new(4 * dimensions.0),
-				rows_per_image: std::num::NonZeroU32::new(dimensions.1),
+				bytes_per_row: std::num::NonZeroU32::new(4 * width), // r,g,b,a
+				rows_per_image: std::num::NonZeroU32::new(height),
 			},
 			size,
 		);
 
-		Self { texture, view, sampler }
+		Self { name, texture, view }
 	}
 
 	pub fn from_images(
 		device: &wgpu::Device, 
 		queue: &wgpu::Queue, 
 		images: &Vec<DynamicImage>,
-		label: Option<&String>,
+		name: &String,
 		ttype: TextureType,
 		width: u32,
 		height: u32,
-	) -> Texture {
+	) -> BoundTexture {
+		let name = name.clone();
 		// Make rgba8 copies with the specified size
 		let rgb8 = images.iter().map(|t| {
 			if t.dimensions() == (width, height) {
@@ -169,7 +150,7 @@ impl Texture {
 	
 		// Create the texture stuff
 		let texture = device.create_texture(&wgpu::TextureDescriptor {
-			label: {match label { Some(s) => Some(s.as_str()), None => None,}},
+			label: Some(name.as_str()),
 			size: texture_size,
 			mip_level_count: 1,
 			sample_count: 1,
@@ -181,7 +162,6 @@ impl Texture {
 			dimension: Some(wgpu::TextureViewDimension::D2Array),
 			..Default::default()
 		});
-		let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
 	
 		// Concatenate raw texture data
 		let mut collected_rgba = Vec::new();
@@ -201,7 +181,7 @@ impl Texture {
 			texture_size,
 		);
 	
-		Texture { texture, view, sampler }
+		BoundTexture { name, texture, view }
 	}
 }
 
@@ -209,93 +189,160 @@ impl Texture {
 
 // It is optimal to separate the GPU texture manager and texture data manager
 // If we had multiple GPU texture managers we would only want to load the RAM data once
-// Texture data should be identified by its path to avoid loading multiple times
-// This does not allow for management of images not stored on disk, but I just don't care anymore
-struct TextureDataEntry {
-	name: String,
-	path: PathBuf,
-	data: DynamicImage,
+#[derive(Debug, Clone)]
+pub struct Texture {
+	pub name: String,
+	pub path: Option<PathBuf>,
+	pub data: DynamicImage,
 }
-struct TextureDataManager {
-	entries: Vec<DynamicImage>,
-	index_name: HashMap<String, usize>,
-	index_path: HashMap<PathBuf, usize>,
+#[derive(Debug)]
+pub struct TextureManager {
+	textures: Vec<Texture>,
+	textures_index_name: HashMap<String, usize>,
+	textures_index_path: HashMap<PathBuf, usize>,
+}
+impl TextureManager {
+	pub fn new() -> Self {
+		Self {
+			textures: Vec::new(),
+			textures_index_name: HashMap::new(),
+			textures_index_path: HashMap::new(),
+		}
+	}
+
+	pub fn insert(&mut self, texture: Texture) -> usize {
+		info!("New texture {} ({:?})", &texture.name, &texture.path);
+		let idx = self.textures.len();
+		self.textures_index_name.insert(texture.name.clone(), idx);
+		if let Some(path) = texture.path.clone() {
+			self.textures_index_path.insert(path, idx);
+		}
+		self.textures.push(texture);
+		idx
+	}
+
+	pub fn index(&self, i: usize) -> &Texture {
+		&self.textures[i]
+	}
+
+	pub fn index_name(&self, name: &String) -> Option<usize> {
+		if self.textures_index_name.contains_key(name) {
+			Some(self.textures_index_name[name])
+		} else {
+			None
+		}
+	}
+
+	pub fn index_path(&self, path: &PathBuf) -> Option<usize> {
+		if self.textures_index_path.contains_key(path) {
+			Some(self.textures_index_path[path])
+		} else {
+			None
+		}
+	}
 }
 
 
 
 // In order to unload a texture from the gpu we must be sure that it is not used in any active materials, but I don't know how to do that
-pub struct TextureEntry {
-	pub name: String,
-	pub path: PathBuf,
-	pub texture: Texture,
-}
-pub struct TextureManager {
+pub struct BoundTextureManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
 	// Textures, array textures, yum yum
 	// Texture arrays are not textures, they can go sit in a corner
 	// To support unloading this should use a generational arena
-	pub textures: Vec<TextureEntry>, 
-	pub index_name: HashMap<String, usize>,
-	pub index_path: HashMap<PathBuf, usize>,
-	// data_manager: Arc<Mutex<TextureDataManager>>,
+	textures: Vec<BoundTexture>, 
+	textures_index_name: HashMap<String, usize>,
+	textures_index_path: HashMap<PathBuf, usize>,
+	data_manager: Arc<RwLock<TextureManager>>,
 }
-impl TextureManager {
+impl BoundTextureManager {
 	pub fn new(
 		device: &Arc<wgpu::Device>,
 		queue: &Arc<wgpu::Queue>,
-		// data_manager: &Arc<Mutex<TextureDataManager>>,
+		data_manager: &Arc<RwLock<TextureManager>>,
 	) -> Self {
-		let device = device.clone();
-		let queue = queue.clone();
-		let textures = Vec::new();
-		let index_name = HashMap::new();
-		let index_path = HashMap::new();
-		// let data_manager = data_manager.clone();
-
-		// // Debug texture!
-		// // Could we load this from program memory?
-		// let debug_name = "debug texture".to_string();
-		// let debug_image = image::load_from_memory_with_format(include_bytes!("debug.png"), image::ImageFormat::Png)
-		// 	.expect("Failed to load debug texture");
-		// let debug_texture = Texture::from_image(&device, &queue, 
-		// 	&debug_image, 
-		// 	Some(&debug_name),
-		// );
-		// textures.insert(&debug_name, debug_texture);
-
 		Self {
-			device,
-			queue,
-			textures,
-			index_name,
-			index_path,
-			// data_manager,
+			device: device.clone(), 
+			queue: queue.clone(),
+			textures: Vec::new(), 
+			textures_index_name: HashMap::new(), 
+			textures_index_path: HashMap::new(),
+			data_manager: data_manager.clone(),
 		}
 	}
 
-	// Enventually we should be rid of this and just see if the data was in the data manager when requested
-	pub fn register(
-		&mut self,
-		data_entry: &TextureDataEntry
-	) -> usize {
-		let entry = TextureEntry {
-			name: data_entry.name.clone(),
-			path: data_entry.path.clone(),
-			texture: Texture::from_image(&self.device, &self.queue, &data_entry.data, Some(&format!("{}: {:?}", &data_entry.name, &data_entry.path)), TextureType::RGBA),
-		};
-		let idx = self.textures.len();
-
-		// let views_idx = self.views.len();
-		// self.view_index.push(idx, views_idx);
-		// self.views.push(&entry.texture.view);
-
-		self.index_name.insert(entry.name.clone(), idx);
-		self.index_path.insert(entry.path.clone(), idx);
-		self.textures.push(entry);
+	fn bind(&mut self, texture: &Texture) -> usize {
+		info!("Binding texture {}", &texture.name);
+		let entry = BoundTexture::from_image(
+			&self.device, &self.queue, 
+			&texture.data, 
+			&format!("{}: {:?}", &texture.name, &texture.path), 
+			TextureType::RGBA,
+		);
+		let idx = self.insert(entry);
+		if let Some(path) = texture.path.clone() {
+			self.textures_index_path.insert(path, idx);
+		}
 		idx
 	}
 
+	pub fn insert(&mut self, texture: BoundTexture) -> usize {
+		let idx = self.textures.len();
+		self.textures_index_name.insert(texture.name.clone(), idx);
+		self.textures.push(texture);
+		idx
+	}
+
+	pub fn index(&self, i: usize) -> &BoundTexture {
+		&self.textures[i]
+	}
+
+	pub fn index_name(&self, name: &String) -> Option<usize> {
+		if self.textures_index_name.contains_key(name) {
+			Some(self.textures_index_name[name])
+		} else {
+			None
+		}
+	}
+
+	// Index by name, bind if not bound
+	pub fn index_name_bind(&mut self, name: &String) -> Option<usize> {
+		let dm = self.data_manager.read().unwrap();
+		if self.textures_index_name.contains_key(name) {
+			Some(self.textures_index_name[name])
+		} else if let Some(texture_idx) = dm.index_name(name) {
+			// Clone is needed because of borrow checker stuff
+			let texture = dm.index(texture_idx).clone();
+			drop(dm);
+			let idx = self.bind(&texture);
+			Some(idx)
+		} else {
+			None
+		}
+	}
+
+	pub fn index_path(&self, path: &PathBuf) -> Option<usize> {
+		if self.textures_index_path.contains_key(path) {
+			Some(self.textures_index_path[path])
+		} else {
+			None
+		}
+	}
+
+	// Index by path, bind if not bound
+	pub fn index_path_bind(&mut self, path: &PathBuf) -> Option<usize> {
+		let dm = self.data_manager.read().unwrap();
+		if self.textures_index_path.contains_key(path) {
+			Some(self.textures_index_path[path])
+		} else if let Some(texture_idx) = dm.index_path(path) {
+			let texture = dm.index(texture_idx).clone();
+			drop(dm);
+			let idx = self.bind(&texture);
+			Some(idx)
+		} else {
+			None
+		}
+	}
 
 }

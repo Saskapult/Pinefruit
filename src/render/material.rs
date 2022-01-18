@@ -1,189 +1,307 @@
 
 use std::{
 	collections::HashMap,
-	num::NonZeroU32,
 	path::PathBuf,
-	sync::Arc,
+	sync::{Arc, RwLock},
 };
-use crate::indexmap::*;
 use crate::render::*;
 use serde::{Serialize, Deserialize};
 
 
 
-
+// Unlike Material, this has file-relative paths
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MaterialSpecification {
 	pub name: String,
 	pub shader: PathBuf,
 	pub textures: HashMap<String, Vec<PathBuf>>,
-	pub values: HashMap<String, Vec<f32>>,
+	pub floats: HashMap<String, Vec<f32>>,
+	// pub sounds: HashMap<String, Vec<PathBuf>>, // step sounds, break sounds
 }
 
 
 
-pub fn load_materials_file(
+pub fn read_materials_file(
 	path: &PathBuf,
-) -> Vec<MaterialSpecification> {
+) -> Vec<Material> {
+	info!("Reading materials file {:?}", path);
 	let f = std::fs::File::open(path).expect("Failed to open file");
-	let info: Vec<MaterialSpecification> = ron::de::from_reader(f).expect("Failed to read materials ron file");
+	let mut info: Vec<MaterialSpecification> = ron::de::from_reader(f).expect("Failed to read materials ron file");
+	let info = info.drain(..).map(|ms| Material::from_specification(ms, &path)).collect::<Vec<_>>();
 	info
 }
 
 
 
+// A material is just a collection of resources to be used by something (renderer, physics, sound)
+#[derive(Debug)]
 pub struct Material {
 	pub name: String,
-	pub shader_id: usize,
-	pub bind_group_id: usize,
-	pub source: PathBuf, // The file which this material was read from
+	pub shader: PathBuf,
+	pub textures: HashMap<String, Vec<PathBuf>>,
+	pub floats: HashMap<String, Vec<f32>>,
+	// pub sounds: HashMap<String, Vec<PathBuf>>, // step sounds, break sounds
+}
+impl Material {
+	pub fn from_specification(specification: MaterialSpecification, source_path: &PathBuf) -> Self {
+		let folder_context = source_path.parent().unwrap();
+		let shader_path = folder_context.join(specification.shader);
+		let textures = specification.textures.iter().map(|(name, ppaths)| {
+			let paths = ppaths.iter().map(|p| folder_context.join(p)).collect::<Vec<_>>();
+			(name.clone(), paths)
+		}).collect::<HashMap<_,_>>();
+		Material {
+			name: specification.name,
+			shader: shader_path,
+			textures,
+			floats: HashMap::new(),
+		}
+	}
+}
+impl std::fmt::Display for Material {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{}", &self.name)
+	}
 }
 
 
 
+#[derive(Debug)]
 pub struct MaterialManager {
-	device: Arc<wgpu::Device>,
-	queue: Arc<wgpu::Queue>,
-	pub materials: SonOfIndexMap<String, Material>,
-	pub bind_groups: SonOfIndexMap<String, wgpu::BindGroup>,
+	materials: Vec<Material>,
+	materials_index_name: HashMap<String, usize>,
 }
 impl MaterialManager {
+	pub fn new() -> Self {
+		Self {
+			materials: Vec::new(),
+			materials_index_name: HashMap::new(),
+		}
+	}
+
+	pub fn insert(&mut self, material: Material) -> usize {
+		info!("New material {}", &material.name);
+		let idx = self.materials.len();
+		self.materials_index_name.insert(material.name.clone(), idx);
+		self.materials.push(material);
+		idx
+	}
+
+	pub fn index(&self, i: usize) -> &Material {
+		&self.materials[i]
+	}
+
+	pub fn index_name(&self, name: &String) -> Option<usize> {
+		if self.materials_index_name.contains_key(name) {
+			Some(self.materials_index_name[name])
+		} else {
+			None
+		}
+	}
+}
+
+
+
+// A material bound with a certain bind group input layout
+// Note to self: bind group could hold texture array, array texture, buffer, whatever
+#[derive(Debug)]
+pub struct BoundMaterial {
+	pub name: String,
+	pub shader_idx: usize,	// The name of the shader to be used
+	pub bind_group_format: BindGroupFormat,
+	pub bind_group: wgpu::BindGroup,
+}
+impl std::fmt::Display for BoundMaterial {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "BoundMaterial {} '{}'", &self.name, &self.bind_group_format)
+	}
+}
+
+
+// A compiled material is based on a material and shader bind group (layout bit)
+// The material can be identified using its name
+// The shader bind group can be identified throuch comparison
+// Therefore a compiled material can be identified by a material name and a shader bind group
+#[derive(Debug)]
+pub struct BoundMaterialManager {
+	device: Arc<wgpu::Device>,
+	queue: Arc<wgpu::Queue>,
+	materials: Vec<BoundMaterial>,
+	materials_index_name_format: HashMap<(String, BindGroupFormat), usize>,
+	material_manager: Arc<RwLock<MaterialManager>>,
+}
+impl BoundMaterialManager {
 	pub fn new(
 		device: &Arc<wgpu::Device>,
 		queue: &Arc<wgpu::Queue>,
+		material_manager: &Arc<RwLock<MaterialManager>>,
 	) -> Self {
-		let device = device.clone();
-		let queue = queue.clone();
-		let materials = SonOfIndexMap::new();
-		let bind_groups = SonOfIndexMap::new();
 		Self { 
-			device, 
-			queue, 
-			materials,
-			bind_groups, 
+			device: device.clone(), 
+			queue: queue.clone(), 
+			materials: Vec::new(),
+			materials_index_name_format: HashMap::new(), 
+			material_manager: material_manager.clone(),
 		}
 	}
-}
 
+	pub fn insert(&mut self, bound_material: BoundMaterial) -> usize {
+		let idx = self.materials.len();
+		self.materials_index_name_format.insert((bound_material.name.clone(), bound_material.bind_group_format.clone()), idx);
+		self.materials.push(bound_material);
+		idx
+	}
 
+	pub fn index(&self, i: usize) -> &BoundMaterial {
+		&self.materials[i]
+	}
 
+	pub fn index_name_format(&self, name: &String, format: &BindGroupFormat) -> Option<usize> {
+		let key = (name.clone(), format.clone());
+		if self.materials_index_name_format.contains_key(&key) {
+			Some(self.materials_index_name_format[&key])
+		} else {
+			None
+		}
+	}
 
+	pub fn index_name_format_bind(&mut self, _name: &String, _format: &BindGroupFormat) -> Option<usize> {
+		todo!();
+	}
 
+	// Attempts to compile a material to be accepted into a bind group
+	pub fn bind_material(
+		&self,
+		material: &Material,
+		shaders: &mut ShaderManager,
+		textures: &mut BoundTextureManager,
+	) -> BoundMaterial {
+		info!("Binding material '{}'", &material);
+		// Find/load the shader
+		let shader_idx = match shaders.index_path(&material.shader) {
+			Some(index) => index,
+			None => shaders.register_path(&material.shader),
+		};
+		let shader = shaders.index(shader_idx);
+		let bind_group_format = shader.bind_groups[&1].format.clone();
 
-
-
-
-
-
-// The texture array bind group layout needs to know the length of the texture array
-// The render pipeline needs to know the bind group layout
-// Fortunately for us, wgpu lets us use bind groups with less than the count specified in the bind group layout entry
-// Specifying a big length allows us to avoid reconstructing the pipeline if we add a new texture
-// The upper limit depends on the host system and must be requested during device creation
-// The default limit (works on all systems) is 16, which is bad
-// max_sampled_textures_per_shader_stage is 1,048,576 on my system (gtx 1050m?), which is good
-const ARRAY_MAX_TEXTURES: u32 = 1024;
-pub struct TextureArrayManager {
-	pub textures: IndexMap<Texture>,
-	pub bind_group_layout: wgpu::BindGroupLayout,
-	pub sampler: wgpu::Sampler,
-}
-impl TextureArrayManager {
-	pub fn new(
-		device: &wgpu::Device, 
-		queue: &wgpu::Queue, 
-	) -> Self {
-		let mut textures = IndexMap::new();
-
-		// Not specific to an instance, I just don't know where to put it
-		let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-			label: Some("texture array bind group layout"),
-			entries: &[
-				wgpu::BindGroupLayoutEntry {
-					binding: 0,
-					visibility: wgpu::ShaderStages::FRAGMENT,
-					ty: wgpu::BindingType::Texture {
-						sample_type: wgpu::TextureSampleType::Float { filterable: true },
-						view_dimension: wgpu::TextureViewDimension::D2,
-						multisampled: false,
-					},
-					count: NonZeroU32::new(ARRAY_MAX_TEXTURES as u32),
+		// Collect resource info
+		let mut texture_view_index_collections = Vec::new();
+		let mut samplers = Vec::new();
+		let mut binding_templates = Vec::new(); // (type, binding position, index)
+		for binding in &bind_group_format.binding_specifications {
+			let j = binding.layout.binding;
+			match binding.binding_type {
+				BindingType::Texture => {
+					let texture_usage = &binding.resource_usage;
+					// If there is no such resource then panic or something
+					if material.textures.contains_key(texture_usage) {
+						let texture_path = &material.textures[texture_usage][0];
+						let texture_idx = textures.index_path_bind(texture_path).expect("Missing texture data!");
+						binding_templates.push((BindingType::Texture, j as u32, texture_idx));
+					} else {
+						panic!("This material is missing a field for its shader")
+					}
 				},
-				wgpu::BindGroupLayoutEntry {
-					binding: 1,
-					visibility: wgpu::ShaderStages::FRAGMENT,
-					ty: wgpu::BindingType::Sampler {
-						comparison: false,
-						filtering: true,
-					},
-					count: None,
+				BindingType::TextureArray => {
+					let texture_usage = &binding.resource_usage;
+					if material.textures.contains_key(texture_usage) {
+						let texture_paths = &material.textures[texture_usage];
+						// Collect indices
+						let mut texture_indices = Vec::new();
+						for texture_path in texture_paths {
+							let idx = textures.index_path_bind(texture_path).expect("Missing texture data!");
+							texture_indices.push(idx);
+						}
+						// A texture array is built from a slice of memory containing references to texture views
+						// Pushing to a vec might cause the contents to be reallocated
+						// Any existing slices would become invalid when this occurs
+						// In solution we defer slice access until after all texture array data has been allocated
+						let tvi_idx = texture_view_index_collections.len();
+						texture_view_index_collections.push(texture_indices);
+						binding_templates.push((BindingType::TextureArray, j as u32, tvi_idx));
+					} else {
+						panic!("This material is missing a field for its shader")
+					}
 				},
-			],
+				BindingType::Sampler => {
+					// Todo: Let the material specify its samplers
+					let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor::default());
+					let i = samplers.len();
+					samplers.push(sampler);
+
+					binding_templates.push((BindingType::Sampler, j as u32, i));
+				},
+				BindingType::ArrayTexture => {
+					// Make/get array texture
+					todo!("Array texture not done please forgive");
+				},
+				_ => panic!("This shader binding type is not (yet?) supported!"),
+			}
+		}
+
+		// Affore mentioned texture array shenanigans
+		let mut texture_view_collections = Vec::new();
+		for index_collection in texture_view_index_collections {
+			let mut texture_views = Vec::new();
+			for i in index_collection {
+				let view = &textures.index(i).view;
+				texture_views.push(view);
+			}
+			texture_view_collections.push(texture_views);
+		}
+		
+		// Create the bind group from now-created resources
+		let mut bindings = Vec::new(); // If empty then no material data was used
+		for (binding_type, position, ridx) in binding_templates {
+			match binding_type {
+				BindingType::Texture => {
+					let texture_view = &textures.index(ridx).view;
+					bindings.push(wgpu::BindGroupEntry {
+						binding: position,
+						resource: wgpu::BindingResource::TextureView(texture_view),
+					});
+				},
+				BindingType::ArrayTexture => {
+					todo!("Array texture still not done please forgive again");
+				},
+				BindingType::TextureArray => {
+					bindings.push(wgpu::BindGroupEntry {
+						binding: position,
+						resource: wgpu::BindingResource::TextureViewArray(&texture_view_collections[ridx][..]),
+					});
+				},
+				BindingType::Sampler => {
+					let sr = &samplers[ridx];
+					bindings.push(wgpu::BindGroupEntry {
+						binding: position,
+						resource: wgpu::BindingResource::Sampler(&sr),
+					});
+				},
+				_ => panic!("how did you reach this?"),
+			}
+		}
+		
+		let name = format!("{} with format {}", &material.name, &bind_group_format);
+
+		let layout = match shaders.bind_group_layout_index_bind_group_format(&bind_group_format) {
+			Some(bgli) => shaders.bind_group_layout_index(bgli),
+			None => {
+				let idx = shaders.bind_group_layout_create(&bind_group_format);
+				shaders.bind_group_layout_index(idx)
+			}
+		};
+
+		let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			entries: &bindings[..],
+			layout,
+			label: Some(&*format!("bind group of {}", &name)),
 		});
 
-		let sampler = device.create_sampler(&wgpu::SamplerDescriptor::default());
-
-		Self {
-			textures,
-			bind_group_layout,
-			sampler,
+		BoundMaterial {
+			name, shader_idx, bind_group_format, bind_group,
 		}
 	}
-
-	pub fn get_views(&self) -> Vec<&wgpu::TextureView> {
-		let mut texture_views = Vec::new();
-		for texture in &self.textures.data {
-			texture_views.push(&texture.view);
-		}
-		texture_views
-	}
-
-	pub fn make_bg(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::BindGroup {
-		let texture_views = self.get_views();
-		
-		device.create_bind_group(&wgpu::BindGroupDescriptor {
-			entries: &[
-				wgpu::BindGroupEntry {
-					binding: 0,
-					resource: wgpu::BindingResource::TextureViewArray(texture_views.as_slice()),
-				},
-				wgpu::BindGroupEntry {
-					binding: 1,
-					resource: wgpu::BindingResource::Sampler(&self.sampler),
-				},
-			],
-			layout: &self.bind_group_layout,
-			label: Some("texture array bind group"),
-		})
-	}
-}
-
-
-pub fn make_tarray_bg(
-	device: &wgpu::Device, 
-	textures: Vec<&Texture>, 
-	sampler: &wgpu::Sampler,
-	bind_group_layout: &wgpu::BindGroupLayout
-) -> wgpu::BindGroup {
-	let mut texture_views = Vec::new();
-	for texture in &textures {
-		texture_views.push(&texture.view);
-	}
-
-	device.create_bind_group(&wgpu::BindGroupDescriptor {
-		entries: &[
-			wgpu::BindGroupEntry {
-				binding: 0,
-				resource: wgpu::BindingResource::TextureViewArray(texture_views.as_slice()),
-			},
-			wgpu::BindGroupEntry {
-				binding: 1,
-				resource: wgpu::BindingResource::Sampler(sampler),
-			},
-		],
-		layout: bind_group_layout,
-		label: Some("texture array bind group"),
-	})
 }
 
 
@@ -199,14 +317,14 @@ mod tests {
 		MaterialSpecification {
 			name: "example material".into(),
 			shader: "exap_shader.ron".into(),
-			values: HashMap::new(),
+			floats: HashMap::new(),
 			textures,
 		}
 	}
 
 	#[test]
 	fn test_serialize() {
-		let data = create_example_material();
+		let data = vec![create_example_material()];
 		let pretty = ron::ser::PrettyConfig::new()
 			.depth_limit(3)
 			.separate_tuple_members(true)
@@ -216,161 +334,3 @@ mod tests {
 		assert!(true);
 	}
 }
-
-
-
-
-
-
-
-// use std::path::PathBuf;
-// use image::DynamicImage;
-// use std::sync::Arc;
-// pub struct RenderResourceManager {
-// 	device: Arc<wgpu::Device>,
-// 	queue: Arc<wgpu::Queue>,
-// 	pipelines: IndexMap<wgpu::RenderPipeline>,
-// 	pipeline_layouts: IndexMap<wgpu::PipelineLayout>,
-// 	material_layouts: IndexMap<wgpu::BindGroupLayout>,
-// 	materials: IndexMap<wgpu::BindGroup>,
-// 	textures: IndexMap<Texture>,
-// }
-// impl RenderResourceManager {
-// 	pub fn new(
-// 		device: Arc<wgpu::Device>,
-// 		queue: Arc<wgpu::Queue>,
-// 	) -> Self {
-// 		let bmat_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-// 			label: Some("material bgl"),
-// 			entries: &[
-// 				wgpu::BindGroupLayoutEntry {
-// 					binding: 0,
-// 					visibility: wgpu::ShaderStages::FRAGMENT,
-// 					ty: wgpu::BindingType::Texture {
-// 						sample_type: wgpu::TextureSampleType::Float { filterable: true },
-// 						view_dimension: wgpu::TextureViewDimension::D2,
-// 						multisampled: false,
-// 					},
-// 					count: None,
-// 				},
-// 				wgpu::BindGroupLayoutEntry {
-// 					binding: 1,
-// 					visibility: wgpu::ShaderStages::FRAGMENT,
-// 					ty: wgpu::BindingType::Sampler {
-// 						comparison: false,
-// 						filtering: true,
-// 					},
-// 					count: None,
-// 				},
-// 			],
-// 		});
-// 		let mata_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-// 			label: Some(&format!("array material bgl (size {})", max_len)),
-// 			entries: &[
-// 				wgpu::BindGroupLayoutEntry {
-// 					binding: 0,
-// 					visibility: wgpu::ShaderStages::FRAGMENT,
-// 					ty: wgpu::BindingType::Texture {
-// 						sample_type: wgpu::TextureSampleType::Float { filterable: true },
-// 						view_dimension: wgpu::TextureViewDimension::D2,
-// 						multisampled: false,
-// 					},
-// 					count: NonZeroU32::new(max_len as u32),
-// 				},
-// 				wgpu::BindGroupLayoutEntry {
-// 					binding: 1,
-// 					visibility: wgpu::ShaderStages::FRAGMENT,
-// 					ty: wgpu::BindingType::Sampler {
-// 						comparison: false,
-// 						filtering: true,
-// 					},
-// 					count: None,
-// 				},
-// 			],
-// 		})
-// 	}
-	
-
-// 	pub fn new_pipeline(
-// 		&mut self,
-// 		vshader: &wgpu::ShaderModule,
-// 		fshader: &wgpu::ShaderModule,
-// 	) {
-
-// 	}
-
-
-// 	pub fn new_material_array(
-// 		&mut self,
-// 		name: &String,
-// 		bgli: usize,
-// 		textures: Vec<usize>,
-// 	) -> wgpu::BindGroup {
-// 		// Collect texture views
-// 		let mut texture_views = Vec::new();
-// 		for ti in textures {
-// 			let texture_view = self.textures.get_index(ti).view;
-// 			texture_views.push(&texture_view);
-// 		}
-
-// 		let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor::default());
-// 		let layout = self.material_layouts.get_index(bgli);
-// 		let material = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-// 			entries: &[
-// 				wgpu::BindGroupEntry {
-// 					binding: 0,
-// 					resource: wgpu::BindingResource::TextureViewArray(texture_views.as_slice()),
-// 				},
-// 				wgpu::BindGroupEntry {
-// 					binding: 1,
-// 					resource: wgpu::BindingResource::Sampler(&sampler),
-// 				},
-// 			],
-// 			layout,
-// 			label: Some(name),
-// 		});
-
-// 		material
-// 	}
-
-
-// 	pub fn load_texture_disk(
-// 		&mut self,
-// 		name: &String,
-// 		path: &PathBuf
-// 	) -> usize {
-// 		let image = image::open(path)
-// 			.expect("Failed to open file");
-// 		self.load_texture(name, image)
-// 	}
-
-
-// 	pub fn load_texture(
-// 		&mut self,
-// 		name: &String,
-// 		data: DynamicImage,
-// 	) -> usize {
-// 		let texture = Texture::from_image(&self.device, &self.queue, &data, Some(name))
-// 			.expect("Failed to create texture");
-// 		self.textures.insert(name, texture)
-// 	}
-
-
-// 	// Creates a new material layout
-// 	pub fn bmat_bgl(
-// 		&self,
-// 	) -> wgpu::BindGroupLayout {
-		
-// 	}
-
-
-// 	// Creates a new material array layout
-// 	pub fn mata_bgl(
-// 		&self, 
-// 		max_len: usize
-// 	) -> wgpu::BindGroupLayout {
-		
-// 	}
-// }
-
-

@@ -5,8 +5,6 @@ mod render;
 mod window;
 mod world;
 mod game;
-mod indexmap;
-mod world;
 
 
 use window::*;
@@ -15,6 +13,9 @@ use std::thread;
 
 #[macro_use]
 extern crate log;
+
+#[macro_use]
+extern crate derivative;
 
 
 
@@ -42,7 +43,8 @@ fn main() {
 			game.new_window();
 			loop {
 				game.tick();
-				// Sleep half second
+				
+				// std::thread::sleep(std::time::Duration::from_millis(100));
 				std::thread::sleep(std::time::Duration::from_millis(100));
 			}
 		})

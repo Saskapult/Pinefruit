@@ -1,6 +1,5 @@
 
 use nalgebra::*;
-extern crate nalgebra_glm as glm;
 
 
 
@@ -42,18 +41,44 @@ impl Camera {
 	}
 
 	pub fn view_matrix(&self) -> Matrix4<f32> {
-		// Todo: Use cool nalgebra stuff to bypass expensive inversion
-		(Matrix4::new_translation(&self.position) * self.rotation.to_homogeneous()).try_inverse().expect("fugg")
+		Matrix4::new_translation(&self.position) * self.rotation.to_homogeneous()
 	}
 
 	pub fn projection_matrix(&self, width: f32, height: f32) -> Matrix4<f32> {
 		let fovr = (self.fovy / 360.0) * 2.0 * std::f32::consts::PI;
-		OPENGL_TO_WGPU_MATRIX * glm::perspective_lh(width / height, fovr, self.znear, self.zfar)
+		OPENGL_TO_WGPU_MATRIX * perspective_lh(width / height, fovr, self.znear, self.zfar)
 	}
 
 	pub fn view_projection_matrix(&self, width: f32, height: f32) -> Matrix4<f32> {
-		// We could optimize this using solver stuff
-		self.projection_matrix(width, height) * self.view_matrix()
+		// Todo: Use cool nalgebra stuff to bypass expensive inversion
+		self.projection_matrix(width, height) * self.view_matrix().try_inverse().unwrap()
+	}
+
+	// Gets the direction from the camera that the mouse does point
+	// https://antongerdelan.net/opengl/raycasting.html
+	pub fn mouse_ray(
+		&self, 
+		width: f32, 
+		height: f32, 
+		mouse_x: u32, 
+		mouse_y: u32,
+	) -> Vector3<f32> {
+		// 1
+		let x = (2.0 * mouse_x as f32) / (width as f32) - 1.0;
+		let y = 1.0 - (2.0 * mouse_y as f32) / (height as f32);
+		let z = 1.0;
+		let nds = Vector3::new(x, y, z);
+		// 2
+		let clip = Vector4::new(nds.x, nds.y, nds.z, 1.0);
+		// 3
+		let ip = self.projection_matrix(width, height).try_inverse().unwrap();
+		let mut eye = ip * clip;
+		eye[3] = 0.0;
+		// 4
+		let iv = self.view_matrix().try_inverse().unwrap();
+		let world = (iv * eye).xyz().normalize();
+
+		world
 	}
 }
 
@@ -77,4 +102,20 @@ impl CameraUniform {
 		self.position = camera.position.to_homogeneous().into();
 		self.view_projection = (camera.view_projection_matrix(width, height)).into();
 	}
+}
+
+
+
+fn perspective_lh(aspect: f32, fovy: f32, near: f32, far: f32) -> Matrix4<f32> {
+	let mut mat = Matrix4::zeros();
+
+    let tan_half_fovy = (fovy / 2.0).tan();
+
+    mat[(0, 0)] = 1.0 / (aspect * tan_half_fovy);
+    mat[(1, 1)] = 1.0 / tan_half_fovy;
+    mat[(2, 2)] = (far + near) / (far - near);
+    mat[(2, 3)] = -(2.0 * far * near) / (far - near);
+    mat[(3, 2)] = 1.0;
+
+	mat
 }
