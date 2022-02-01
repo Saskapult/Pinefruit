@@ -37,7 +37,7 @@ impl Map {
 							let wz = cz * self.chunk_dimensions[2] as i32 + z as i32;
 							let val = perlin.get([wx as f64 + 0.5, wz as f64 + 0.5]);
 							let ylevel = 2 + ((1.0 + val) * 2.0).floor() as i32;
-							println!("y level for xz: [{}, {}] is {} ({:.4})", wx, wz, ylevel, val);
+							//println!("y level for xz: [{}, {}] is {} ({:.4})", wx, wz, ylevel, val);
 							for y in 0..self.chunk_dimensions[1] {
 								let wy = cy * self.chunk_dimensions[1] as i32 + y as i32;
 								let voxel = {
@@ -394,6 +394,8 @@ fn map_mesh(
 
 					// If at least one of them is transparent
 					if a_transparent || b_transparent {
+						// Todo: text if should generate transparent face
+
 						// a opaque b transparent
 						// Make positive face for a
 						if !a_transparent && b_transparent {

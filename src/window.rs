@@ -21,7 +21,7 @@ impl GameWindow {
 		let surface = unsafe { instance.create_surface(&window) };
 		let size = window.inner_size();
 		let surface_config = wgpu::SurfaceConfiguration {
-			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+			usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
 			format: surface.get_preferred_format(&adapter).unwrap(),
 			width: size.width,
 			height: size.height,

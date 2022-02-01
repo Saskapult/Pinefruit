@@ -13,22 +13,10 @@ use serde::{Serialize, Deserialize};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MaterialSpecification {
 	pub name: String,
-	pub shader: PathBuf,
+	pub graph: PathBuf,
 	pub textures: HashMap<String, Vec<PathBuf>>,
-	pub floats: HashMap<String, Vec<f32>>,
-	// pub sounds: HashMap<String, Vec<PathBuf>>, // step sounds, break sounds
-}
-
-
-
-pub fn read_materials_file(
-	path: &PathBuf,
-) -> Vec<Material> {
-	info!("Reading materials file {:?}", path);
-	let f = std::fs::File::open(path).expect("Failed to open file");
-	let mut info: Vec<MaterialSpecification> = ron::de::from_reader(f).expect("Failed to read materials ron file");
-	let info = info.drain(..).map(|ms| Material::from_specification(ms, &path)).collect::<Vec<_>>();
-	info
+	pub floats: HashMap<String, Vec<f32>>,	// Alpha cutoff in here or elsewhere?
+	pub sounds: HashMap<String, Vec<PathBuf>>,
 }
 
 
@@ -37,25 +25,38 @@ pub fn read_materials_file(
 #[derive(Debug)]
 pub struct Material {
 	pub name: String,
-	pub shader: PathBuf,
+	pub graph: PathBuf,
+	pub source_path: PathBuf,
 	pub textures: HashMap<String, Vec<PathBuf>>,
 	pub floats: HashMap<String, Vec<f32>>,
-	// pub sounds: HashMap<String, Vec<PathBuf>>, // step sounds, break sounds
+	pub sounds: HashMap<String, Vec<PathBuf>>, // step sounds, break sounds
 }
 impl Material {
-	pub fn from_specification(specification: MaterialSpecification, source_path: &PathBuf) -> Self {
+	pub fn from_specification(source_path: &PathBuf) -> Vec<Self> {
+		info!("Reading materials file {:?}", source_path);
+		let f = std::fs::File::open(source_path).expect("Failed to open file");
+		let mut specifications: Vec<MaterialSpecification> = ron::de::from_reader(f).expect("Failed to read materials ron file");
+
 		let folder_context = source_path.parent().unwrap();
-		let shader_path = folder_context.join(specification.shader);
-		let textures = specification.textures.iter().map(|(name, ppaths)| {
-			let paths = ppaths.iter().map(|p| folder_context.join(p)).collect::<Vec<_>>();
-			(name.clone(), paths)
-		}).collect::<HashMap<_,_>>();
-		Material {
-			name: specification.name,
-			shader: shader_path,
-			textures,
-			floats: HashMap::new(),
+
+		let mut materials = Vec::new();
+		for specification in specifications {
+			let textures = specification.textures.iter().map(|(name, texture_paths)| {
+				let canonical_texture_paths = texture_paths.iter().map(|p| {
+					folder_context.join(p).canonicalize().unwrap()
+				}).collect::<Vec<_>>();
+				(name.clone(), canonical_texture_paths)
+			}).collect::<HashMap<_,_>>();
+			materials.push(Material {
+				name: specification.name,
+				graph: specification.graph,
+				source_path: source_path.clone(),
+				textures,
+				floats: HashMap::new(),
+				sounds: HashMap::new(),
+			});
 		}
+		materials
 	}
 }
 impl std::fmt::Display for Material {
@@ -102,12 +103,12 @@ impl MaterialManager {
 
 
 
-// A material bound with a certain bind group input layout
-// Note to self: bind group could hold texture array, array texture, buffer, whatever
+/// A material bound to a bind group format
 #[derive(Debug)]
 pub struct BoundMaterial {
 	pub name: String,
-	pub shader_idx: usize,	// The name of the shader to be used
+	pub graph: PathBuf,
+	pub material_idx: usize,
 	pub bind_group_format: BindGroupFormat,
 	pub bind_group: wgpu::BindGroup,
 }
@@ -118,17 +119,19 @@ impl std::fmt::Display for BoundMaterial {
 }
 
 
-// A compiled material is based on a material and shader bind group (layout bit)
+
+// A compiled material is based on a material and bind group format
 // The material can be identified using its name
 // The shader bind group can be identified throuch comparison
-// Therefore a compiled material can be identified by a material name and a shader bind group
+// A compiled material can be identified by material name and bind group format
 #[derive(Debug)]
 pub struct BoundMaterialManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
-	materials: Vec<BoundMaterial>,
-	materials_index_name_format: HashMap<(String, BindGroupFormat), usize>,
-	material_manager: Arc<RwLock<MaterialManager>>,
+	bound_materials: Vec<BoundMaterial>,
+	materials_index_from_index_format: HashMap<(usize, BindGroupFormat), usize>,
+	materials_index_from_name_format: HashMap<(String, BindGroupFormat), usize>,
+	pub material_manager: Arc<RwLock<MaterialManager>>,
 }
 impl BoundMaterialManager {
 	pub fn new(
@@ -139,74 +142,92 @@ impl BoundMaterialManager {
 		Self { 
 			device: device.clone(), 
 			queue: queue.clone(), 
-			materials: Vec::new(),
-			materials_index_name_format: HashMap::new(), 
+			bound_materials: Vec::new(),
+			materials_index_from_index_format: HashMap::new(), 
+			materials_index_from_name_format: HashMap::new(), 
 			material_manager: material_manager.clone(),
 		}
 	}
 
 	pub fn insert(&mut self, bound_material: BoundMaterial) -> usize {
-		let idx = self.materials.len();
-		self.materials_index_name_format.insert((bound_material.name.clone(), bound_material.bind_group_format.clone()), idx);
-		self.materials.push(bound_material);
+		let idx = self.bound_materials.len();
+		let index_key = (bound_material.material_idx, bound_material.bind_group_format.clone());
+		self.materials_index_from_index_format.insert(index_key, idx);
+		let name_key = (bound_material.name.clone(), bound_material.bind_group_format.clone());
+		self.materials_index_from_name_format.insert(name_key, idx);
+		self.bound_materials.push(bound_material);
 		idx
 	}
 
 	pub fn index(&self, i: usize) -> &BoundMaterial {
-		&self.materials[i]
+		&self.bound_materials[i]
 	}
 
-	pub fn index_name_format(&self, name: &String, format: &BindGroupFormat) -> Option<usize> {
+	pub fn index_from_name_format(&self, name: &String, format: &BindGroupFormat) -> Option<usize> {
 		let key = (name.clone(), format.clone());
-		if self.materials_index_name_format.contains_key(&key) {
-			Some(self.materials_index_name_format[&key])
+		if self.materials_index_from_name_format.contains_key(&key) {
+			Some(self.materials_index_from_name_format[&key])
 		} else {
 			None
 		}
 	}
 
-	pub fn index_name_format_bind(&mut self, _name: &String, _format: &BindGroupFormat) -> Option<usize> {
-		todo!();
+	pub fn index_from_index_format(&self, material_idx: usize, format: &BindGroupFormat) -> Option<usize> {
+		let key = (material_idx, format.clone());
+		if self.materials_index_from_index_format.contains_key(&key) {
+			Some(self.materials_index_from_index_format[&key])
+		} else {
+			None
+		}
 	}
 
-	// Attempts to compile a material to be accepted into a bind group
-	pub fn bind_material(
-		&self,
-		material: &Material,
+	pub fn index_from_index_format_bind(
+		&mut self, 
+		material_idx: usize, 
+		format: &BindGroupFormat,
 		shaders: &mut ShaderManager,
 		textures: &mut BoundTextureManager,
-	) -> BoundMaterial {
-		info!("Binding material '{}'", &material);
-		// Find/load the shader
-		let shader_idx = match shaders.index_path(&material.shader) {
-			Some(index) => index,
-			None => shaders.register_path(&material.shader),
-		};
-		let shader = shaders.index(shader_idx);
-		let bind_group_format = shader.bind_groups[&1].format.clone();
+	) -> usize {
+		let key = (material_idx, format.clone());
+		if self.materials_index_from_index_format.contains_key(&key) {
+			self.materials_index_from_index_format[&key]
+		} else {
+			self.bind_by_index(material_idx, format, shaders, textures)
+		}
+	}
+
+	/// Attempts to bind a material to be accepted into a bind group format
+	pub fn bind_by_index(
+		&mut self,
+		material_idx: usize,
+		bind_group_format: &BindGroupFormat,
+		shaders: &mut ShaderManager,
+		textures: &mut BoundTextureManager,
+	) -> usize {
+		let mm = self.material_manager.read().unwrap();
+		let material = mm.index(material_idx);
+
+		info!("Binding material '{}' with format '{}'", material, bind_group_format);
 
 		// Collect resource info
 		let mut texture_view_index_collections = Vec::new();
 		let mut samplers = Vec::new();
 		let mut binding_templates = Vec::new(); // (type, binding position, index)
-		for binding in &bind_group_format.binding_specifications {
-			let j = binding.layout.binding;
-			match binding.binding_type {
+		for (i, bind_group_entry_format) in &bind_group_format.entry_formats {
+			let resource_usage = &bind_group_entry_format.resource_usage;
+			match bind_group_entry_format.binding_type {
 				BindingType::Texture => {
-					let texture_usage = &binding.resource_usage;
-					// If there is no such resource then panic or something
-					if material.textures.contains_key(texture_usage) {
-						let texture_path = &material.textures[texture_usage][0];
+					if material.textures.contains_key(resource_usage) {
+						let texture_path = &material.textures[resource_usage][0];
 						let texture_idx = textures.index_path_bind(texture_path).expect("Missing texture data!");
-						binding_templates.push((BindingType::Texture, j as u32, texture_idx));
+						binding_templates.push((BindingType::Texture, *i, texture_idx));
 					} else {
-						panic!("This material is missing a field for its shader")
+						panic!("This material is missing a field for this format!")
 					}
 				},
 				BindingType::TextureArray => {
-					let texture_usage = &binding.resource_usage;
-					if material.textures.contains_key(texture_usage) {
-						let texture_paths = &material.textures[texture_usage];
+					if material.textures.contains_key(resource_usage) {
+						let texture_paths = &material.textures[resource_usage];
 						// Collect indices
 						let mut texture_indices = Vec::new();
 						for texture_path in texture_paths {
@@ -219,24 +240,20 @@ impl BoundMaterialManager {
 						// In solution we defer slice access until after all texture array data has been allocated
 						let tvi_idx = texture_view_index_collections.len();
 						texture_view_index_collections.push(texture_indices);
-						binding_templates.push((BindingType::TextureArray, j as u32, tvi_idx));
+						binding_templates.push((BindingType::TextureArray, *i, tvi_idx));
 					} else {
-						panic!("This material is missing a field for its shader")
+						panic!("This material is missing a field for this format!")
 					}
 				},
 				BindingType::Sampler => {
 					// Todo: Let the material specify its samplers
 					let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor::default());
-					let i = samplers.len();
+					let j = samplers.len();
 					samplers.push(sampler);
 
-					binding_templates.push((BindingType::Sampler, j as u32, i));
+					binding_templates.push((BindingType::Sampler, *i, j));
 				},
-				BindingType::ArrayTexture => {
-					// Make/get array texture
-					todo!("Array texture not done please forgive");
-				},
-				_ => panic!("This shader binding type is not (yet?) supported!"),
+				_ => todo!("This material binding type is not (yet?) supported!"),
 			}
 		}
 
@@ -262,9 +279,6 @@ impl BoundMaterialManager {
 						resource: wgpu::BindingResource::TextureView(texture_view),
 					});
 				},
-				BindingType::ArrayTexture => {
-					todo!("Array texture still not done please forgive again");
-				},
 				BindingType::TextureArray => {
 					bindings.push(wgpu::BindGroupEntry {
 						binding: position,
@@ -278,13 +292,11 @@ impl BoundMaterialManager {
 						resource: wgpu::BindingResource::Sampler(&sr),
 					});
 				},
-				_ => panic!("how did you reach this?"),
+				_ => todo!("how did you reach this?"),
 			}
 		}
 		
-		let name = format!("{} with format {}", &material.name, &bind_group_format);
-
-		let layout = match shaders.bind_group_layout_index_bind_group_format(&bind_group_format) {
+		let layout = match shaders.bind_group_layout_index_from_bind_group_format(&bind_group_format) {
 			Some(bgli) => shaders.bind_group_layout_index(bgli),
 			None => {
 				let idx = shaders.bind_group_layout_create(&bind_group_format);
@@ -295,12 +307,19 @@ impl BoundMaterialManager {
 		let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
 			entries: &bindings[..],
 			layout,
-			label: Some(&*format!("bind group of {}", &name)),
+			label: Some(&*format!("bind group of {}", &material.name)),
 		});
 
-		BoundMaterial {
-			name, shader_idx, bind_group_format, bind_group,
-		}
+		let bound_material = BoundMaterial {
+			name: material.name.clone(),
+			graph: material.graph.clone(),
+			material_idx,
+			bind_group_format: bind_group_format.clone(),
+			bind_group,
+		};
+
+		drop(mm);
+		self.insert(bound_material)
 	}
 }
 
@@ -311,15 +330,16 @@ mod tests {
 	use super::*;
 
 	fn create_example_material() -> MaterialSpecification {
-		let mut textures = HashMap::new();
-		let albedo = ["g.png", "f.png"].iter().map(|s| PathBuf::from(&s)).collect::<Vec<_>>();
-		textures.insert("albedo".to_string(), albedo);
-		MaterialSpecification {
-			name: "example material".into(),
-			shader: "exap_shader.ron".into(),
-			floats: HashMap::new(),
-			textures,
-		}
+		// let mut textures = HashMap::new();
+		// let albedo = ["g.png", "f.png"].iter().map(|s| PathBuf::from(&s)).collect::<Vec<_>>();
+		// textures.insert("albedo".to_string(), albedo);
+		// MaterialSpecification {
+		// 	name: "example material".into(),
+		// 	shader: "exap_shader.ron".into(),
+		// 	floats: HashMap::new(),
+		// 	textures,
+		// }
+		todo!()
 	}
 
 	#[test]

@@ -66,7 +66,6 @@ impl WindowResource {
 		}
 	}
 
-
 	// Request a window (to be processed in the next iteration)
 	pub fn request_window(&mut self) {
 		// Insert an event to create a new window
@@ -75,7 +74,6 @@ impl WindowResource {
 		self.event_loop_sender.send(EventLoopEvent::CreateWindow)
 			.expect("Could not send window creation request");
 	}
-
 
 	// Get a window fastly (in this iteration)
 	pub fn request_window_immediate(&mut self) {
@@ -86,7 +84,6 @@ impl WindowResource {
 		self.register_window(window);
 	}
 
-
 	pub fn register_window(&mut self, window: Window) -> usize {
 		let gamewindow = GameWindow::new(&self.instance, &self.adapter, window);
 
@@ -95,7 +92,6 @@ impl WindowResource {
 		self.windows.push(gamewindow);
 		idx
 	}
-
 
 	pub fn close_window(&mut self, idx: usize) {
 		let wid = self.windows[idx].window.id();
@@ -108,7 +104,6 @@ impl WindowResource {
 		}
 	}
 
-
 	// Due to this aborting the event loop, the game will also be dropped
 	pub fn shutdown(&mut self) {
 		// Drop all windows
@@ -118,9 +113,8 @@ impl WindowResource {
 		// Shut down event loop
 		self.event_loop_sender.send(EventLoopEvent::Close)
 			.expect("Could not send event loop close request");
-		// Everything else should stop/drop when self is dropped (here)
+		// Everything else *should* stop/drop when self is dropped (here)
 	}
-
 }
 
 
@@ -187,38 +181,17 @@ impl StepResource {
 // Todo: add a render queue which other systems write to and is used by the render system
 struct RenderResource {
 	pub renderer: Renderer,
-	pub materials_manager: Arc<RwLock<crate::render::MaterialManager>>,
-	pub textures_manager: Arc<RwLock<crate::render::TextureManager>>,
-	pub meshes_manager: Arc<RwLock<crate::render::MeshManager>>,
+	materials_manager: Arc<RwLock<crate::render::MaterialManager>>,
+	textures_manager: Arc<RwLock<crate::render::TextureManager>>,
+	meshes_manager: Arc<RwLock<crate::render::MeshManager>>,
 }
 impl RenderResource {
 	pub fn new(adapter: &wgpu::Adapter) -> Self {
 
 		let textures_manager = Arc::new(RwLock::new(crate::render::TextureManager::new()));
-		{
-			let mut tm = textures_manager.write().unwrap();
-			let texs = [
-				["dirt", "resources/blockfaces/dirt.png"], 
-				["sand", "resources/blockfaces/sand.png"],
-			];
-			for tex in texs {
-				let texture = crate::render::Texture {
-					name: tex[0].to_string(),
-					path: Some(PathBuf::from(tex[1])),
-					data: image::open(tex[1]).expect("Failed to open file")
-				};
-				tm.insert(texture);
-			}
-		}
 
 		let materials_manager = Arc::new(RwLock::new(crate::render::MaterialManager::new()));
-		{
-			let mut mm = materials_manager.write().unwrap();
-			let mats = crate::render::material::read_materials_file(&PathBuf::from("resources/kmaterials.ron"));
-			for mat in mats {
-				mm.insert(mat);
-			}
-		}
+
 		
 		let meshes_manager = Arc::new(RwLock::new(crate::render::MeshManager::new()));
 
@@ -238,6 +211,17 @@ impl RenderResource {
 			meshes_manager,
 		}		
 	}
+
+	/// Loads materials AND their textures
+	pub fn load_materials(&mut self) {
+		let mut mm = self.materials_manager.write().unwrap();
+		// let mats = crate::render::material::read_materials_file(&PathBuf::from("resources/kmaterials.ron"));
+		// for mat in mats {
+		// 	mm.insert(mat);
+		// }
+		todo!()
+	}
+
 }
 
 
@@ -311,7 +295,7 @@ enum ChunkModelEntry {
 	Empty,
 	Unloaded,
 	UnModeled,
-	Complete(Vec<usize>),
+	Complete(Vec<(usize, usize)>),
 }
 
 
@@ -646,22 +630,17 @@ impl MapSystem {
 		//info!("Evaluating chunk {:?} for modeling", chunk_position);
 		if map.is_chunk_loaded(chunk_position) {
 			info!("Modeling chunk {:?}", chunk_position);
-			// Mesh it
-			let segments = map.mesh_chunk(chunk_position);
-			// Add resulting models
-			let mut models = Vec::new();
-			let mm = renderr.materials_manager.read().unwrap();
-			for (material_idx, mesh) in segments {
-				let material = mm.index(material_idx);
-			
-				let model_name = format!("mesh '{}' with material '{}'", &mesh.name, &material.name);
-				let model_idx = renderr.renderer.add_model(&model_name, &mesh, material);
-
-				models.push(model_idx);
-			}
-			if models.len() > 0 {
-				info!("Chunk {:?} modeled", chunk_position);
-				ChunkModelEntry::Complete(models)
+			// Model it and register the segments
+			let mesh_mats = {
+				let mut mm = renderr.meshes_manager.write().unwrap();
+				map.mesh_chunk(chunk_position).drain(..).map(|(material_idx, mesh)| {
+					let mesh_idx = mm.insert(mesh);
+					(mesh_idx, material_idx)
+				}).collect::<Vec<_>>()
+			};
+			if mesh_mats.len() > 0 {
+				//info!("Chunk {:?} modeled", chunk_position);
+				ChunkModelEntry::Complete(mesh_mats)
 			} else {
 				info!("Chunk {:?} was empty", chunk_position);
 				ChunkModelEntry::Empty
@@ -743,11 +722,9 @@ impl<'a> System<'a> for RenderSystem {
 		): Self::SystemData,
 	) { 
 		for (camera_c, transform_c) in (&camera, &transform).join() {
-			// Find destination
-			let view;
-			let width;
-			let height;
+			
 			match camera_c.target {
+				// Find destination
 				RenderTarget::Window(id) => {
 					if id < window_resource.windows.len() {
 						info!("Rendering to window idx {}", id);
@@ -755,10 +732,9 @@ impl<'a> System<'a> for RenderSystem {
 						// Get window
 						let window = &window_resource.windows[id];
 						window.surface.configure(&render_resource.renderer.device, &window.surface_config);
-						width = window.surface_config.width;
-						height = window.surface_config.height;
+						let width = window.surface_config.width;
+						let height = window.surface_config.height;
 						let stex = window.surface.get_current_texture().expect("fugg");
-						view = stex.texture.create_view(&wgpu::TextureViewDescriptor::default());
 					
 						// Collect render data
 						let mut render_data = Vec::new();
@@ -767,20 +743,24 @@ impl<'a> System<'a> for RenderSystem {
 							// Renders ALL meshed chunks
 							for (cp, entry) in &map_c.chunk_models {
 								match entry {
-									ChunkModelEntry::Complete(model_indices) => {
+									ChunkModelEntry::Complete(mesh_mats) => {
 										use crate::render::*;
-										let position = InstanceModelMatrix::from_pr(&(transform_c.position + map_c.map.chunk_point(*cp)), &transform_c.rotation);
-										for model_idx in model_indices {
-											let mut instance_properties_data = Vec::new();
-											instance_properties_data.extend_from_slice(bytemuck::bytes_of(&position));
-											let instance_properties = vec![InstanceProperty::InstanceModelMatrix];
-											render_data.push(render_resource.renderer.instance(*model_idx, instance_properties, instance_properties_data));
+										let position = transform_c.position + map_c.map.chunk_point(*cp);
+										let instance = Instance::new().with_position(position);
+										for (mesh_idx, material_idx) in mesh_mats.iter().cloned() {
+											let model_instance = ModelInstance {
+												material_idx,
+												mesh_idx,
+												instance,
+											};
+											render_data.push(model_instance);
 										}
 									},
 									_ => {},
 								}
 							}
 						}
+						render_resource.renderer.set_data(render_data);
 
 						let camera = crate::render::Camera {
 							position: transform_c.position,
@@ -789,10 +769,13 @@ impl<'a> System<'a> for RenderSystem {
 							znear: camera_c.znear,
 							zfar: camera_c.zfar,
 						};
- 
-						render_resource.renderer.render(&view, width, height, &camera, &mut render_data);
+						
+						render_resource.renderer.render(&stex.texture, width, height, &camera, Instant::now());
 
 						stex.present();
+
+						std::thread::sleep(std::time::Duration::from_millis(10000));
+						panic!()
 					} else {
 						error!("Tried to render to nonexistent window! idx: {}", id);
 					}
@@ -832,10 +815,6 @@ impl Game {
 		info!("Limits: {:?}", adapter.limits());
 
 		let blocks_manager = Arc::new(RwLock::new(crate::world::BlockManager::new()));
-		blocks_manager.write().unwrap().insert(crate::world::Block {
-			name: "debug".to_string(),
-			material_idx: 0,
-		});
 
 		let mut world = World::new();
 
@@ -891,6 +870,23 @@ impl Game {
 			blocks_manager,
 			dispatcher,
 		}
+	}
+
+	pub fn setup(&mut self) {
+		// Load default materials
+		let rr = self.world.write_resource::<RenderResource>();
+
+		let mut mm = rr.materials_manager.write().unwrap();
+		crate::render::Material::from_specification(&PathBuf::from("resources/materials/kmaterials.ron")).drain(..).for_each(|m| {mm.insert(m);});
+
+		let mut tm = rr.textures_manager.write().unwrap();
+		tm.insert(crate::render::Texture::new(&"dirt".to_string(), &PathBuf::from("resources/blockfaces/dirt.png")));
+
+		// Make default block
+		self.blocks_manager.write().unwrap().insert(crate::world::Block {
+			name: "debug".to_string(),
+			material_idx: 0,
+		});
 	}
 
 	pub fn tick(&mut self) {

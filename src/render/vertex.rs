@@ -1,5 +1,6 @@
 use std::mem;
 use nalgebra::*;
+use serde::{Serialize, Deserialize};
 
 
 /*
@@ -9,7 +10,94 @@ A shader can specify the format of its vertex data
 
 
 
-// Trait for "can be put in vertex buffer"
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+pub enum VertexProperty {
+	VertexPosition,
+	VertexColour,
+	VertexUV,
+	VertexTextureID,
+}
+pub type VertexProperties = Vec<VertexProperty>;
+
+
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum InstanceProperty {
+	InstanceModelMatrix,
+	InstanceColour,
+}
+pub type InstanceProperties = Vec<InstanceProperty>;
+
+
+
+#[derive(Debug, Copy, Clone)]
+pub struct Instance {
+	position: Vector3<f32>,
+	rotation: UnitQuaternion<f32>,
+	scale: Vector3<f32>,
+	colour: Option<Vector3<f32>>,
+}
+impl Instance {
+	pub fn new() -> Self {
+		Self {
+			position: Vector3::from_element(0.0),
+			rotation: UnitQuaternion::identity(),
+			scale: Vector3::from_element(1.0),
+			colour: None,
+		}
+	}
+
+	pub fn with_position(self, position: Vector3<f32>) -> Self {
+		Self {
+			position,
+			rotation: self.rotation,
+			scale: self.scale,
+			colour: self.colour,
+		}
+	}
+
+	pub fn lerp(&self, other: &Self, t: f32) -> Self {
+		let colour = {
+			if self.colour.is_some() && other.colour.is_some() {
+				Some(self.colour.unwrap().lerp(&other.colour.unwrap(), t))
+			} else {
+				None
+			}
+		};
+		Self {
+			position: self.position.lerp(&other.position, t),
+			rotation: self.rotation.slerp(&other.rotation, t),
+			scale: self.scale.lerp(&other.scale, t),
+			colour,
+		}
+	}
+	
+	pub fn data(&self, instance_properties: &Vec<InstanceProperty>) -> Vec<u8> {
+		let mut bytes = Vec::new();
+		for property in instance_properties {
+			match property {
+				InstanceProperty::InstanceModelMatrix => {
+					bytes.extend_from_slice(bytemuck::bytes_of(&InstanceModelMatrix::from_pr(&self.position, &self.rotation)));
+				},
+				InstanceProperty::InstanceColour => {
+					if let Some(colour) = self.colour {
+						bytes.extend_from_slice(bytemuck::bytes_of(&VertexColour {
+							colour: colour.into(),
+						}));
+					} else {
+						panic!("instance colour not given!")
+					}
+				},
+				_ => todo!("Unimplemented instance property"),
+			}
+		}
+		bytes
+	}
+}
+
+
+
+/// Trait for "can be put in vertex buffer"
 pub trait Vertexable {
 	// const for emum value entry??
 	fn attributes() -> AttributeSegment;
@@ -17,8 +105,8 @@ pub trait Vertexable {
 
 
 
-// Attributes generated at the current field offset
-// length (bytes), vertex format
+/// Attributes generated at the current field offset
+/// length (bytes), vertex format
 pub type AttributeSegment = Vec<(usize, wgpu::VertexFormat)>;
 
 

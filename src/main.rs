@@ -40,6 +40,7 @@ fn main() {
 		.name("game thread".into())
 		.spawn(move || {
 			let mut game = game::Game::new(event_loop_proxy, game_thread_event_queue);
+			game.setup();
 			game.new_window();
 			loop {
 				game.tick();

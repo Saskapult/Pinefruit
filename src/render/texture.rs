@@ -6,6 +6,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
+use serde::{Serialize, Deserialize};
 
 
 
@@ -15,6 +16,34 @@ pub enum TextureType {
 	RGBA,
 	RGB,
 }
+impl TextureType {
+	// Format and bytes per pixel
+	pub fn get_info(&self) -> (wgpu::TextureFormat, u32) {
+		match self {
+			TextureType::Normal => (wgpu::TextureFormat::Rgba8Unorm, 4),
+			TextureType::RGBA => (wgpu::TextureFormat::Rgba8UnormSrgb, 4),
+			_ => todo!(),
+		}
+	}
+}
+
+
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum TextureFormat {
+	Rgba8Unorm,
+	Rgba8UnormSrgb,
+}
+impl TextureFormat {
+	// Format and bytes per pixel
+	pub fn get_info(&self) -> (wgpu::TextureFormat, u32) {
+		match self {
+			TextureFormat::Rgba8Unorm => (wgpu::TextureFormat::Rgba8Unorm, 4),
+			TextureFormat::Rgba8UnormSrgb => (wgpu::TextureFormat::Rgba8UnormSrgb, 4),
+			_ => todo!(),
+		}
+	}
+}
 
 
 
@@ -23,6 +52,8 @@ pub struct BoundTexture {
 	pub name: String,
 	pub texture: wgpu::Texture,
 	pub view: wgpu::TextureView,
+	pub size: wgpu::Extent3d,
+	pub mip_count: u32,
 }
 impl BoundTexture {
 	// Depth texture stuff
@@ -33,10 +64,11 @@ impl BoundTexture {
 			height,
 			depth_or_array_layers: 1,
 		};
+		let mip_count = 1;
 		let desc = wgpu::TextureDescriptor {
 			label: Some(label),
 			size,
-			mip_level_count: 1,
+			mip_level_count: mip_count,
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format: Self::DEPTH_FORMAT,
@@ -48,7 +80,7 @@ impl BoundTexture {
 
 		let name = format!("Depth texture {}, width {} height {}", &label, width, height);
 
-		Self { name, texture, view }
+		Self { name, texture, view, size, mip_count }
 	}
 
 	pub fn from_path(
@@ -79,17 +111,15 @@ impl BoundTexture {
 			depth_or_array_layers: 1,
 		};
 		// Could use an enum to choose (normal => Rgba8Unorm)
-		let format = match ttype {
-			TextureType::RGBA => wgpu::TextureFormat::Rgba8UnormSrgb,
-			TextureType::Normal => wgpu::TextureFormat::Rgba8Unorm,
-			_ => panic!("Weird image detected!"),
-		};
+		let (format, _) = ttype.get_info();
+
+		let mip_count = 1;
 
 		let texture = device.create_texture(
 			&wgpu::TextureDescriptor {
 				label: Some(name.as_str()),
 				size,
-				mip_level_count: 1,
+				mip_level_count: mip_count,
 				sample_count: 1,
 				dimension: wgpu::TextureDimension::D2,
 				format,
@@ -108,13 +138,13 @@ impl BoundTexture {
 			&rgba,
 			wgpu::ImageDataLayout {
 				offset: 0,
-				bytes_per_row: std::num::NonZeroU32::new(4 * width), // r,g,b,a
+				bytes_per_row: std::num::NonZeroU32::new(4 * width), // r8,g8,b8,a8
 				rows_per_image: std::num::NonZeroU32::new(height),
 			},
 			size,
 		);
 
-		Self { name, texture, view }
+		Self { name, texture, view, size, mip_count }
 	}
 
 	pub fn from_images(
@@ -136,7 +166,7 @@ impl BoundTexture {
 			}
 		}).collect::<Vec<_>>();
 	
-		let texture_size = wgpu::Extent3d {
+		let size = wgpu::Extent3d {
 			width,
 			height,
 			depth_or_array_layers: images.len() as u32,
@@ -147,12 +177,14 @@ impl BoundTexture {
 			TextureType::Normal => wgpu::TextureFormat::Rgba8Unorm,
 			_ => panic!("Weird image detected!"),
 		};
+
+		let mip_count = 1;
 	
 		// Create the texture stuff
 		let texture = device.create_texture(&wgpu::TextureDescriptor {
 			label: Some(name.as_str()),
-			size: texture_size,
-			mip_level_count: 1,
+			size,
+			mip_level_count: mip_count,
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
 			format,
@@ -175,13 +207,61 @@ impl BoundTexture {
 			&collected_rgba[..], // &[u8]
 			wgpu::ImageDataLayout {
 				offset: 0,
-				bytes_per_row: Some(NonZeroU32::new(4*width).unwrap()), // r, g, b, a
+				bytes_per_row: Some(NonZeroU32::new(4*width).unwrap()),
 				rows_per_image: Some(NonZeroU32::new(height).unwrap()),
 			},
-			texture_size,
+			size,
 		);
 	
-		BoundTexture { name, texture, view }
+		BoundTexture { name, texture, view, size, mip_count }
+	}
+
+	pub fn fill(&self, data: &[u8], queue: &wgpu::Queue) {
+		queue.write_texture(
+			wgpu::ImageCopyTexture {
+				aspect: wgpu::TextureAspect::All,
+				texture: &self.texture,
+				mip_level: 0,
+				origin: wgpu::Origin3d::ZERO,
+			},
+			data,
+			wgpu::ImageDataLayout {
+				offset: 0,
+				bytes_per_row: std::num::NonZeroU32::new(4 * self.size.width),
+				rows_per_image: std::num::NonZeroU32::new(self.size.height),
+			},
+			self.size,
+		);
+	}
+
+	pub fn new(
+		device: &wgpu::Device,
+		name: &String,
+		format: wgpu::TextureFormat,
+		width: u32,
+		height: u32,
+	) -> Self {
+		let name = name.clone();
+		let size = wgpu::Extent3d {
+			width,
+			height,
+			depth_or_array_layers: 1,
+		};
+		let mip_count = 1;
+		let texture = device.create_texture(
+			&wgpu::TextureDescriptor {
+				label: Some(name.as_str()),
+				size,
+				mip_level_count: mip_count,
+				sample_count: 1,
+				dimension: wgpu::TextureDimension::D2,
+				format,
+				usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+			}
+		);
+		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+		Self { name, texture, view, size, mip_count }
 	}
 }
 
@@ -195,6 +275,18 @@ pub struct Texture {
 	pub path: Option<PathBuf>,
 	pub data: DynamicImage,
 }
+impl Texture {
+	pub fn new(name: &String, path: &PathBuf) -> Self {
+		Self {
+			name: name.clone(),
+			path: Some(path.clone()),
+			data: image::open(path).expect("Failed to open file"),
+		}
+	}
+}
+
+
+
 #[derive(Debug)]
 pub struct TextureManager {
 	textures: Vec<Texture>,
@@ -215,7 +307,8 @@ impl TextureManager {
 		let idx = self.textures.len();
 		self.textures_index_name.insert(texture.name.clone(), idx);
 		if let Some(path) = texture.path.clone() {
-			self.textures_index_path.insert(path, idx);
+			let canonical_path = path.canonicalize().unwrap();
+			self.textures_index_path.insert(canonical_path, idx);
 		}
 		self.textures.push(texture);
 		idx
@@ -245,6 +338,7 @@ impl TextureManager {
 
 
 // In order to unload a texture from the gpu we must be sure that it is not used in any active materials, but I don't know how to do that
+#[derive(Debug)]
 pub struct BoundTextureManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,

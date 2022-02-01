@@ -4,6 +4,7 @@
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Voxel {
 	Empty,
+	// Replace with Cube?
 	Block(u32),
 }
 
@@ -44,6 +45,14 @@ impl Chunk {
 
 	pub fn is_in_bounds(&self, x: i32, y: i32, z: i32) -> bool {
 		(x < self.size[0] as i32 && y < self.size[1] as i32 && z < self.size[2] as i32) && (x >= 0 && y >= 0 && z >= 0)
+	}
+
+	// To be used for meshing voxel models
+	pub fn mesh() {
+		todo!()
+	}
+	pub fn greedy_mesh() {
+		todo!()
 	}
 
 	fn rle(&self) -> String {

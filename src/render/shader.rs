@@ -13,26 +13,14 @@ What inputs can it take and what would it use them for?
 
 
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum VertexProperty {
-	VertexPosition,
-	VertexColour,
-	VertexUV,
-	VertexTextureID,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum InstanceProperty {
-	InstanceModelMatrix,
-	InstanceColour,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ShaderSourceType {
 	Spirv,
 	Glsl,
 	Wgsl,
 }
+
+
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShaderSource {
@@ -42,6 +30,8 @@ pub struct ShaderSource {
 	pub fragment_path: PathBuf,
 	pub fragment_entry: String,	
 }
+
+
 
 #[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Copy, Clone)]
 pub enum BindingType {
@@ -53,15 +43,272 @@ pub enum BindingType {
 	SamplerArray,
 }
 
-// Serializable shader information
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BindGroupEntryFormat {
+	pub binding_type: BindingType,
+	pub resource_usage: String,
+}
+impl BindGroupEntryFormat {
+	pub fn layout_at(&self, i: u32) -> wgpu::BindGroupLayoutEntry {
+		match self.binding_type {
+			BindingType::Buffer => {
+				wgpu::BindGroupLayoutEntry {
+					binding: i,
+					visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+					ty: wgpu::BindingType::Buffer {
+						ty: wgpu::BufferBindingType::Uniform,
+						has_dynamic_offset: false,
+						min_binding_size: None,
+					},
+					count: None,
+				}
+			},
+			BindingType::Texture => {
+				wgpu::BindGroupLayoutEntry {
+					binding: i,
+					visibility: wgpu::ShaderStages::FRAGMENT,
+					ty: wgpu::BindingType::Texture {
+						sample_type: wgpu::TextureSampleType::Float { filterable: true },
+						view_dimension: wgpu::TextureViewDimension::D2,
+						multisampled: false,
+					},
+					count: None,
+				}
+			}
+			BindingType::TextureArray => {
+				wgpu::BindGroupLayoutEntry {
+					binding: i,
+					visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+					ty: wgpu::BindingType::Texture {
+						sample_type: wgpu::TextureSampleType::Float { filterable: true },
+						view_dimension: wgpu::TextureViewDimension::D2,
+						multisampled: false,
+					},
+					count: NonZeroU32::new(1024),
+				}
+			}
+			BindingType::ArrayTexture => {
+				wgpu::BindGroupLayoutEntry {
+					binding: i,
+					visibility: wgpu::ShaderStages::FRAGMENT,
+					ty: wgpu::BindingType::Texture {
+						sample_type: wgpu::TextureSampleType::Float { filterable: true },
+						view_dimension: wgpu::TextureViewDimension::D2Array,
+						multisampled: false,
+					},
+					count: None,
+				}
+			}
+			BindingType::Sampler => {
+				wgpu::BindGroupLayoutEntry {
+					binding: i,
+					visibility: wgpu::ShaderStages::FRAGMENT,
+					ty: wgpu::BindingType::Sampler {
+						comparison: false,
+						filtering: true,
+					},
+					count: None,
+				}
+			}
+			_ => panic!(),
+		}
+	}
+}
+impl std::fmt::Display for BindGroupEntryFormat {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "('{}', {:?})", self.resource_usage, self.binding_type)
+	}
+}
+
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct BindGroupFormat {
+	pub entry_formats: BTreeMap<u32, BindGroupEntryFormat>,
+}
+impl BindGroupFormat {
+	pub fn from_entries(entries: &Vec<ShaderBindGroupEntry>) -> Self {
+		Self {
+			entry_formats: entries.iter().map(|e| (e.layout.binding, e.format.clone())).collect::<BTreeMap<_, _>>(),
+		}
+	}
+	pub fn create_bind_group_layout(&self, device: &wgpu::Device) -> wgpu::BindGroupLayout {
+		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+			entries: &self.entry_formats.iter().map(|(i, b)| {
+				b.layout_at(*i)
+			}).collect::<Vec<_>>()[..],
+			label: Some(&*format!("BGL for {}", &self)),
+		})
+	}
+}
+impl std::fmt::Display for BindGroupFormat {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "[")?;
+		for (i, (_, entry)) in self.entry_formats.iter().enumerate() {
+			write!(f, "{}, ", entry)?;
+			if (self.entry_formats.len() > 0) && (i < self.entry_formats.len()-1) {
+				write!(f, ", ")?;
+			}
+		}
+		write!(f, "]")
+	}
+}
+
+
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct ShaderBindGroupEntry {
+	pub format: BindGroupEntryFormat,
+	pub layout: wgpu::BindGroupLayoutEntry,
+}
+
+
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct ShaderBindGroup {
+	pub entries: Vec<ShaderBindGroupEntry>,
+	pub layout_idx: usize,
+}
+impl ShaderBindGroup {
+	pub fn format(&self) -> BindGroupFormat {
+		BindGroupFormat::from_entries(&self.entries)
+	}
+}
+
+
+
+#[derive(Debug)]
+pub struct Shader {
+	pub name: String,
+	pub specification_path: PathBuf,
+	pub vertex_properties: Vec<VertexProperty>,
+	pub instance_properties: Vec<InstanceProperty>,
+	pub attachments: Vec<ShaderAttatchmentSpecification>,
+	pub bind_groups: BTreeMap<u32, ShaderBindGroup>,
+	pub pipeline_layout: wgpu::PipelineLayout,
+	pub pipeline: wgpu::RenderPipeline,
+}
+impl std::fmt::Display for Shader {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{} ({:?}), vp: {:?}, ip: {:?}, {:#?}", &self.name, &self.specification_path, &self.vertex_properties, &self.instance_properties, &self.bind_groups)
+	}
+}
+
+
+
+/// A serializable intermediate enum for wgpu::TextureFormat
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+pub enum ShaderAttatchmentFormat {
+	Bgra8UnormSrgb,
+	Rgba16Float,
+	R16Float,
+}
+impl ShaderAttatchmentFormat {
+	pub fn translate(saf: ShaderAttatchmentFormat) -> wgpu::TextureFormat {
+		match saf {
+			ShaderAttatchmentFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8UnormSrgb,
+			ShaderAttatchmentFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
+			ShaderAttatchmentFormat::R16Float => wgpu::TextureFormat::R16Float,
+		}
+	}
+}
+
+
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+pub enum ShaderAttatchmentBlendFactorSpecification {
+	Zero,
+	One,
+	OneMinusSrcAlpha,
+}
+impl ShaderAttatchmentBlendFactorSpecification {
+	pub fn translate(&self) -> wgpu::BlendFactor {
+		match self {
+			ShaderAttatchmentBlendFactorSpecification::Zero => wgpu::BlendFactor::Zero,
+			ShaderAttatchmentBlendFactorSpecification::One => wgpu::BlendFactor::One,
+			ShaderAttatchmentBlendFactorSpecification::OneMinusSrcAlpha => wgpu::BlendFactor::OneMinusSrcAlpha,
+		}
+	}
+}
+
+
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+pub enum ShaderAttatchmentBlendOperationSpecification {
+	Add,
+	Subtract,
+	ReverseSubtract,
+	Min,
+	Max,
+}
+impl ShaderAttatchmentBlendOperationSpecification {
+	pub fn translate(&self) -> wgpu::BlendOperation {
+		match self {
+			ShaderAttatchmentBlendOperationSpecification::Add => wgpu::BlendOperation::Add,
+			ShaderAttatchmentBlendOperationSpecification::Subtract => wgpu::BlendOperation::Subtract,
+			ShaderAttatchmentBlendOperationSpecification::ReverseSubtract => wgpu::BlendOperation::ReverseSubtract,
+			ShaderAttatchmentBlendOperationSpecification::Min => wgpu::BlendOperation::Min,
+			ShaderAttatchmentBlendOperationSpecification::Max => wgpu::BlendOperation::Max,
+		}
+	}
+}
+
+
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+pub enum ShaderAttatchmentBlendComponentSpecification {
+	Specific {
+		src_factor: ShaderAttatchmentBlendFactorSpecification,
+		dst_factor: ShaderAttatchmentBlendFactorSpecification,
+		operation: ShaderAttatchmentBlendOperationSpecification,
+	},
+	Replace,	// wgpu::BlendComponent::REPLACE
+	Over,		// wgpu::BlendComponent::OVER
+}
+impl ShaderAttatchmentBlendComponentSpecification {
+	pub fn translate(&self) -> wgpu::BlendComponent {
+		match self {
+			ShaderAttatchmentBlendComponentSpecification::Specific{
+				src_factor, dst_factor, operation
+			} => {
+				wgpu::BlendComponent {
+					src_factor: src_factor.translate(),
+					dst_factor: dst_factor.translate(),
+					operation: operation.translate(),
+				}
+			},
+			ShaderAttatchmentBlendComponentSpecification::Over => wgpu::BlendComponent::OVER,
+			ShaderAttatchmentBlendComponentSpecification::Replace => wgpu::BlendComponent::REPLACE,
+		}
+	}
+}
+
+
+
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShaderAttatchmentSpecification {
+	pub usage: String,
+	pub format: ShaderAttatchmentFormat,
+	pub blend_colour: ShaderAttatchmentBlendComponentSpecification,
+	pub blend_alpha: ShaderAttatchmentBlendComponentSpecification,
+}
+
+
+
+/// Serializable shader information
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShaderSpecification {
 	pub name: String,
 	pub source: ShaderSource,
 	pub vertex_inputs: Vec<VertexProperty>,
 	pub instance_inputs: Vec<InstanceProperty>,
-	//pub push_constants: Vec<u32>, // Unused for now
-	pub bind_groups: BTreeMap<u32, Vec<(u32, String, BindingType)>>
+	pub attachments: Vec<ShaderAttatchmentSpecification>,
+	pub depth_write: Option<bool>,
+	pub multisample_count: u32,
+	pub bind_groups: BTreeMap<u32, BTreeMap<u32, (String, BindingType)>>
 }
 impl ShaderSpecification {
 	pub fn from_path(
@@ -75,83 +322,13 @@ impl ShaderSpecification {
 
 
 
-#[derive(Debug, Clone)]
-#[derive(Derivative)]
-#[derivative(PartialEq, Eq, Hash)]
-pub struct BindGroupEntryFormat {
-	pub binding_type: BindingType,
-	pub resource_usage: String,
-	// I don't like using another crate's type, but I'll leave that for future me to rectify
-	pub layout: wgpu::BindGroupLayoutEntry,
-}
-impl std::fmt::Display for BindGroupEntryFormat {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "('{}', {:?})", self.resource_usage, self.binding_type)
-	}
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BindGroupFormat {
-	pub binding_specifications: Vec<BindGroupEntryFormat>,
-}
-impl BindGroupFormat {
-	pub fn create_bind_group_layout(
-		&self,
-		device: &wgpu::Device,
-	) -> wgpu::BindGroupLayout {
-		device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-			entries: &self.binding_specifications.iter().map(|b| b.layout).collect::<Vec<_>>()[..],
-			label: None,
-		})
-	}
-}
-impl std::fmt::Display for BindGroupFormat {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "[")?;
-		if self.binding_specifications.len() != 0 {
-			if self.binding_specifications.len() > 1 {
-				for bsi in 0..(self.binding_specifications.len()-1) {
-					write!(f, "{}, ", self.binding_specifications[bsi])?;
-				}
-			}
-			write!(f, "{}", self.binding_specifications[self.binding_specifications.len()-1])?
-		}
-		write!(f, "]")
-	}
-}
-
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct ShaderBindGroup {
-	pub format: BindGroupFormat,
-	// If we exclude layout we can derive many things
-	pub layout_idx: usize,
-}
-
-#[derive(Debug)]
-pub struct Shader {
-	pub name: String,
-	pub path: PathBuf,
-	pub vertex_properties: Vec<VertexProperty>,
-	pub instance_properties: Vec<InstanceProperty>,
-	pub bind_groups: BTreeMap<u32, ShaderBindGroup>,
-	pub pipeline_layout: wgpu::PipelineLayout,
-	pub pipeline: wgpu::RenderPipeline,
-}
-impl std::fmt::Display for Shader {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{} ({:?}), vp: {:?}, ip: {:?}, {:#?}", &self.name, &self.path, &self.vertex_properties, &self.instance_properties, &self.bind_groups)
-	}
-}
-
-
-
 #[derive(Debug)]
 pub struct ShaderManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
 	shaders: Vec<Shader>,
-	shaders_index_name: HashMap<String, usize>,
-	shaders_index_path: HashMap<PathBuf, usize>,
+	shaders_index_by_name: HashMap<String, usize>,
+	shaders_index_by_path: HashMap<PathBuf, usize>,
 	bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 	bind_group_layouts_bind_group_format: HashMap<BindGroupFormat, usize>,
 }
@@ -164,8 +341,8 @@ impl ShaderManager {
 			device: device.clone(), 
 			queue: queue.clone(), 
 			shaders: Vec::new(), 
-			shaders_index_name: HashMap::new(), 
-			shaders_index_path: HashMap::new(),
+			shaders_index_by_name: HashMap::new(), 
+			shaders_index_by_path: HashMap::new(),
 			bind_group_layouts: Vec::new(),
 			bind_group_layouts_bind_group_format: HashMap::new(),
 		}
@@ -180,8 +357,8 @@ impl ShaderManager {
 		let shader = self.construct_shader(&specification, path);
 
 		let idx = self.shaders.len();
-		self.shaders_index_name.insert(shader.name.clone(), idx);
-		self.shaders_index_path.insert(shader.path.clone(), idx);
+		self.shaders_index_by_name.insert(shader.name.clone(), idx);
+		self.shaders_index_by_path.insert(shader.specification_path.clone(), idx);
 		self.shaders.push(shader);
 		idx
 	}
@@ -190,9 +367,9 @@ impl ShaderManager {
 		&self.shaders[i]
 	}
 
-	pub fn index_path(&self, path: &PathBuf) -> Option<usize> {
-		if self.shaders_index_path.contains_key(path) {
-			Some(self.shaders_index_path[path])
+	pub fn index_from_path(&self, path: &PathBuf) -> Option<usize> {
+		if self.shaders_index_by_path.contains_key(path) {
+			Some(self.shaders_index_by_path[path])
 		} else {
 			None
 		}
@@ -211,7 +388,7 @@ impl ShaderManager {
 		&self.bind_group_layouts[i]
 	}
 
-	pub fn bind_group_layout_index_bind_group_format(&self, bgf: &BindGroupFormat) -> Option<usize> {
+	pub fn bind_group_layout_index_from_bind_group_format(&self, bgf: &BindGroupFormat) -> Option<usize> {
 		if self.bind_group_layouts_bind_group_format.contains_key(bgf) {
 			Some(self.bind_group_layouts_bind_group_format[bgf])
 		} else {
@@ -219,124 +396,49 @@ impl ShaderManager {
 		}
 	}
 
+	/// Makes shader bind group from shader specifcation part
+	fn get_sbg(&mut self, group_spec: &BTreeMap<u32, (String, BindingType)>) -> ShaderBindGroup {
+		let mut entries = Vec::new();
+		for (j, (resource_thing, binding_type)) in group_spec {
+			let resource_usage = resource_thing.clone();
+			let format = BindGroupEntryFormat {
+				binding_type: binding_type.clone(), resource_usage,
+			};
+			let layout = format.layout_at(*j);
+			entries.push(ShaderBindGroupEntry {
+				format, layout,
+			});
+		}
+
+		let bg_format = BindGroupFormat::from_entries(&entries);
+
+		let layout_idx = match self.bind_group_layout_index_from_bind_group_format(&bg_format) {
+			Some(index) => index,
+			None => self.bind_group_layout_create(&bg_format),
+		};
+
+		ShaderBindGroup {
+			entries, 
+			layout_idx,
+		}
+	}
+
+	/// Makes shader from specification
 	fn construct_shader(
 		&mut self, 
 		specification: &ShaderSpecification,
-		specification_path: &PathBuf, // Not in specification because not loaded from file
+		specification_path: &PathBuf, // Needed for relative file paths
 	) -> Shader {
 		let name = specification.name.clone();
-		let path = specification_path.clone();
+		let specification_path = specification_path.clone();
 		let vertex_properties = specification.vertex_inputs.clone();
 		let instance_properties = specification.instance_inputs.clone();
+		let attachments = specification.attachments.clone();
 
 		let mut bind_groups = BTreeMap::new();
-		// For each bind group
 		for (i, group) in &specification.bind_groups {
-			let mut bindings = Vec::new();
-			// For each binding
-			for (j, resource_thing, binding) in group {
-				match binding {
-					BindingType::Buffer => {
-						let binding_type = BindingType::Buffer;
-						let resource_usage = resource_thing.clone();
-						let layout = wgpu::BindGroupLayoutEntry {
-							binding: *j as u32,
-							visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-							ty: wgpu::BindingType::Buffer {
-								ty: wgpu::BufferBindingType::Uniform,
-								has_dynamic_offset: false,
-								min_binding_size: None,
-							},
-							count: None,
-						};
-						bindings.push(BindGroupEntryFormat {
-							binding_type, resource_usage, layout,
-						});
-					},
-					BindingType::Texture => {
-						let binding_type = BindingType::Texture;
-						let resource_usage = resource_thing.clone();
-						let layout = wgpu::BindGroupLayoutEntry {
-							binding: *j as u32,
-							visibility: wgpu::ShaderStages::FRAGMENT,
-							ty: wgpu::BindingType::Texture {
-								sample_type: wgpu::TextureSampleType::Float { filterable: true },
-								view_dimension: wgpu::TextureViewDimension::D2,
-								multisampled: false,
-							},
-							count: None,
-						};
-						bindings.push(BindGroupEntryFormat {
-							binding_type, resource_usage, layout,
-						});
-					},
-					BindingType::TextureArray => {
-						let binding_type = BindingType::TextureArray;
-						let resource_usage = resource_thing.clone();
-						let layout = wgpu::BindGroupLayoutEntry {
-							binding: *j as u32,
-							visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-							ty: wgpu::BindingType::Texture {
-								sample_type: wgpu::TextureSampleType::Float { filterable: true },
-								view_dimension: wgpu::TextureViewDimension::D2,
-								multisampled: false,
-							},
-							count: NonZeroU32::new(1024),
-						};
-						bindings.push(BindGroupEntryFormat {
-							binding_type, resource_usage, layout,
-						});
-					},
-					BindingType::ArrayTexture => {
-						let binding_type = BindingType::ArrayTexture;
-						let resource_usage = resource_thing.clone();
-						let layout = wgpu::BindGroupLayoutEntry {
-							binding: *j as u32,
-							visibility: wgpu::ShaderStages::FRAGMENT,
-							ty: wgpu::BindingType::Texture {
-								sample_type: wgpu::TextureSampleType::Float { filterable: true },
-								view_dimension: wgpu::TextureViewDimension::D2Array,
-								multisampled: false,
-							},
-							count: None,
-						};
-						bindings.push(BindGroupEntryFormat {
-							binding_type, resource_usage, layout,
-						});
-					},
-					BindingType::Sampler => {
-						let binding_type = BindingType::Sampler;
-						let resource_usage = resource_thing.clone();
-						let layout = wgpu::BindGroupLayoutEntry {
-							binding: *j as u32,
-							visibility: wgpu::ShaderStages::FRAGMENT,
-							ty: wgpu::BindingType::Sampler {
-								comparison: false,
-								filtering: true,
-							},
-							count: None,
-						};
-						bindings.push(BindGroupEntryFormat {
-							binding_type, resource_usage, layout,
-						});
-					},
-					_ => todo!("Okay so I missed something here"),
-				}
-			}
-
-			let bg_format = BindGroupFormat {
-				binding_specifications: bindings,
-			};
-			let layout_idx = match self.bind_group_layout_index_bind_group_format(&bg_format) {
-				Some(index) => index,
-				None => self.bind_group_layout_create(&bg_format),
-			};
-			
+			let shader_bind_group = self.get_sbg(group);
 			let location = *i as u32;
-			let shader_bind_group = ShaderBindGroup {
-				format: bg_format, 
-				layout_idx,
-			};
 			bind_groups.insert(location, shader_bind_group);
 		}
 
@@ -346,14 +448,14 @@ impl ShaderManager {
 			push_constant_ranges: &[],
 		});
 
-		let pipeline = self.shader_pipeline(specification, specification_path, &pipeline_layout);
+		let pipeline = self.shader_pipeline(specification, &specification_path, &pipeline_layout);
 
 		Shader {
-			name, path, vertex_properties, instance_properties, bind_groups, pipeline_layout, pipeline,
+			name, specification_path, vertex_properties, instance_properties, attachments, bind_groups, pipeline_layout, pipeline,
 		}
 	}
 
-	// Make pipeline from shader specification
+	/// Makes pipeline from shader specification
 	fn shader_pipeline(
 		&self, 
 		specification: &ShaderSpecification, 
@@ -483,19 +585,40 @@ impl ShaderManager {
 			_ => panic!("Unimplemented shader type!"),
 		};
 		
-		info!("Vertex module");
 		let vertex_shader_module = unsafe { self.device.create_shader_module_spirv( &wgpu::ShaderModuleDescriptorSpirV { 
 			label: vpath.to_str(), 
 			source: wgpu::util::make_spirv_raw(&vertex_source[..]), 
 		})};
-		info!("Fragment module");
 		let fragment_shader_module = unsafe { self.device.create_shader_module_spirv(
 		&wgpu::ShaderModuleDescriptorSpirV { 
 			label: vpath.to_str(), 
 			source: wgpu::util::make_spirv_raw(&fragment_source[..]), 
 		})};
 
-		// The pipeline itself
+		let depth_stencil = match specification.depth_write {
+			Some(depth_write_enabled) => {
+				Some(wgpu::DepthStencilState {
+					format: BoundTexture::DEPTH_FORMAT,
+					depth_write_enabled,
+					depth_compare: wgpu::CompareFunction::Less,
+					stencil: wgpu::StencilState::default(),
+					bias: wgpu::DepthBiasState::default(),
+				})
+			}
+			None => None,
+		};
+
+		let attachments = specification.attachments.iter().map(|a| {
+			wgpu::ColorTargetState {
+				format: ShaderAttatchmentFormat::translate(a.format),
+				blend: Some(wgpu::BlendState {
+					alpha: a.blend_alpha.translate(),
+					color: a.blend_colour.translate(),
+				}),
+				write_mask: wgpu::ColorWrites::ALL,
+			}
+		}).collect::<Vec<_>>();
+
 		self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
 			label: Some(&*pipeline_label),
 			layout: Some(layout),
@@ -507,16 +630,9 @@ impl ShaderManager {
 			fragment: Some(wgpu::FragmentState {
 				module: &fragment_shader_module,
 				entry_point: fragment_entry,
-				targets: &[wgpu::ColorTargetState {
-					format: wgpu::TextureFormat::Bgra8UnormSrgb,
-					blend: Some(wgpu::BlendState {
-						alpha: wgpu::BlendComponent::REPLACE,
-						color: wgpu::BlendComponent::REPLACE,
-					}),
-					write_mask: wgpu::ColorWrites::ALL,
-				}],
+				targets: &attachments[..],
 			}),
-			// Should we pass this as an optional function argument?
+			// Should we allow this to be specified in function arguments?
 			primitive: wgpu::PrimitiveState {
 				topology: wgpu::PrimitiveTopology::TriangleList,
 				strip_index_format: None,
@@ -528,15 +644,9 @@ impl ShaderManager {
 				// Requires Features::CONSERVATIVE_RASTERIZATION
 				conservative: false,
 			},
-			depth_stencil: Some(BoundTexture::DEPTH_FORMAT).map(|format| wgpu::DepthStencilState {
-				format,
-				depth_write_enabled: true,
-				depth_compare: wgpu::CompareFunction::Less,
-				stencil: wgpu::StencilState::default(),
-				bias: wgpu::DepthBiasState::default(),
-			}),
+			depth_stencil,
 			multisample: wgpu::MultisampleState {
-				count: 1,
+				count: specification.multisample_count,
 				mask: !0,
 				alpha_to_coverage_enabled: false,
 			},
@@ -550,39 +660,16 @@ impl ShaderManager {
 mod tests {
 	use super::*;
 
-	fn create_example_shader() -> ShaderSpecification {
-		// ShaderSpecification {
-		// 	name: "example".into(),
-		// 	source: ShaderSource {
-		// 		file_type: ShaderSourceType::Glsl,
-		// 		vertex_path: "vertex.vert".into(),
-		// 		vertex_entry: "main".into(),
-		// 		fragment_path: "fragment.frag".into(),
-		// 		fragment_entry: "main".into(),
-		// 	},
-		// 	vertex_inputs: vec!(VertexInput::Vertex, VertexInput::Instance),
-		// 	bind_groups: vec!(
-		// 		vec!(
-		// 			BindingType::Buffer("camera uniform".into()),
-		// 		),
-		// 		vec!(
-		// 			BindingType::Texture("albedo".into(), TextureBindingType::Texture),
-		// 			BindingType::Sampler("albedo sampler".into()),
-		// 		)
-		// 	)
-		// }
-		todo!()
-	}
 
 	#[test]
 	fn test_serialize() {
-		let data = create_example_shader();
-		let pretty = ron::ser::PrettyConfig::new()
-			.depth_limit(3)
-			.separate_tuple_members(true)
-			.enumerate_arrays(false);
-		let s = ron::ser::to_string_pretty(&data, pretty).expect("Serialization failed");
-		println!("{}", s);
+		// let data = create_example_shader();
+		// let pretty = ron::ser::PrettyConfig::new()
+		// 	.depth_limit(3)
+		// 	.separate_tuple_members(true)
+		// 	.enumerate_arrays(false);
+		// let s = ron::ser::to_string_pretty(&data, pretty).expect("Serialization failed");
+		// println!("{}", s);
 		assert!(true);
 	}
 }

@@ -94,7 +94,39 @@ impl Mesh {
 		}
 	}
 
+	pub fn vertex_data(&self, vertex_properties: &Vec<VertexProperty>) -> Vec<u8> {
+		let mut vertices_bytes = Vec::new();
+		for i in 0..self.positions.as_ref().unwrap().len() {
+			for input in vertex_properties {
+				match input {
+					VertexProperty::VertexPosition => {
+						vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexPosition {
+							position: self.positions.as_ref().unwrap()[i],
+						}));
+					},
+					VertexProperty::VertexColour => {
+						// Todo: don't simply fill with default value
+						vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexColour {
+							colour: [0.0, 0.0, 0.0],
+						}));
+					},
+					VertexProperty::VertexUV => {
+						vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexUV {
+							uv: self.uvs.as_ref().unwrap()[i],
+						}));
+					},
+					_ => panic!("Weird vertex input or something idk"),
+				}
+			}
+		}
+		vertices_bytes
+	}
+
 	pub fn quad() -> Self {
+		todo!()
+	}
+	
+	pub fn cross() -> Self {
 		todo!()
 	}
 }
@@ -155,10 +187,11 @@ impl MeshManager {
 
 
 
-// A mesh compiled to with certain vertex properties
+/// Vertex property data of a mesh
 #[derive(Debug)]
 pub struct BoundMesh {
 	pub name: String,
+	pub mesh_idx: usize,
 	pub vertex_properties: Vec<VertexProperty>,
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
@@ -187,7 +220,8 @@ pub struct BoundMeshManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
 	meshes: Vec<BoundMesh>, // These should be stored in an arena
-	meshes_index_name_properties: HashMap<(String, Vec<VertexProperty>), usize>,
+	meshes_index_from_name_properties: HashMap<(String, Vec<VertexProperty>), usize>,
+	meshes_index_from_index_properties: HashMap<(usize, Vec<VertexProperty>), usize>,
 	mesh_manager: Arc<RwLock<MeshManager>>,
 }
 impl BoundMeshManager {
@@ -200,7 +234,8 @@ impl BoundMeshManager {
 			device: device.clone(), 
 			queue: queue.clone(),
 			meshes: Vec::new(),
-			meshes_index_name_properties: HashMap::new(),
+			meshes_index_from_name_properties: HashMap::new(),
+			meshes_index_from_index_properties: HashMap::new(),
 			mesh_manager: mesh_manager.clone(),
 		}
 	}
@@ -209,94 +244,85 @@ impl BoundMeshManager {
 		&self.meshes[i]
 	}
 
-	pub fn bind(
-		&self, 
-		mesh: &Mesh,
-		vertex_properties: &Vec<VertexProperty>,
-	) -> BoundMesh {
-		let vertex_properties = vertex_properties.clone();
-
-		let name = format!("{}", &mesh.name);
-		let n_vertices = mesh.indices.as_ref().unwrap().len() as u32;
-
-		let mut vertices_bytes = Vec::new();
-		for i in 0..mesh.positions.as_ref().unwrap().len() {
-			for input in &vertex_properties {
-				match input {
-					VertexProperty::VertexPosition => {
-						vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexPosition {
-							position: mesh.positions.as_ref().unwrap()[i],
-						}));
-					},
-					VertexProperty::VertexColour => {
-						// Todo: don't simply fill with default value
-						vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexColour {
-							colour: [0.0, 0.0, 0.0],
-						}));
-					},
-					VertexProperty::VertexUV => {
-						vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexUV {
-							uv: mesh.uvs.as_ref().unwrap()[i],
-						}));
-					},
-					_ => panic!("Weird vertex input or something idk"),
-				}
-			}
-		}
-
-		let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-			label: Some(&format!("{} vertex buffer", &name)),
-			contents: vertices_bytes.as_slice(),
-			usage: wgpu::BufferUsages::VERTEX,
-		});
-
-		let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-			label: Some(&format!("{} index buffer", &name)),
-			contents: bytemuck::cast_slice(mesh.indices.as_ref().unwrap().as_slice()),
-			usage: wgpu::BufferUsages::INDEX,
-		});
-
-		BoundMesh {
-			name, 
-			vertex_properties,
-			vertex_buffer,
-			index_buffer,
-			n_vertices,
-		}
-	}
-
 	pub fn insert(&mut self, bound_mesh: BoundMesh) -> usize {
 		let idx = self.meshes.len();
-		let key = (bound_mesh.name.clone(), bound_mesh.vertex_properties.clone());
-		self.meshes_index_name_properties.insert(key, idx);
+		let index_key = (bound_mesh.mesh_idx, bound_mesh.vertex_properties.clone());
+		self.meshes_index_from_index_properties.insert(index_key, idx);
+		let name_key = (bound_mesh.name.clone(), bound_mesh.vertex_properties.clone());
+		self.meshes_index_from_name_properties.insert(name_key, idx);
 		self.meshes.push(bound_mesh);
 		idx
 	}
 
-	pub fn index_name_properites(&self, name: &String, vertex_properties: &Vec<VertexProperty>) -> Option<usize> {
+	pub fn bind_by_index(&mut self, mesh_idx: usize, vertex_properties: &Vec<VertexProperty>) -> usize {
+		let mm = self.mesh_manager.read().unwrap();
+		let mesh = mm.index(mesh_idx);
+
+		info!("Binding mesh '{}' with properties '{:?}'", mesh, vertex_properties);
+
+		let vertices_bytes = mesh.vertex_data(vertex_properties);
+
+		let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some(&format!("{} vertex buffer {:?}", &mesh.name, vertex_properties)),
+			contents: vertices_bytes.as_slice(),
+			usage: wgpu::BufferUsages::VERTEX,
+		});
+		let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some(&format!("{} index buffer {:?}", &mesh.name, vertex_properties)),
+			contents: bytemuck::cast_slice(mesh.indices.as_ref().unwrap().as_slice()),
+			usage: wgpu::BufferUsages::INDEX,
+		});
+
+		let bound_mesh = BoundMesh {
+			name: mesh.name.clone(), 
+			mesh_idx,
+			vertex_properties: vertex_properties.clone(), 
+			vertex_buffer, 
+			index_buffer, 
+			n_vertices: mesh.indices.as_ref().unwrap().len() as u32,
+		};
+		
+		drop(mm);
+		self.insert(bound_mesh)
+	}
+
+	pub fn index_from_name_properites(&self, name: &String, vertex_properties: &Vec<VertexProperty>) -> Option<usize> {
 		let key = (name.clone(), vertex_properties.clone());
-		if self.meshes_index_name_properties.contains_key(&key) {
-			Some(self.meshes_index_name_properties[&key])
+		if self.meshes_index_from_name_properties.contains_key(&key) {
+			Some(self.meshes_index_from_name_properties[&key])
 		} else {
 			None
 		}
 	}
 
-	pub fn index_name_properites_bind(&mut self, name: &String, vertex_properties: &Vec<VertexProperty>) -> Option<usize> {
+	pub fn index_from_name_properites_bind(&mut self, name: &String, vertex_properties: &Vec<VertexProperty>) -> usize {
 		let mm = self.mesh_manager.read().unwrap();
 		let key = (name.clone(), vertex_properties.clone());
-		if self.meshes_index_name_properties.contains_key(&key) {
-			Some(self.meshes_index_name_properties[&key])
+		if self.meshes_index_from_name_properties.contains_key(&key) {
+			self.meshes_index_from_name_properties[&key]
 		} else if let Some(mesh_idx) = mm.index_name(name) {
-			// Clone is needed because of borrow checker stuff
-			let mesh = mm.index(mesh_idx).clone();
-			let bmesh = self.bind(&mesh, vertex_properties);
-			// Drop is needed because of even more borrow checker stuff
 			drop(mm);
-			let idx = self.insert(bmesh);
-			Some(idx)
+			self.bind_by_index(mesh_idx, vertex_properties)
+		} else {
+			panic!("Tried to access a nonexistent mesh!")
+		}
+	}
+
+	pub fn index_from_index_properites(&self, i: usize, vertex_properties: &Vec<VertexProperty>) -> Option<usize> {
+		let key = (i, vertex_properties.clone());
+		if self.meshes_index_from_index_properties.contains_key(&key) {
+			Some(self.meshes_index_from_index_properties[&key])
 		} else {
 			None
+		}
+	}
+
+	pub fn index_from_index_properites_bind(&mut self, mesh_idx: usize, vertex_properties: &Vec<VertexProperty>) -> usize {
+		let key = (mesh_idx, vertex_properties.clone());
+		if self.meshes_index_from_index_properties.contains_key(&key) {
+			self.meshes_index_from_index_properties[&key]
+		} else {
+			self.bind_by_index(mesh_idx, vertex_properties)
 		}
 	}
 }
