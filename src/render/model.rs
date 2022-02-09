@@ -19,6 +19,66 @@ pub struct ModelInstance {
 pub type ShaderInput = (InstanceProperties, VertexProperties, BindGroupFormat);
 /// instance buffer idx, [material idx, mesh idx, count])
 pub type ModelQueue = (usize, Vec<(usize, usize, u32)>);
+/// Instance idx, mesh, count
+pub type MeshQueue = (usize, Vec<(usize, u32)>);
+
+pub fn meshq_from_modelq(model_queue: &ModelQueue) -> MeshQueue {
+	let (instance_buffer_idx, model_stuff) = model_queue;
+
+	let mut mesh_queue_1 = Vec::new();
+	let mut prev_mesh = model_stuff[0].1;
+	let mut count = 0;
+	for (_mat, mesh, model_count) in model_stuff {
+		if *mesh == prev_mesh {
+			count += *model_count;
+		} else {
+			mesh_queue_1.push((*mesh, count));
+			count = 0;
+			prev_mesh = *mesh;
+		}
+	}
+	
+	(*instance_buffer_idx, mesh_queue_1)
+}
+
+pub fn modelq_from_meshq(mesh_queue: MeshQueue, materials: Vec<usize>) -> ModelQueue {
+
+	let (instance_buffer_idx, mesh_stuff) = mesh_queue;
+
+	// Expand mesh indices because I'm not smart enough to firgure out the other way
+	let mut expanded_mesh_indices = Vec::new();
+	for (i, c) in mesh_stuff {
+		for _ in 0..c {
+			expanded_mesh_indices.push(i)
+		}
+	}
+
+	// Check that we can map the two lists
+	if expanded_mesh_indices.len() != materials.len() {
+		panic!("Meshes and materials are not of same length!");
+	}
+
+	let mut model_queue_1 = Vec::new();
+	
+	// For each material
+	let mut i = 0;
+	while i < materials.len() {
+
+		// Find the length of the segment where material and mesh are the same
+		let mut count = 0;
+		while expanded_mesh_indices[i + count as usize] == expanded_mesh_indices[i] && materials[i + count as usize] == materials[i] {
+			count += 1;
+		}
+
+		model_queue_1.push((materials[i], expanded_mesh_indices[i], count));
+
+		i += count as usize;
+	}
+
+	(instance_buffer_idx, model_queue_1)
+}
+
+
 
 
 
@@ -33,19 +93,18 @@ pub type ModelQueue = (usize, Vec<(usize, usize, u32)>);
 /// 
 /// Oh also a lot of this could be parallelized with only minor changes.
 #[derive(Debug)]
-pub struct ModelsResource {
+pub struct ModelsQueueResource {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
 
 	raw_models: Vec<ModelInstance>,
-	// Instance buffer index, [bound mesh idx, bound material idx, numer of instances]
 	queues: Vec<ModelQueue>,
 	queue_index_of_format: HashMap<ShaderInput, usize>,
 
 	instances_buffers: Vec<wgpu::Buffer>,
 	instances_buffer_index_of_format: HashMap<InstanceProperties, usize>,
 }
-impl ModelsResource {
+impl ModelsQueueResource {
 	pub fn new(
 		device: &Arc<wgpu::Device>,
 		queue: &Arc<wgpu::Queue>,
@@ -61,6 +120,7 @@ impl ModelsResource {
 		}
 	}
 
+	/// Update the list of formats which might be needed
 	pub fn update_formats(
 		&mut self, 
 		formats: HashSet<ShaderInput>, 
@@ -78,6 +138,57 @@ impl ModelsResource {
 		//self.instances_buffers.resize(formats.len(), None);
 	}
 
+	/// Adds a format, compiling models and instances, without prior setup.
+	/// This can cause reallocation so it's not great to do repeatedly.
+	/// Useful for something graph related idk.
+	pub fn add_format(
+		&mut self,
+		format: &ShaderInput,
+		resources: &mut RenderResources,
+	) -> usize {
+		warn!("Adding format without setup");
+		match self.queue_index_of_format(format) {
+			Some(idx) => idx,
+			None => {
+				let instance_idx = {
+					let mut instances_data = Vec::new();
+					for model in &self.raw_models {
+						let instance_data = model.instance.data(&format.0);
+						instances_data.extend_from_slice(&instance_data[..]);
+					}
+
+					let instances_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+						label: Some("Instance Buffer"),
+						contents: &instances_data[..],
+						usage: wgpu::BufferUsages::VERTEX,
+					});
+
+					let idx = self.instances_buffers.len();
+					self.instances_buffer_index_of_format.insert(format.0.clone(), idx);
+					self.instances_buffers.push(instances_buffer);
+					idx
+				};
+
+				let queue_idx = {
+					// Once again neglect instancing for simplicity
+					let queue_contents = self.raw_models.iter().map(|model| {
+						let mesh_idx = resources.meshes.index_from_index_properites_bind(model.mesh_idx, &format.1);
+						let material_idx = resources.materials.index_from_index_format_bind(model.material_idx, &format.2, &mut resources.shaders, &mut resources.textures);
+						let count = 1;
+						(material_idx, mesh_idx, count)
+					}).collect::<Vec<_>>();
+					let idx = self.queues.len();
+					self.queue_index_of_format.insert(format.clone(), idx);
+					self.queues.push((instance_idx, queue_contents));
+					idx
+				};
+
+				queue_idx
+			}
+		}
+	}
+
+	/// Update the models that might be needed, binding each for each format
 	pub fn update_models(
 		&mut self, 
 		models: Vec<ModelInstance>,

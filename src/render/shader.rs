@@ -13,7 +13,7 @@ What inputs can it take and what would it use them for?
 
 
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 pub enum ShaderSourceType {
 	Spirv,
 	Glsl,
@@ -25,10 +25,16 @@ pub enum ShaderSourceType {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShaderSource {
 	pub file_type: ShaderSourceType,
-	pub vertex_path: PathBuf,
-	pub vertex_entry: String,
-	pub fragment_path: PathBuf,
-	pub fragment_entry: String,	
+	pub vertex: ShaderSourceFile,
+	pub fragment: Option<ShaderSourceFile>,
+}
+
+
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShaderSourceFile {
+	pub path: PathBuf,
+	pub entry: String,
 }
 
 
@@ -80,7 +86,7 @@ impl BindGroupEntryFormat {
 			BindingType::TextureArray => {
 				wgpu::BindGroupLayoutEntry {
 					binding: i,
-					visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+					visibility: wgpu::ShaderStages::FRAGMENT,
 					ty: wgpu::BindingType::Texture {
 						sample_type: wgpu::TextureSampleType::Float { filterable: true },
 						view_dimension: wgpu::TextureViewDimension::D2,
@@ -129,6 +135,11 @@ pub struct BindGroupFormat {
 	pub entry_formats: BTreeMap<u32, BindGroupEntryFormat>,
 }
 impl BindGroupFormat {
+	pub fn empty() -> Self {
+		Self {
+			entry_formats: BTreeMap::new(),
+		}
+	}
 	pub fn from_entries(entries: &Vec<ShaderBindGroupEntry>) -> Self {
 		Self {
 			entry_formats: entries.iter().map(|e| (e.layout.binding, e.format.clone())).collect::<BTreeMap<_, _>>(),
@@ -187,31 +198,14 @@ pub struct Shader {
 	pub instance_properties: Vec<InstanceProperty>,
 	pub attachments: Vec<ShaderAttatchmentSpecification>,
 	pub bind_groups: BTreeMap<u32, ShaderBindGroup>,
+	pub resources_bg_index: Option<u32>,
+	pub material_bg_index: Option<u32>,
 	pub pipeline_layout: wgpu::PipelineLayout,
 	pub pipeline: wgpu::RenderPipeline,
 }
 impl std::fmt::Display for Shader {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{} ({:?}), vp: {:?}, ip: {:?}, {:#?}", &self.name, &self.specification_path, &self.vertex_properties, &self.instance_properties, &self.bind_groups)
-	}
-}
-
-
-
-/// A serializable intermediate enum for wgpu::TextureFormat
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
-pub enum ShaderAttatchmentFormat {
-	Bgra8UnormSrgb,
-	Rgba16Float,
-	R16Float,
-}
-impl ShaderAttatchmentFormat {
-	pub fn translate(saf: ShaderAttatchmentFormat) -> wgpu::TextureFormat {
-		match saf {
-			ShaderAttatchmentFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8UnormSrgb,
-			ShaderAttatchmentFormat::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
-			ShaderAttatchmentFormat::R16Float => wgpu::TextureFormat::R16Float,
-		}
 	}
 }
 
@@ -291,7 +285,7 @@ impl ShaderAttatchmentBlendComponentSpecification {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShaderAttatchmentSpecification {
 	pub usage: String,
-	pub format: ShaderAttatchmentFormat,
+	pub format: TextureFormat,
 	pub blend_colour: ShaderAttatchmentBlendComponentSpecification,
 	pub blend_alpha: ShaderAttatchmentBlendComponentSpecification,
 }
@@ -450,9 +444,72 @@ impl ShaderManager {
 
 		let pipeline = self.shader_pipeline(specification, &specification_path, &pipeline_layout);
 
+		let resources_bg_index = match bind_groups.contains_key(&0) {
+			true => Some(0),
+			false => None,
+		};
+		let material_bg_index = match bind_groups.contains_key(&1) {
+			true => Some(1),
+			false => None,
+		};
+
 		Shader {
-			name, specification_path, vertex_properties, instance_properties, attachments, bind_groups, pipeline_layout, pipeline,
+			name, specification_path, vertex_properties, instance_properties, attachments, bind_groups, resources_bg_index, material_bg_index, pipeline_layout, pipeline,
 		}
+	}
+
+	fn make_shader_module(
+		&self, 
+		source_path: &PathBuf, 
+		source_type: ShaderSourceType,
+	) -> wgpu::ShaderModule {
+		let source = match source_type {
+			ShaderSourceType::Spirv => {
+				std::fs::read(&source_path).expect("failed to read file")
+			},
+			ShaderSourceType::Glsl => {
+				use std::io::{self, Write};
+				use std::process::Command;
+
+				warn!("Attempting to compile GLSL shaders to SPIRV using glslc");
+
+				// Test if glslc is accessible
+				match std::process::Command::new("glslc").arg("--version").status() {
+					Ok(exit_status) => {
+						if !exit_status.success() {
+							panic!("glslc seems wrong!")
+						}
+					},
+					Err(_) => panic!("glslc cannot run!"),
+				}
+
+				let mut source_dest = source_path.clone().into_os_string();
+				source_dest.push(".spv");
+
+				let voutput = Command::new("glslc")
+					.arg(&source_path)
+					.arg("-o")
+					.arg(&source_dest)
+					.output()
+					.expect("glslc command failed (vertex)");
+				if !voutput.status.success() {
+					error!("Shader compilation terminated with code {}, output is as follows:", voutput.status.code().unwrap());
+					io::stdout().write_all(&voutput.stdout).unwrap();
+					io::stderr().write_all(&voutput.stderr).unwrap();
+					panic!("Try again if you dare");
+				}
+
+				std::fs::read(&source_dest).expect("failed to read file")
+			}
+			_ => panic!("Unimplemented shader type!"),
+		};
+
+		let module = unsafe { self.device.create_shader_module_spirv( &wgpu::ShaderModuleDescriptorSpirV { 
+			label: source_path.to_str(), 
+			source: wgpu::util::make_spirv_raw(&source[..]), 
+		})};
+
+		module
 	}
 
 	/// Makes pipeline from shader specification
@@ -518,89 +575,13 @@ impl ShaderManager {
 		// Vertex and instance input
 		let vertex_buffer_layouts = &[vertex_layout, instance_layout];
 
-		// Shader compilation
-		let vertex_entry = &*specification.source.vertex_entry;
-		let fragment_entry = &*specification.source.fragment_entry;
-		// Todo: Test if these are the same file
-		let specification_base = specification_path.parent().unwrap();
-		let vpath = specification_base.join(&specification.source.vertex_path);
-		let fpath = specification_base.join(&specification.source.fragment_path);
-		let [vertex_source, fragment_source] = match specification.source.file_type {
-			ShaderSourceType::Spirv => {
-				let vsrc = std::fs::read(&vpath).expect("failed to read file");
-				let fsrc = std::fs::read(&fpath).expect("failed to read file");
-				[vsrc, fsrc]
-			},
-			ShaderSourceType::Glsl => {
-				use std::io::{self, Write};
-				use std::process::Command;
-
-				warn!("Attempting to compile GLSL shaders to SPIRV using glslc");
-
-				// Test if glslc is accessible
-				match std::process::Command::new("glslc").arg("--version").status() {
-					Ok(exit_status) => {
-						if !exit_status.success() {
-							panic!("glslc seems wrong!")
-						}
-					},
-					Err(_) => panic!("glslc cannot run!"),
-				}
-
-				let mut vdest = vpath.clone().into_os_string();
-				vdest.push(".spv");
-				let mut fdest = fpath.clone().into_os_string();
-				fdest.push(".spv");
-
-				let voutput = Command::new("glslc")
-					.arg(&vpath)
-					.arg("-o")
-					.arg(&vdest)
-					.output()
-					.expect("glslc command failed (vertex)");
-				if !voutput.status.success() {
-					error!("Vertex shader compilation terminated with code {}, output is as follows:", voutput.status.code().unwrap());
-					io::stdout().write_all(&voutput.stdout).unwrap();
-					io::stderr().write_all(&voutput.stderr).unwrap();
-					panic!("Try again if you dare");
-				}				
-
-				let foutput = Command::new("glslc")
-					.arg(&fpath)
-					.arg("-o")
-					.arg(&fdest)
-					.output()
-					.expect("glslc command failed (fragment)");
-				if !foutput.status.success() {
-					error!("Fragment shader compilation terminated with code {}, output is as follows:", foutput.status.code().unwrap());
-					io::stdout().write_all(&foutput.stdout).unwrap();
-					io::stderr().write_all(&foutput.stderr).unwrap();
-					panic!("Try again if you dare");
-				}
-
-				let vsrc = std::fs::read(&vdest).expect("failed to read file");
-				let fsrc = std::fs::read(&fdest).expect("failed to read file");
-				[vsrc, fsrc]
-			}
-			_ => panic!("Unimplemented shader type!"),
-		};
-		
-		let vertex_shader_module = unsafe { self.device.create_shader_module_spirv( &wgpu::ShaderModuleDescriptorSpirV { 
-			label: vpath.to_str(), 
-			source: wgpu::util::make_spirv_raw(&vertex_source[..]), 
-		})};
-		let fragment_shader_module = unsafe { self.device.create_shader_module_spirv(
-		&wgpu::ShaderModuleDescriptorSpirV { 
-			label: vpath.to_str(), 
-			source: wgpu::util::make_spirv_raw(&fragment_source[..]), 
-		})};
-
+		// Depth input
 		let depth_stencil = match specification.depth_write {
 			Some(depth_write_enabled) => {
 				Some(wgpu::DepthStencilState {
 					format: BoundTexture::DEPTH_FORMAT,
 					depth_write_enabled,
-					depth_compare: wgpu::CompareFunction::Less,
+					depth_compare: wgpu::CompareFunction::LessEqual,
 					stencil: wgpu::StencilState::default(),
 					bias: wgpu::DepthBiasState::default(),
 				})
@@ -608,9 +589,10 @@ impl ShaderManager {
 			None => None,
 		};
 
+		// Attachments input
 		let attachments = specification.attachments.iter().map(|a| {
 			wgpu::ColorTargetState {
-				format: ShaderAttatchmentFormat::translate(a.format),
+				format: a.format.translate(),
 				blend: Some(wgpu::BlendState {
 					alpha: a.blend_alpha.translate(),
 					color: a.blend_colour.translate(),
@@ -619,25 +601,45 @@ impl ShaderManager {
 			}
 		}).collect::<Vec<_>>();
 
+		// Shader compilation
+		let specification_context = specification_path.parent().unwrap();
+		
+		let vertex_entry = &*specification.source.vertex.entry;
+		let vpath = specification_context.join(&specification.source.vertex.path);
+		let vertex_module = self.make_shader_module(&vpath, specification.source.file_type);
+		let vertex = wgpu::VertexState {
+			module: &vertex_module,
+			entry_point: vertex_entry,
+			buffers: vertex_buffer_layouts,
+		};
+
+		let fragment_module;
+		let fragment = match &specification.source.fragment {
+			Some(stuff) => {
+				let fragment_entry = &*stuff.entry;
+				let fpath = specification_context.join(&stuff.path);
+				fragment_module = self.make_shader_module(&fpath, specification.source.file_type);
+				Some(wgpu::FragmentState {
+					module: &fragment_module,
+					entry_point: fragment_entry,
+					targets: &attachments[..],
+				})
+			},
+			None => None,
+		};
+
 		self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
 			label: Some(&*pipeline_label),
 			layout: Some(layout),
-			vertex: wgpu::VertexState {
-				module: &vertex_shader_module,
-				entry_point: vertex_entry,
-				buffers: vertex_buffer_layouts,
-			},
-			fragment: Some(wgpu::FragmentState {
-				module: &fragment_shader_module,
-				entry_point: fragment_entry,
-				targets: &attachments[..],
-			}),
+			vertex,
+			fragment,
 			// Should we allow this to be specified in function arguments?
 			primitive: wgpu::PrimitiveState {
 				topology: wgpu::PrimitiveTopology::TriangleList,
 				strip_index_format: None,
 				front_face: wgpu::FrontFace::Ccw,
-				cull_mode: None, // Some(wgpu::Face::Back),
+				cull_mode: Some(wgpu::Face::Back),
+				// cull_mode: None,
 				polygon_mode: wgpu::PolygonMode::Fill, // "Line" for wireframe
 				// Requires Features::DEPTH_CLAMPING
 				clamp_depth: false,
@@ -651,25 +653,5 @@ impl ShaderManager {
 				alpha_to_coverage_enabled: false,
 			},
 		})
-	}
-}
-
-
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-
-	#[test]
-	fn test_serialize() {
-		// let data = create_example_shader();
-		// let pretty = ron::ser::PrettyConfig::new()
-		// 	.depth_limit(3)
-		// 	.separate_tuple_members(true)
-		// 	.enumerate_arrays(false);
-		// let s = ron::ser::to_string_pretty(&data, pretty).expect("Serialization failed");
-		// println!("{}", s);
-		assert!(true);
 	}
 }

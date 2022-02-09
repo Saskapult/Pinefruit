@@ -87,20 +87,28 @@ impl Camera {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CameraUniform {
-	// Mat doesn't implement Zeroable so we need to convert to array literals
+	// Position of the camera
 	position: [f32; 4],
+	// Projection * inverse of camera transform 
 	view_projection: [[f32; 4]; 4],
+	// Projection stuff
+	projection: [[f32; 4]; 4],
+	inv_projection: [[f32; 4]; 4],
 }
 impl CameraUniform {
 	pub fn new() -> Self {
 		Self {
 			position: [0.0; 4],
 			view_projection: Matrix4::identity().into(),
+			projection: Matrix4::identity().into(),
+			inv_projection: Matrix4::identity().into(),
 		}
 	}
 	pub fn update(&mut self, camera: &Camera, width: f32, height: f32,) {
 		self.position = camera.position.to_homogeneous().into();
-		self.view_projection = (camera.view_projection_matrix(width, height)).into();
+		self.view_projection = camera.view_projection_matrix(width, height).into();
+		self.projection = camera.projection_matrix(width, height).into();
+		self.inv_projection = camera.projection_matrix(width, height).try_inverse().unwrap().into();
 	}
 }
 

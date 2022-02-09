@@ -10,18 +10,27 @@ use serde::{Serialize, Deserialize};
 
 
 
+
+/// Format for loaded textures (not rendering things!)
 #[derive(Debug)]
 pub enum TextureType {
-	Normal,
 	RGBA,
-	RGB,
+	SRGBA,
+	DEPTH,
 }
 impl TextureType {
+	pub fn translate(&self) -> wgpu::TextureFormat {
+		match self {
+			TextureType::SRGBA => wgpu::TextureFormat::Rgba8UnormSrgb,
+			TextureType::RGBA => wgpu::TextureFormat::Rgba8Unorm,
+			TextureType::DEPTH => wgpu::TextureFormat::Depth32Float,
+		}
+	}
 	// Format and bytes per pixel
 	pub fn get_info(&self) -> (wgpu::TextureFormat, u32) {
 		match self {
-			TextureType::Normal => (wgpu::TextureFormat::Rgba8Unorm, 4),
-			TextureType::RGBA => (wgpu::TextureFormat::Rgba8UnormSrgb, 4),
+			TextureType::RGBA => (wgpu::TextureFormat::Rgba8Unorm, 4),
+			TextureType::SRGBA => (wgpu::TextureFormat::Rgba8UnormSrgb, 4),
 			_ => todo!(),
 		}
 	}
@@ -29,18 +38,30 @@ impl TextureType {
 
 
 
+/// Wgpu TextureFormat wrapper
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum TextureFormat {
 	Rgba8Unorm,
 	Rgba8UnormSrgb,
+	Depth32Float,
+	Bgra8UnormSrgb,
+	R8Unorm,
 }
 impl TextureFormat {
-	// Format and bytes per pixel
-	pub fn get_info(&self) -> (wgpu::TextureFormat, u32) {
+	pub fn translate(&self) -> wgpu::TextureFormat {
 		match self {
-			TextureFormat::Rgba8Unorm => (wgpu::TextureFormat::Rgba8Unorm, 4),
-			TextureFormat::Rgba8UnormSrgb => (wgpu::TextureFormat::Rgba8UnormSrgb, 4),
+			TextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
+			TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+			TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8UnormSrgb,
+			TextureFormat::Depth32Float => wgpu::TextureFormat::Depth32Float,
+			TextureFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
 			_ => todo!(),
+		}
+	}
+	pub fn is_depth(&self) -> bool {
+		match self {
+			TextureFormat::Depth32Float => true,
+			_ => false,
 		}
 	}
 }
@@ -56,8 +77,10 @@ pub struct BoundTexture {
 	pub mip_count: u32,
 }
 impl BoundTexture {
-	// Depth texture stuff
+	pub const SRGB_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb; 
+	pub const OTHER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm; 
 	pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;    
+	
 	pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
 		let size = wgpu::Extent3d {
 			width,
@@ -88,10 +111,10 @@ impl BoundTexture {
 		queue: &wgpu::Queue,
 		path: &PathBuf,
 		name: &String,
-		ttype: TextureType,
+		srgb: bool,
 	) -> Self {
 		let image = image::open(path).expect("Failed to open file");
-		BoundTexture::from_image(device, queue, &image, name, ttype)
+		BoundTexture::from_image(device, queue, &image, name, srgb)
 	}
 
 	pub fn from_image(
@@ -99,7 +122,7 @@ impl BoundTexture {
 		queue: &wgpu::Queue,
 		img: &image::DynamicImage,
 		name: &String,
-		ttype: TextureType,
+		srgb: bool,
 	) -> Self {
 		let name = name.clone();
 
@@ -110,8 +133,12 @@ impl BoundTexture {
 			height,
 			depth_or_array_layers: 1,
 		};
-		// Could use an enum to choose (normal => Rgba8Unorm)
-		let (format, _) = ttype.get_info();
+		
+		let format= if srgb {
+			BoundTexture::SRGB_FORMAT
+		} else {
+			BoundTexture::OTHER_FORMAT
+		};
 
 		let mip_count = 1;
 
@@ -152,13 +179,13 @@ impl BoundTexture {
 		queue: &wgpu::Queue, 
 		images: &Vec<DynamicImage>,
 		name: &String,
-		ttype: TextureType,
+		srgb: bool,
 		width: u32,
 		height: u32,
 	) -> BoundTexture {
 		let name = name.clone();
 		// Make rgba8 copies with the specified size
-		let rgb8 = images.iter().map(|t| {
+		let rgba8 = images.iter().map(|t| {
 			if t.dimensions() == (width, height) {
 				t.to_rgba8()
 			} else {
@@ -172,10 +199,10 @@ impl BoundTexture {
 			depth_or_array_layers: images.len() as u32,
 		};
 
-		let format = match ttype {
-			TextureType::RGBA => wgpu::TextureFormat::Rgba8UnormSrgb,
-			TextureType::Normal => wgpu::TextureFormat::Rgba8Unorm,
-			_ => panic!("Weird image detected!"),
+		let format= if srgb {
+			BoundTexture::SRGB_FORMAT
+		} else {
+			BoundTexture::OTHER_FORMAT
 		};
 
 		let mip_count = 1;
@@ -197,7 +224,7 @@ impl BoundTexture {
 	
 		// Concatenate raw texture data
 		let mut collected_rgba = Vec::new();
-		for image_data in rgb8 {
+		for image_data in rgba8 {
 			collected_rgba.append(&mut image_data.into_raw());
 		}
 	
@@ -214,6 +241,19 @@ impl BoundTexture {
 		);
 	
 		BoundTexture { name, texture, view, size, mip_count }
+	}
+
+	/// Bytes will repeat if not big enough
+	pub fn from_bytes(
+		_device: &wgpu::Device,
+		_queue: &wgpu::Queue,
+		_name: &String, 
+		_width: u32,
+		_height: u32,
+		_bytes: &[u8], 
+		_srgb: bool,
+	) -> Self {
+		todo!()
 	}
 
 	pub fn fill(&self, data: &[u8], queue: &wgpu::Queue) {
@@ -234,7 +274,7 @@ impl BoundTexture {
 		);
 	}
 
-	pub fn new(
+	pub fn new_with_format(
 		device: &wgpu::Device,
 		name: &String,
 		format: wgpu::TextureFormat,
@@ -372,7 +412,7 @@ impl BoundTextureManager {
 			&self.device, &self.queue, 
 			&texture.data, 
 			&format!("{}: {:?}", &texture.name, &texture.path), 
-			TextureType::RGBA,
+			true, // Todo make this good
 		);
 		let idx = self.insert(entry);
 		if let Some(path) = texture.path.clone() {

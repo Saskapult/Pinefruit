@@ -7,6 +7,77 @@ use std::time::Instant;
 
 
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SSAOUniform {
+	pub radius: f32,
+	pub bias: f32,
+	pub contrast: f32,
+	pub noise_scale: [f32; 2],
+	pub kernel: [[f32; 3]; 16],
+}
+impl SSAOUniform {
+	pub fn new() -> Self {
+		Self {
+			radius: 1.0,
+			bias: 0.01,
+			contrast: 1.5,
+			noise_scale: [1.0, 1.0],
+			kernel: SSAOUniform::make_hemisphere_kernel(),
+		}
+	}
+
+	pub fn update(&mut self, width: u32, height: u32) {
+		let scale_width = width as f32 / 4.0;
+		let scale_height = height as f32 / 4.0; 
+		self.noise_scale = [scale_width, scale_height];
+	}
+
+	pub fn make_hemisphere_kernel() -> [[f32; 3]; 16] {
+		use rand::Rng;
+		use nalgebra::*;
+		let mut kernel = [[0.0; 3]; 16];
+		let mut rng = rand::thread_rng();
+
+		for i in 0..16 {
+			let mut sample = Vector3::new(
+				rng.gen::<f32>() * 2.0 - 1.0, 
+				rng.gen::<f32>() * 2.0 - 1.0, 
+				rng.gen::<f32>(),
+			).normalize();
+
+			//sample *= rng.gen::<f32>();
+
+			let mut scale = (i as f32) / (16 as f32);
+			let t = scale * scale;
+			//scale = (0.1 * (1.0 - t)) + (1.0 * t);
+			scale = 0.1 + t * (1.0 - 0.1);
+			sample *= scale;
+			
+			let s = &mut kernel[i];
+			s[0] = sample[0];
+			s[1] = sample[1];
+			s[2] = sample[2];
+		}
+
+		kernel
+	}
+
+	pub fn make_noise(amount: u32) -> Vec<[f32; 3]> {
+		use rand::Rng;
+		let mut rng = rand::thread_rng();
+		(0..amount).map(|_| {
+			[
+				rng.gen::<f32>() * 2.0 - 1.0,
+				rng.gen::<f32>() * 2.0 - 1.0,
+				rng.gen::<f32>(),
+			]
+		}).collect::<Vec<_>>()
+	}
+}
+
+
+
 
 #[derive(Debug)]
 pub struct RenderModelInstance {
@@ -25,6 +96,9 @@ pub struct Renderer {
 
 	camera_uniform: CameraUniform,
 	camera_buffer_index: usize,
+
+	ssao_uniform: SSAOUniform,
+	ssao_buffer_index: usize,
 	
 	render_resources: RenderResources,
 	
@@ -32,7 +106,7 @@ pub struct Renderer {
 	models_end: Instant,
 
 	graph_resources: GraphLocals,
-	opaque_models: ModelsResource,
+	opaque_models: ModelsQueueResource,
 	opaque_graph: Box<dyn RunnableNode>,
 
 	depth_cache: HashMap<[u32; 2], BoundTexture>, // Should have a limit for how many to store
@@ -67,22 +141,77 @@ impl Renderer {
 
 		let mut render_resources = RenderResources::new(&device, &queue, textures_data_manager, meshes_data_manager, materials_data_manager);
 		let mut graph_resources = GraphLocals::new(&device, &queue);
-		let opaque_models = ModelsResource::new(&device, &queue);
+		let opaque_models = ModelsQueueResource::new(&device, &queue);
 		let opaque_graph = Box::new(example_graph_read(&PathBuf::from("resources/graphs/default.ron"), &mut render_resources.shaders));
 
+		// Make camera uniform and save index for updating
 		let camera_uniform = CameraUniform::new();
 		let camera_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 			label: Some("Camera uniform Buffer"),
 			contents: bytemuck::cast_slice(&[camera_uniform]),
 			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 		});
-		let camera_buffer_index = graph_resources.insert_buffer(camera_uniform_buffer, &"_camera".to_string());
+		let camera_buffer_index = graph_resources.insert_buffer(camera_uniform_buffer, &"camera_uniform".to_string());
+
+		// Make ssao uniform
+		let ssao_uniform = SSAOUniform::new();
+		let ssao_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some("SSAO Uniform Buffer"),
+			contents: bytemuck::cast_slice(&[ssao_uniform]),
+			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+		});
+		let ssao_buffer_index = graph_resources.insert_buffer(ssao_uniform_buffer, &"ssao_uniform".to_string());
+
+		// Make ssao texture
+		let ssao_noise_texture = BoundTexture::new_with_format(
+			&device, &"ssao noise".to_string(), 
+			wgpu::TextureFormat::Rgba8Unorm, 
+			4, 4,
+		);
+		const NUM_PIXELS: usize = 4 * 4;
+		let random_stuff = {
+			use rand::Rng;
+			let mut rng = rand::thread_rng();
+			let u8max = u8::MAX as f32;
+			(0..NUM_PIXELS).map(|_| {
+				// [ // Random
+				// 	(rng.gen::<f32>() * u8max) as u8,
+				// 	(rng.gen::<f32>() * u8max) as u8,
+				// 	(rng.gen::<f32>() * u8max) as u8,
+				// 	(rng.gen::<f32>() * u8max) as u8,
+				// ]
+				[ // Rotate on z axis in tangent space
+					((rng.gen::<f32>() * 2.0 - 1.0) * u8max) as u8,
+					((rng.gen::<f32>() * 2.0 - 1.0) * u8max) as u8,
+					0,
+					0,
+				]
+			}).collect::<Vec<_>>().concat()
+		};
+		queue.write_texture(
+			wgpu::ImageCopyTexture {
+				aspect: wgpu::TextureAspect::All,
+				texture: &ssao_noise_texture.texture,
+				mip_level: 0,
+				origin: wgpu::Origin3d::ZERO,
+			},
+			random_stuff.as_slice(),
+			wgpu::ImageDataLayout {
+				offset: 0,
+				bytes_per_row: std::num::NonZeroU32::new(4 * ssao_noise_texture.size.width),
+				rows_per_image: std::num::NonZeroU32::new(ssao_noise_texture.size.height),
+			}, 
+			ssao_noise_texture.size,
+		);
+		graph_resources.insert_texture(ssao_noise_texture, &"ssao_noise".to_string());
 
 		Self {
 			device,
 			queue,
 			camera_uniform,
 			camera_buffer_index,
+			ssao_uniform,
+			ssao_buffer_index,
 			render_resources,
 			models_start: Instant::now(),
 			models_end: Instant::now(),
@@ -121,17 +250,18 @@ impl Renderer {
 		self.opaque_models.update_instances(0.0);
 
 		// Make resource groups
-		graph_stuff.iter().filter_map(|(_, grt)| {
-			match grt {
-				GraphResourceType::Resources(resources_input) => Some(resources_input.clone()),
-				_ => None,
-			}
-		}).for_each(|f| {
-			self.graph_resources.create_resources_group(&f, &mut self.render_resources);
-		});
+		// graph_stuff.iter().filter_map(|(_, grt)| {
+		// 	match grt {
+		// 		GraphResourceType::Resources(resources_input) => Some(resources_input.clone()),
+		// 		_ => None,
+		// 	}
+		// }).for_each(|f| {
+		// 	self.graph_resources.create_resources_group(&f, &mut self.render_resources);
+		// });
 
 		// Update graph
-		self.opaque_graph.update(&self.graph_resources, &self.opaque_models, &mut self.render_resources);
+		self.graph_resources.default_resolution = [800, 600]; // needed for texture making
+		self.opaque_graph.update(&mut self.graph_resources, &mut self.opaque_models, &mut self.render_resources);
 	}
 
 	/// Renders some objects from the perspective of a camera
@@ -141,11 +271,10 @@ impl Renderer {
 		width: u32,
 		height: u32,
 		camera: &Camera, 
-		t: Instant,
+		_t: Instant,
 	) {
-		// Create depth
-		let depth_texture = BoundTexture::create_depth_texture(&self.device, width, height, &format!("depth texture {} {}", width, height));
-		self.graph_resources.insert_texture(depth_texture, &"_depth".to_string());
+		// Set default resolution for context
+		self.graph_resources.default_resolution = [width, height];
 
 		// Update camera
 		self.camera_uniform.update(&camera, width as f32, height as f32);
@@ -155,15 +284,14 @@ impl Renderer {
 			bytemuck::cast_slice(&[self.camera_uniform]),
 		);
 
-		// Create albedo
-		let albedo_texture = BoundTexture::new(
-			&self.device,
-			&"albedo".to_string(),
-			wgpu::TextureFormat::Bgra8UnormSrgb,
-			width, 
-			height,
+		// Update ssao
+		// Todo: only do this when resolution changes
+		self.ssao_uniform.update(width, height);
+		self.queue.write_buffer(
+			&self.graph_resources.get_buffer(self.ssao_buffer_index), 
+			0, 
+			bytemuck::cast_slice(&[self.ssao_uniform]),
 		);
-		self.graph_resources.insert_texture(albedo_texture, &"albedo".to_string());
 
 		// // Update instance buffer to the current time
 		// let render_frac = self.get_render_frac(t);
@@ -175,12 +303,12 @@ impl Renderer {
 
 		// Run opaque graph
 		encoder.push_debug_group("opaque");
-		self.opaque_graph.run(&mut self.graph_resources, &self.opaque_models, &mut self.render_resources, &mut encoder);
+		self.opaque_graph.run(&mut self.graph_resources, &mut self.opaque_models, &mut self.render_resources, &mut encoder);
 		encoder.pop_debug_group();
 
 		// Copy output to destination
 		let output_texture = self.graph_resources.get_texture(
-			self.graph_resources.get_index_of_id(&"albedo".to_string(), GraphResourceType::Texture).unwrap()
+			self.graph_resources.get_index_of_id(&"final".to_string(), GraphResourceType::Texture).unwrap()
 		);
 		encoder.copy_texture_to_texture(
 			wgpu::ImageCopyTextureBase { 

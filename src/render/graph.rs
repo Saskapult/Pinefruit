@@ -20,10 +20,11 @@ pub trait RunnableNode : Send + Sync {
 	fn name(&self) -> &String;
 	fn inputs(&self) -> &HashSet<(String, GraphResourceType)>;
 	fn outputs(&self) -> &HashSet<(String, GraphResourceType)>;
-	// Pull requisite data for run()
-	fn update(&mut self, graph_resources: &GraphLocals, model_resources: &ModelsResource, render_resources: &mut RenderResources);
+	// update should pull mesh data and create texture data for run()
+	// For performance it would be best to only check to reate the resources when initialized or resolution is changed, but I am too lazy
+	fn update(&mut self, graph_resources: &mut GraphLocals, model_resources: &mut ModelsQueueResource, render_resources: &mut RenderResources);
 	// Mutate context and encode rendering
-	fn run(&self, graph_resources: &mut GraphLocals, model_resources: &ModelsResource, render_resources: &mut RenderResources, encoder: &mut wgpu::CommandEncoder);
+	fn run(&self, graph_resources: &mut GraphLocals, model_resources: &ModelsQueueResource, render_resources: &mut RenderResources, encoder: &mut wgpu::CommandEncoder);
 }
 impl std::fmt::Debug for dyn RunnableNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -36,7 +37,9 @@ impl std::fmt::Debug for dyn RunnableNode {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum GraphResourceType {
 	Resources(BindGroupFormat),
-	Models(ShaderInput),
+	Meshes(VertexProperties, InstanceProperties),
+	Materials(BindGroupFormat),
+	Models(ShaderInput), // Don't use this it's bad
 	Light(Vec<LightType>),
 	Buffer,
 	Texture,
@@ -64,6 +67,8 @@ pub struct GraphLocals {
 	
 	buffers: Vec<wgpu::Buffer>,
 	buffers_index_of_id: HashMap<String, usize>,
+
+	pub default_resolution: [u32; 2],
 }
 impl GraphLocals {
 	pub fn new(
@@ -79,6 +84,7 @@ impl GraphLocals {
 			textures_index_of_id: HashMap::new(),
 			buffers: Vec::new(),
 			buffers_index_of_id: HashMap::new(),
+			default_resolution: [0, 0],
 		}
 	}
 
@@ -100,16 +106,11 @@ impl GraphLocals {
 	}
 
 	pub fn insert_texture(&mut self, t: BoundTexture, id: &String) -> usize {
+		debug!("Inserting texture '{}' as '{}'", &t.name, id);
 		let idx = self.textures.len();
 		self.textures_index_of_id.insert(id.clone(), idx);
 		self.textures.push(t);
 		idx
-	}
-
-	/// Leaves the thing broken, please fix
-	pub fn remove_texture(&mut self, id: &String) -> BoundTexture {
-		let idx = self.textures_index_of_id.remove(id).unwrap();
-		self.textures.remove(idx)
 	}
 
 	pub fn get_buffer(&self, i: usize) -> &wgpu::Buffer {
@@ -128,7 +129,15 @@ impl GraphLocals {
 		format: &BindGroupFormat, 
 		resources: &mut RenderResources,
 	) -> usize {
-		info!("Creating resources bg for '{}'", format);
+		debug!("Creating resources bg for '{}'", format);
+
+		// Just for testing
+		let sampler_thing = self.device.create_sampler(&wgpu::SamplerDescriptor {
+			address_mode_u: wgpu::AddressMode::Repeat,
+			address_mode_v: wgpu::AddressMode::Repeat,
+			address_mode_w: wgpu::AddressMode::Repeat,
+			..Default::default()
+		});
 
 		let mut bindings = Vec::new();
 		for (&i, entry_format) in &format.entry_formats {
@@ -146,6 +155,25 @@ impl GraphLocals {
 						error!("No buffer found for resource id '{}'", resource_id);
 						panic!("Tried to reterive nonexistent resource buffer")
 					}
+				},
+				BindingType::Texture => {
+					if self.textures_index_of_id.contains_key(resource_id) {
+						let idx = self.textures_index_of_id[resource_id];
+						let texture = &self.textures[idx];
+						bindings.push(wgpu::BindGroupEntry {
+							binding: i,
+							resource: wgpu::BindingResource::TextureView(&texture.view),
+						});
+					} else {
+						error!("No texture found for resource id '{}'", resource_id);
+						panic!("Tried to reterive nonexistent resource buffer")
+					}
+				}
+				BindingType::Sampler => {
+					bindings.push(wgpu::BindGroupEntry {
+						binding: i,
+						resource: wgpu::BindingResource::Sampler(&sampler_thing),
+					});
 				},
 				_ => todo!(),
 			}
@@ -178,6 +206,14 @@ impl GraphLocals {
 			Some(self.resource_bg_index_of_format[bgf])
 		} else {
 			None
+		}
+	}
+
+	pub fn resource_bg_of_format_create(&mut self, bgf: &BindGroupFormat, resources: &mut RenderResources) -> usize {
+		if self.resource_bg_index_of_format.contains_key(bgf) {
+			self.resource_bg_index_of_format[bgf]
+		} else {
+			self.create_resources_group(bgf, resources)
 		}
 	}
 }
@@ -267,10 +303,11 @@ impl RunnableNode for GraphNode {
 	
 	fn update(
 		&mut self, 
-		graph_resources: &GraphLocals, 
-		model_resources: &ModelsResource, 
+		graph_resources: &mut GraphLocals, 
+		model_resources: &mut ModelsQueueResource, 
 		render_resources: &mut RenderResources,
 	) {
+		debug!("Updating graph {}", &self.name);
 		for node in &mut self.nodes {
 			node.update(graph_resources, model_resources, render_resources);
 		}
@@ -279,11 +316,11 @@ impl RunnableNode for GraphNode {
 	fn run(
 		&self, 
 		context: &mut GraphLocals, 
-		model_resources: &ModelsResource,
+		model_resources: &ModelsQueueResource,
 		render_resources: &mut RenderResources, 
 		encoder: &mut wgpu::CommandEncoder,
 	) {
-		info!("Running graph {}", &self.name);
+		debug!("Running graph {}", &self.name);
 		encoder.push_debug_group(&*format!("Graph node '{}'", &self.name));
 		for i in &self.order {
 			self.nodes[*i].run(context, model_resources, render_resources, encoder);
@@ -306,6 +343,7 @@ struct GraphNodeSpecification {
 enum NodeType {
 	// Graph(GraphNode),
 	Shader(ShaderNode),
+	Texture(CreateTextureNode),
 }
 
 
@@ -314,56 +352,127 @@ enum NodeType {
 enum NodeSpecificationType {
 	// Graph(GraphNodeSpecification),
 	Shader(ShaderNodeSpecification),
+	Texture(CreateTextureNodeSpecification)
+}
+
+
+
+#[derive(Debug)]
+enum QueueType {
+	Models(usize),	// Takes meshes and materials
+	Meshes(usize),	// Takes only meshes
+	FullQuad,		// Only operates on textures or something idk
 }
 
 
 
 /// A node which runs a shader
+/// 
+/// Currently a mesh queue is just a model queue with an empty material bgf.
+/// This is bad.
+/// in order to recify it a lot of code needs to be rewritten and I don't wanna.
 #[derive(Debug)]
 struct ShaderNode {
 	name: String,
 	shader_path: PathBuf,
 	shader_idx: usize,
-	globals_idx: Option<usize>,
-	models_queue: Option<usize>,
+
+	mesh_input_format: Option<MeshInputFormat>,
+	material_input_bgf: Option<BindGroupFormat>,
+
+	resources_idx: Option<usize>,
+	render_queue: Option<QueueType>,
+
 	inputs: HashSet<(String, GraphResourceType)>,
-	aliases: HashMap<String, String>,	// Flipped from spec
+	depth: Option<String>,
+	aliases: HashMap<String, String>,
 	outputs: HashSet<(String, GraphResourceType)>,
+
+	fugg_buff: Option<wgpu::Buffer>,
 }
 impl ShaderNode {
 	pub fn from_spec(spec: &ShaderNodeSpecification, folder_context: &Path, shaders: &mut ShaderManager) -> Self {
-		let aliases = spec.aliases.iter().map(|(a, b)| (b.clone(), a.clone())).collect::<HashMap<_,_>>();
+		let mut inputs = spec.render_inputs.clone();
+		if let Some(depth_id) = &spec.depth {
+			inputs.insert((depth_id.clone(), GraphResourceType::Texture));
+		}
 
-		let mut inputs = spec.inputs.clone();
-		// Add model inputs and globals format
-
-		let shader_path = folder_context.join(&spec.shader).canonicalize().unwrap();
+		let shader_path = match folder_context.join(&spec.shader).canonicalize() {
+			Ok(v) => v,
+			Err(e) => {
+				error!("Failed to canonicalize shader path ('{:?}' + '{:?}')", &folder_context, &spec.shader);
+				panic!("{}", e);
+			}
+		};
+			
 		let shader_idx = match shaders.index_from_path(&shader_path) {
 			Some(idx) => idx,
 			None => shaders.register_path(&shader_path),
 		};
 		let shader = shaders.index(shader_idx);
 
-		// Add globals input
-		let globals_bgf = ShaderNode::resources_alias_filter(&aliases, shader.bind_groups[&0].format().clone());
-		inputs.insert(("_globals".to_string(), GraphResourceType::Resources(globals_bgf)));
+		// Add globals input if needed
+		match shader.resources_bg_index {
+			Some(idx) => {
+				let globals_bgf = ShaderNode::resources_alias_filter(&spec.aliases, shader.bind_groups[&idx].format().clone());
+				inputs.insert(("_globals".to_string(), GraphResourceType::Resources(globals_bgf)));
+			},
+			None => {},
+		}
+
+		// Mesh input
+		let mesh_input = {
+			if shader.vertex_properties.len() > 0 || shader.instance_properties.len() > 0 {
+				inputs.insert(("meshes".to_string(), GraphResourceType::Meshes(
+					shader.vertex_properties.clone(), 
+					shader.instance_properties.clone(), 
+				)));
+				Some((shader.vertex_properties.clone(), shader.instance_properties.clone()))
+			} else {
+				None
+			}
+		};
 		
-		// Add shader input
-		inputs.insert(("_materials".to_string(), GraphResourceType::Models((
-			shader.instance_properties.clone(), 
-			shader.vertex_properties.clone(), 
-			shader.bind_groups[&1].format(),
-		))));
+		// Material input
+		let material_input = match shader.material_bg_index {
+			Some(idx) => {
+				inputs.insert(("materials".to_string(), GraphResourceType::Materials(
+					shader.bind_groups[&idx].format(),
+				)));
+				Some(shader.bind_groups[&idx].format())
+			},
+			None => {
+				// Currently a shader needs some material input to generate a queue
+				// We still won't bind it or anything but it needs to be here
+				inputs.insert(("materials".to_string(), GraphResourceType::Materials(
+					BindGroupFormat::empty(),
+				)));
+				None
+			},
+		};
+
+		// Add model input if needed
+		if mesh_input.is_some() && material_input.is_some() {
+			inputs.insert(("models".to_string(), GraphResourceType::Models((
+				shader.instance_properties.clone(), 
+				shader.vertex_properties.clone(), 
+				shader.bind_groups[&1].format(),
+			))));
+		}
 
 		Self {
 			name: spec.name.clone(),
 			shader_path: spec.shader.clone(),
 			shader_idx,
-			globals_idx: None,
-			models_queue: None,
+			mesh_input_format: mesh_input,
+			material_input_bgf: material_input,
+			resources_idx: None,
+			render_queue: None,
 			inputs,
-			aliases,
+			depth: spec.depth.clone(),
+			aliases: spec.aliases.clone(),
 			outputs: spec.outputs.clone(),
+			fugg_buff: None,
 		}
 	}
 
@@ -382,7 +491,7 @@ impl ShaderNode {
 		for (_, bgef) in &mut bgf.entry_formats {
 			if aliases.contains_key(&bgef.resource_usage) {
 				let alias = aliases[&bgef.resource_usage].clone();
-				info!("Found alias '{}' -> '{}'", &bgef.resource_usage, &alias);
+				trace!("Found alias '{}' -> '{}'", &bgef.resource_usage, &alias);
 				bgef.resource_usage = alias;
 			}
 		}
@@ -404,34 +513,79 @@ impl RunnableNode for ShaderNode {
 	
 	fn update(
 		&mut self, 
-		graph_resources: &GraphLocals, 
-		model_resources: &ModelsResource, 
+		graph_resources: &mut GraphLocals, 
+		model_resources: &mut ModelsQueueResource, 
 		render_resources: &mut RenderResources,
 	) {	
+		debug!("Updating shader node '{}'", &self.name);
+
 		let shader = render_resources.shaders.index(self.shader_idx);
+		let instance_properties = shader.instance_properties.clone();
+		let vertex_properties = shader.vertex_properties.clone();
+		let globals_bgf = shader.bind_groups[&0].format();
+		//let materials_bgf = shader.bind_groups[&1].format().clone();
+		drop(shader);
 
-		let g = ShaderNode::resources_alias_filter(&self.aliases, shader.bind_groups[&0].format().clone());
-		self.globals_idx = Some(
-			graph_resources.resource_bg_of_format(&g).unwrap()
+		let filtered_globals_bgf = ShaderNode::resources_alias_filter(&self.aliases, globals_bgf);
+		self.resources_idx = Some(
+			graph_resources.resource_bg_of_format_create(&filtered_globals_bgf, render_resources)
 		);
-		info!("Shader node {} chose globals idx {}", &self.name, &self.globals_idx.unwrap());
+		trace!("Shader node {} chose globals idx {}", &self.name, &self.resources_idx.unwrap());
 
-		self.models_queue = Some(
-			model_resources.queue_index_of_format(
-				&(shader.instance_properties.clone(), shader.vertex_properties.clone(), shader.bind_groups[&1].format())
-			).unwrap()
-		);
-		info!("Shader node {} chose model queue idx {}", &self.name, &self.models_queue.unwrap());
+		// Update render queue
+		self.render_queue = Some({
+			// If takes mesh input find the mesh bit
+			let takes_meshes = vertex_properties.len() > 0 || instance_properties.len() > 0;
+			if takes_meshes {
+				// Reacquire shader
+				let shader = render_resources.shaders.index(self.shader_idx);
+				match shader.material_bg_index {
+					Some(_idx) => {
+						// Model input
+						let materials_bgf = render_resources.shaders.index(self.shader_idx).bind_groups[&1].format().clone(); // Bad crude workaround
+						let model_format = (instance_properties, vertex_properties, materials_bgf);
+						let queue_index = model_resources.queue_index_of_format(&model_format).unwrap();
+						trace!("Shader node {} chose model queue idx {} (format: {:?})", &self.name, &queue_index, &model_format);
+						QueueType::Models(queue_index)
+					},
+					None => {
+						// Only mesh input
+						let model_format = (instance_properties, vertex_properties, BindGroupFormat::empty());
+						let queue_index = match model_resources.queue_index_of_format(&model_format) {
+							Some(idx) => idx,
+							None => {
+								// This should really not be done here but whatever
+								model_resources.add_format(&model_format, render_resources)
+							}
+						};
+						trace!("Shader node {} chose mesh queue idx {} (format: {:?})", &self.name, &queue_index, &model_format);
+						QueueType::Meshes(queue_index)
+					},
+				}
+			} else {
+				trace!("Shader node {} uses FullQuad", &self.name);
+				QueueType::FullQuad
+			}
+		});
+
+		// Workaround buffer for FullQuad because wgpu needs something to be bound in vertex and instance in order to draw
+		if self.fugg_buff.is_none() {
+			self.fugg_buff = Some(render_resources.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+				label: Some("fugg Buffer"),
+				contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+				usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
+			}));
+		}
 	}
 	
 	fn run(
 		&self, 
 		context: &mut GraphLocals, 
-		model_resources: &ModelsResource,
+		model_resources: &ModelsQueueResource,
 		resources: &mut RenderResources, 
 		encoder: &mut wgpu::CommandEncoder,
 	) {
-		info!("Running shader node {}", &self.name);
+		debug!("Running shader node {}", &self.name);
 		encoder.push_debug_group(&*format!("Shader node '{}'", &self.name));
 		
 		let shader = resources.shaders.index(self.shader_idx);
@@ -443,30 +597,24 @@ impl RunnableNode for ShaderNode {
 					None => attachment.usage.clone(),
 				}
 			};
-			info!("Attaching attachment {} ({})", &resource_name, &attachment.usage);
-			let attatchment_key = (resource_name.clone(), GraphResourceType::Texture);
-			if self.inputs.contains(&attatchment_key) {
-				let store = self.outputs.contains(&attatchment_key);
+			trace!("Attaching attachment {} ({})", &resource_name, &attachment.usage);
+			let attachment_key = (resource_name.clone(), GraphResourceType::Texture);
+			// error!("key is {:?}", &attatchment_key);
+			if self.inputs.contains(&attachment_key) {
+				let store = self.outputs.contains(&attachment_key);
+				trace!("Attachment store: {}", store);
 
-				let attatchment_texture = context.get_texture(context.get_index_of_id(&attachment.usage, GraphResourceType::Texture).expect("Attatchment not found!"));
+				let attachment_texture = context.get_texture({
+					let idx = context.get_index_of_id(&attachment_key.0, GraphResourceType::Texture).expect("Attachment not found!");
+					trace!("attachment idx is {}", idx);					
+					idx
+				});
 
 				wgpu::RenderPassColorAttachment {
-					view: &attatchment_texture.view,
+					view: &attachment_texture.view,
 					resolve_target: None, // Same as view unless using multisampling
 					ops: wgpu::Operations {
-						load: {
-							// Haha jonathan
-							if true {
-								wgpu::LoadOp::Clear(wgpu::Color {
-									r: 0.1,
-									g: 0.2,
-									b: 0.3,
-									a: 1.0,
-								})
-							} else {
-								wgpu::LoadOp::Load
-							}
-						},
+						load: wgpu::LoadOp::Load,
 						store,
 					},
 				}
@@ -475,29 +623,24 @@ impl RunnableNode for ShaderNode {
 			}
 		}).collect::<Vec<_>>();
 
-		let depth_stencil_attachment = {
-			let depth_key = ("_depth".to_string(), GraphResourceType::Texture);
-			let store_depth = self.outputs.contains(&depth_key);
-			let clear_depth = store_depth && !self.inputs.contains(&depth_key);
-			if self.inputs.contains(&depth_key) {
+		let depth_stencil_attachment = match &self.depth {
+			Some(depth_id) => {
+				let depth_key = (depth_id.clone(), GraphResourceType::Texture);
+				let depth_write = self.outputs.contains(&depth_key);
+
+				trace!("Attaching depth from '{}' (write: {})", depth_id, depth_write);
+
 				let dt = context.get_texture(context.get_index_of_id(&depth_key.0, GraphResourceType::Texture).expect("Depth attatchment not found!?"));
 				Some(wgpu::RenderPassDepthStencilAttachment {
 					view: &dt.view,
 					depth_ops: Some(wgpu::Operations {
-						load: {
-							if true {
-								wgpu::LoadOp::Clear(1.0)
-							} else {
-								wgpu::LoadOp::Load
-							}
-						},
-						store: store_depth,
+						load: wgpu::LoadOp::Load,
+						store: depth_write,
 					}),
 					stencil_ops: None,
 				})
-			} else {
-				None
-			}
+			},
+			_ => None,
 		};
 
 		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -509,30 +652,69 @@ impl RunnableNode for ShaderNode {
 		render_pass.set_pipeline(&shader.pipeline);
 
 		// Globals
-		let globals_bind_group = context.resource_bg(self.globals_idx.unwrap());
-		render_pass.set_bind_group(0, globals_bind_group, &[]);
+		if let Some(idx) = self.resources_idx {
+			let globals_bind_group = context.resource_bg(idx);
+			render_pass.set_bind_group(0, globals_bind_group, &[]);
+		}
 
-		let (instances_idx, models) = model_resources.queue(self.models_queue.unwrap());
+		match self.render_queue.as_ref().unwrap() {
+			QueueType::Models(models_queue_idx) => {
+				trace!("This uses a model queue");
+				let (instances_idx, models) = model_resources.queue(*models_queue_idx);
 
-		// Instances
-		let instance_buffer = model_resources.instances_buffer(*instances_idx);
-		render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+				// Instances
+				let instance_buffer = model_resources.instances_buffer(*instances_idx);
+				render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
 
-		let mut instance_position = 0;
-		for (material_idx, mesh_idx, instance_count) in models {
-			// Material
-			let material = resources.materials.index(*material_idx);
-			render_pass.set_bind_group(1, &material.bind_group, &[]);
-			
-			// Mesh
-			let mesh = resources.meshes.index(*mesh_idx);
-			render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-			render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-			
-			// Draw
-			let instance_end = instance_position + instance_count;
-			render_pass.draw_indexed(0..mesh.n_vertices, 0, instance_position..instance_end);
-			instance_position = instance_end;
+				let mut instance_position = 0;
+				for (material_idx, mesh_idx, instance_count) in models {
+					// Material
+					let material = resources.materials.index(*material_idx);
+					render_pass.set_bind_group(1, &material.bind_group, &[]);
+					
+					// Mesh
+					let mesh = resources.meshes.index(*mesh_idx);
+					render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+					render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+					
+					// Draw
+					let instance_end = instance_position + instance_count;
+					render_pass.draw_indexed(0..mesh.n_vertices, 0, instance_position..instance_end);
+					instance_position = instance_end;
+				}
+			},
+			QueueType::Meshes(meshes_queue_idx) => {
+				// Mesh queues are just model queues with empty material bgf
+				// It's a crude workaround but it works around
+				trace!("This uses a mesh queue");
+				let (instances_idx, models) = model_resources.queue(*meshes_queue_idx);
+				
+				// Instances
+				let instance_buffer = model_resources.instances_buffer(*instances_idx);
+				render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+
+				let mut instance_position = 0;
+				for (_, mesh_idx, instance_count) in models {
+					// Mesh
+					let mesh = resources.meshes.index(*mesh_idx);
+					render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+					render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+					
+					// Draw
+					let instance_end = instance_position + instance_count;
+					render_pass.draw_indexed(0..mesh.n_vertices, 0, instance_position..instance_end);
+					instance_position = instance_end;
+				}
+			},
+			QueueType::FullQuad => {
+				// This must be a fullquad type game.
+				trace!("This must be a fullquad type game.");
+
+				let g = self.fugg_buff.as_ref().unwrap();
+				render_pass.set_vertex_buffer(0, g.slice(..));
+				render_pass.set_vertex_buffer(1, g.slice(..));
+				render_pass.draw(0..3, 0..1);
+			},
 		}
 
 		drop(render_pass);
@@ -542,20 +724,13 @@ impl RunnableNode for ShaderNode {
 
 
 
-#[derive(Debug, Serialize, Deserialize)]
-enum KLoadOp {
-	Load,
-	Clear(Vec<f32>),
-}
-
-
-
 /// Serializable shader node info
 #[derive(Debug, Serialize, Deserialize)]
 struct ShaderNodeSpecification {
 	pub name: String,
 	pub shader: PathBuf,
-	pub inputs: HashSet<(String, GraphResourceType)>,	// ("resource name", resource type)
+	pub render_inputs: HashSet<(String, GraphResourceType)>,	// ("resource name", resource type)
+	pub depth: Option<String>,
 	// When assigning resources to the shader inputs we look to see if the input name exists as an alias
 	// If no match is found we look through inputs as a fallback, avoiding manadtory overspecification
 	pub aliases: HashMap<String, String>,	// ("resource name", "shader input usage")
@@ -564,55 +739,168 @@ struct ShaderNodeSpecification {
 
 
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateTextureNodeSpecification {
+	pub name: String,
+	pub resource_name: String,
+	pub texture_format: TextureFormat,
+	pub resolution: Option<[u32; 2]>,	// Takes render res if none
+	pub fill_with: Option<Vec<f32>>,
+}
 
-// /// A node for clearing textures!
-// #[derive(Debug)]
-// pub struct ClearTextureNode {
-// 	name: String,
-// 	values: Vec<f32>,
+
+
+/// Creates a texture or clears it if it already exists
+#[derive(Debug)]
+pub struct CreateTextureNode {
+	name: String,
+	resource_id: String,
+	texture_format: TextureFormat,
+	resolution: Option<[u32; 2]>,
+	fill_with: Option<Vec<f32>>,
+
+	inputs: HashSet<(String, GraphResourceType)>,
+	outputs: HashSet<(String, GraphResourceType)>,
+}
+impl CreateTextureNode {
+	pub fn from_spec(spec: &CreateTextureNodeSpecification) -> Self {
+		Self {
+			name: spec.name.clone(),
+			resource_id: spec.resource_name.clone(),
+			texture_format: spec.texture_format,
+			resolution: spec.resolution,
+			fill_with: spec.fill_with.clone(),
+			inputs: HashSet::new(),
+			outputs: [(spec.resource_name.clone(), GraphResourceType::Texture)].iter().cloned().collect::<HashSet<_>>(),
+		}
+	}
+
+	fn get_texture<'a>(
+		&self,
+		context: &'a mut GraphLocals, 
+		render_resources: &mut RenderResources, 
+	) -> &'a BoundTexture {
+		
+		let [width, height] = match self.resolution {
+			Some(r) => r,
+			None => context.default_resolution,
+		};
+
+		let texxy = match context.get_index_of_id(&self.resource_id, GraphResourceType::Texture) {
+			Some(idx) => {
+				let [tex_width, tex_height] = {
+					let texxy = context.get_texture(idx);
+					[texxy.size.width, texxy.size.height]
+				};
+				if width != tex_width || height != tex_height {
+					self.create_texture(context, render_resources)
+				} else {
+					context.get_texture(idx)
+				}
+			},
+			None => {
+				self.create_texture(context, render_resources)
+			},
+		};
+
+		texxy
+	}
+
+	fn create_texture<'a>(
+		&self,
+		context: &'a mut GraphLocals, 
+		render_resources: &mut RenderResources, 
+	) -> &'a BoundTexture {
+		let [width, height] = match self.resolution {
+			Some(r) => r,
+			None => context.default_resolution,
+		};
+		let t = BoundTexture::new_with_format(
+			&render_resources.device,
+			&self.resource_id,
+			self.texture_format.translate(),
+			width,
+			height,
+		);
+		let idx = context.insert_texture(t, &self.resource_id);
+		context.get_texture(idx)
+	}
+}
+impl RunnableNode for CreateTextureNode {
+	fn name(&self) -> &String {
+		&self.name
+	}
 	
-// 	inputs: HashSet<(String, GraphResourceType)>,
-// 	outputs: HashSet<(String, GraphResourceType)>,
-// 	to_create: HashSet<(String, GraphResourceType)>,
-// }
-// impl ClearTextureNode {
-// 	pub fn from_spec(spec: ClearTextureNode) -> Self {
-// 		let to_create = spec.outputs.difference(&spec.inputs).collect::<Vec<_>>();
-// 		todo!()
-// 	}
-// }
-// impl RunnableNode for ClearTextureNode {
-// 	fn name(&self) -> &String {
-// 		&self.name
-// 	}
-// 	fn inputs(&self) -> &HashSet<(String, GraphResourceType)> {
-// 		&self.inputs
-// 	}
-// 	fn outputs(&self) -> &HashSet<(String, GraphResourceType)> {
-// 		&self.outputs
-// 	}
-// 	fn run(&self, context: &mut ResourceContext, encoder: &mut wgpu::CommandEncoder) {
-// 		println!("Running clear {}", &self.name);
-// 		for (n, t) in &self.to_create {
-// 			println!("Creating resource {} ({:?})", n, t);
-// 			// Todo: this
-// 		}
-// 		for (n, t) in &self.outputs {
-// 			println!("Clearing texture {} ({:?})", n, t);
-// 			match t {
-// 				GraphResourceType::Texture => {
-// 					let tidx = context.get_index(n, GraphResourceType::Texture).unwrap();
-// 					let tex = context.get_texture(tidx);
-// 					let int_values = self.values.iter().map(|v| *v as u8).collect::<Vec<_>>();
-// 					let n = 4 * tex.size.height * tex.size.width / (int_values.len() as u32);
-// 					let data = int_values.repeat(n as usize);
-// 					tex.fill(&data[..], &context.resources.queue);
-// 				}
-// 				_ => panic!("Hey that's not a texture!"),
-// 			}
-// 		}
-// 	}
-// }
+	fn inputs(&self) -> &HashSet<(String, GraphResourceType)> {
+		&self.inputs
+	}
+	
+	fn outputs(&self) -> &HashSet<(String, GraphResourceType)> {
+		&self.outputs
+	}
+
+	fn update(&mut self, context: &mut GraphLocals, _: &mut ModelsQueueResource, render_resources: &mut RenderResources) {
+		// Create if not exists
+		let _texxy = self.get_texture(context, render_resources);
+	}
+
+	fn run(
+		&self, 
+		context: &mut GraphLocals, 
+		_: &ModelsQueueResource,
+		render_resources: &mut RenderResources, 
+		encoder: &mut wgpu::CommandEncoder,
+	) {
+		debug!("Running texture node {}", &self.name);
+		encoder.push_debug_group(&*format!("Texture node '{}'", &self.name));
+
+		// Fill with stuff if needed
+		if let Some(fill_with) = &self.fill_with {
+			let texxy = self.get_texture(context, render_resources);
+			let colour_attachments = match self.texture_format.is_depth() {
+				true => vec![],
+				false => {vec![
+					wgpu::RenderPassColorAttachment {
+						view: &texxy.view,
+						resolve_target: None,
+						ops: wgpu::Operations {
+							load: wgpu::LoadOp::Clear(wgpu::Color {
+								r: fill_with[0] as f64,
+								g: fill_with[1] as f64,
+								b: fill_with[2] as f64,
+								a: fill_with[3] as f64,
+							}),
+							store: true,
+						},
+					},
+				]},
+			};
+	
+			let depth_stencil_attachment = match self.texture_format.is_depth() {
+				true => {
+					Some(wgpu::RenderPassDepthStencilAttachment {
+						view: &texxy.view,
+						depth_ops: Some(wgpu::Operations {
+							load: wgpu::LoadOp::Clear(fill_with[0]),
+							store: true,
+						}),
+						stencil_ops: None,
+					})
+				},
+				false => None,
+			};
+			
+			// Render pass to clear the texture
+			encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+				label: Some(&*self.name),
+				color_attachments: &colour_attachments[..],
+				depth_stencil_attachment,
+			});
+		}
+
+		encoder.pop_debug_group();
+	}
+}
 
 
 
@@ -637,7 +925,12 @@ pub fn example_graph_read(
 						graph.add_node(Box::new(ShaderNode::from_spec(spec, context, shaders)));
 					}
 				},
-				_ => panic!("fugg"),
+				NodeSpecificationType::Texture(spec) => {
+					if name == spec.name {
+						graph.add_node(Box::new(CreateTextureNode::from_spec(spec)));
+					}
+				},
+				_ => todo!("Unrecognized node!"),
 			};
 		}
 	}
@@ -647,39 +940,39 @@ pub fn example_graph_read(
 
 
 
-#[cfg(test)]
-mod tests {
-	use super::*;
+// #[cfg(test)]
+// mod tests {
+// 	use super::*;
 
-	#[test]
-	fn test_thing() {
-		//read_graph_file(&PathBuf::from("resources/graphs/kdefault.ron"));
+// 	#[test]
+// 	fn test_thing() {
+// 		//read_graph_file(&PathBuf::from("resources/graphs/kdefault.ron"));
 
-		let g = GraphNodeSpecification {
-			name: "fug".into(),
-			order: vec![],
-		};
-		let ns = vec![
-			NodeSpecificationType::Shader(ShaderNodeSpecification {
-				name: "fug".into(),
-				shader: "g".into(),
-				inputs: HashSet::from([
-					("g".into(), GraphResourceType::Texture),
-				]),
-				aliases: HashMap::new(),
-				outputs: HashSet::new(),
-			})
-		];
-		let gns = (g, ns);
+// 		let g = GraphNodeSpecification {
+// 			name: "fug".into(),
+// 			order: vec![],
+// 		};
+// 		let ns = vec![
+// 			NodeSpecificationType::Shader(ShaderNodeSpecification {
+// 				name: "fug".into(),
+// 				shader: "g".into(),
+// 				render_inputs: HashSet::from([
+// 					("g".into(), GraphResourceType::Texture),
+// 				]),
+// 				aliases: HashMap::new(),
+// 				outputs: HashSet::new(),
+// 			})
+// 		];
+// 		let gns = (g, ns);
 		
-		let pretty = ron::ser::PrettyConfig::new().depth_limit(3).separate_tuple_members(true).enumerate_arrays(false);
-		let s = ron::ser::to_string_pretty(&gns, pretty).expect("Serialization failed");
-		println!("{}", &s);
+// 		let pretty = ron::ser::PrettyConfig::new().depth_limit(3).separate_tuple_members(true).enumerate_arrays(false);
+// 		let s = ron::ser::to_string_pretty(&gns, pretty).expect("Serialization failed");
+// 		println!("{}", &s);
 
-		let f: (GraphNodeSpecification, Vec<NodeSpecificationType>) = ron::de::from_str(&s)
-		.expect("Failed to read graph ron file");
-		println!("{:?}", &f);
+// 		let f: (GraphNodeSpecification, Vec<NodeSpecificationType>) = ron::de::from_str(&s)
+// 		.expect("Failed to read graph ron file");
+// 		println!("{:?}", &f);
 		
-		assert!(true);
-	}
-}
+// 		assert!(true);
+// 	}
+// }

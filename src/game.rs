@@ -48,10 +48,16 @@ impl WindowResource {
 		// This needs to stay in its own thread because it cannot sync
 		let event_thread_handle = thread::spawn(move || {
 			loop {
-				let event = event_loop_receiver.recv()
-					.expect("recv error");
-				event_loop_proxy.send_event(event)
-					.expect("Could not send window creation request");
+				match event_loop_receiver.recv() {
+					Ok(event) => {
+						event_loop_proxy.send_event(event).expect("Could not send window creation request!");
+					},
+					Err(_) => {
+						error!("Failed to recv in event thread, sending close signal");
+						event_loop_proxy.send_event(EventLoopEvent::Close).expect("Could not send close signal!");
+						return 1
+					}
+				}
 			}
 		});
 
@@ -212,15 +218,14 @@ impl RenderResource {
 		}		
 	}
 
-	/// Loads materials AND their textures
-	pub fn load_materials(&mut self) {
-		let mut mm = self.materials_manager.write().unwrap();
-		// let mats = crate::render::material::read_materials_file(&PathBuf::from("resources/kmaterials.ron"));
-		// for mat in mats {
-		// 	mm.insert(mat);
-		// }
-		todo!()
-	}
+	// /// Loads materials AND their textures
+	// pub fn load_materials(&mut self) {
+	// 	let mut mm = self.materials_manager.write().unwrap();
+	// 	let mats = crate::render::material::read_materials_file(&PathBuf::from("resources/kmaterials.ron"));
+	// 	for mat in mats {
+	// 		mm.insert(mat);
+	// 	}
+	// }
 
 }
 
@@ -364,6 +369,26 @@ impl CameraComponent {
 			fovy: 45.0,
 			znear: 0.1,
 			zfar: 100.0,
+		}
+	}
+}
+
+
+
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+struct ModelComponent {
+	pub mesh_idx: usize,
+	pub material_idx: usize,
+}
+impl ModelComponent {
+	pub fn new(
+		mesh_idx: usize,
+		material_idx: usize,
+	) -> Self {
+		Self {
+			mesh_idx,
+			material_idx,
 		}
 	}
 }
@@ -705,7 +730,7 @@ impl<'a> System<'a> for RenderSystem {
     type SystemData = (
 		WriteExpect<'a, RenderResource>,
 		ReadExpect<'a, WindowResource>,
-		// ReadStorage<'a, MeshComponent>,
+		ReadStorage<'a, ModelComponent>,
 		ReadStorage<'a, MapComponent>,
 		ReadStorage<'a, CameraComponent>,
 		ReadStorage<'a, TransformComponent>,
@@ -716,11 +741,13 @@ impl<'a> System<'a> for RenderSystem {
 		(
 			mut render_resource, 
 			window_resource,
+			model,
 			map,
 			camera,
 			transform,
 		): Self::SystemData,
 	) { 
+		use crate::render::*;
 		for (camera_c, transform_c) in (&camera, &transform).join() {
 			
 			match camera_c.target {
@@ -738,13 +765,24 @@ impl<'a> System<'a> for RenderSystem {
 					
 						// Collect render data
 						let mut render_data = Vec::new();
+						// Models
+						for (model_c, transform_c) in (&model, &transform).join() {
+							let instance = Instance::new()
+								.with_position(transform_c.position);
+							let model_instance = ModelInstance {
+								material_idx: model_c.material_idx,
+								mesh_idx: model_c.mesh_idx,
+								instance,
+							};
+							render_data.push(model_instance);
+						}
 						// Map chunks
 						for (map_c, transform_c) in (&map, &transform).join() {
 							// Renders ALL meshed chunks
 							for (cp, entry) in &map_c.chunk_models {
 								match entry {
 									ChunkModelEntry::Complete(mesh_mats) => {
-										use crate::render::*;
+										
 										let position = transform_c.position + map_c.map.chunk_point(*cp);
 										let instance = Instance::new().with_position(position);
 										for (mesh_idx, material_idx) in mesh_mats.iter().cloned() {
@@ -774,8 +812,8 @@ impl<'a> System<'a> for RenderSystem {
 
 						stex.present();
 
-						std::thread::sleep(std::time::Duration::from_millis(10000));
-						panic!()
+						// std::thread::sleep(std::time::Duration::from_millis(10000));
+						// panic!()
 					} else {
 						error!("Tried to render to nonexistent window! idx: {}", id);
 					}
@@ -821,6 +859,7 @@ impl Game {
 		// Register components
 		world.register::<TransformComponent>();
 		world.register::<MovementComponent>();
+		world.register::<ModelComponent>();
 		world.register::<MapComponent>();
 		world.register::<CameraComponent>();
 
@@ -847,7 +886,7 @@ impl Game {
 			.with(CameraComponent::new())
 			.with(
 				TransformComponent::new()
-				.with_position(Vector3::new(0.0, 5.0, -5.0))
+				.with_position(Vector3::new(0.0, 0.0, -1.0))
 			)
 			.with(MovementComponent{speed: 2.0})
 			.build();
@@ -865,11 +904,98 @@ impl Game {
 			.with(RenderSystem, "render_system", &["input_system", "map_system"])
 			.build();
 
-		Self {
+		let mut g = Self {
 			world,
 			blocks_manager,
 			dispatcher,
-		}
+		};
+
+		g.make_testing_faces();
+
+		g
+	}
+
+	fn make_testing_faces(&mut self) {
+		use crate::world::*;
+		let rr = self.world.write_resource::<RenderResource>();
+
+		let xp_idx = {
+			let xp = crate::render::Mesh::new(&"xp_quad".to_string())
+				.with_positions(XP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
+				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
+				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
+				.with_indices(QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
+			rr.meshes_manager.write().unwrap().insert(xp)
+		};
+		let yp_idx = {
+			let xp = crate::render::Mesh::new(&"yp_quad".to_string())
+				.with_positions(YP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
+				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
+				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
+				.with_indices(REVERSE_QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
+			rr.meshes_manager.write().unwrap().insert(xp)
+		};
+		let zp_idx = {
+			let xp = crate::render::Mesh::new(&"zp_quad".to_string())
+				.with_positions(ZP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
+				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
+				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
+				.with_indices(QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
+			rr.meshes_manager.write().unwrap().insert(xp)
+		};
+
+		let xn_idx = {
+			let xp = crate::render::Mesh::new(&"xn_quad".to_string())
+				.with_positions(XN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
+				.with_normals((0..4).map(|_| [-1.0, 0.0, 0.0]).collect::<Vec<_>>())
+				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
+				.with_indices(REVERSE_QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
+			rr.meshes_manager.write().unwrap().insert(xp)
+		};
+		let yn_idx = {
+			let xp = crate::render::Mesh::new(&"yn_quad".to_string())
+				.with_positions(YN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
+				.with_normals((0..4).map(|_| [0.0, -1.0, 0.0]).collect::<Vec<_>>())
+				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
+				.with_indices(QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
+			rr.meshes_manager.write().unwrap().insert(xp)
+		};
+		let zn_idx = {
+			let xp = crate::render::Mesh::new(&"zn_quad".to_string())
+				.with_positions(ZN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
+				.with_normals((0..4).map(|_| [0.0, 0.0, -1.0]).collect::<Vec<_>>())
+				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
+				.with_indices(REVERSE_QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
+			rr.meshes_manager.write().unwrap().insert(xp)
+		};
+
+		drop(rr);
+
+		self.world.create_entity()
+			.with(TransformComponent::new().with_position([0.1, 0.0, 0.0].into()))
+			.with(ModelComponent::new(xp_idx, 0))
+			.build();
+		self.world.create_entity()
+			.with(TransformComponent::new().with_position([0.0, 0.1, 0.0].into()))
+			.with(ModelComponent::new(yp_idx, 0))
+			.build();
+		self.world.create_entity()
+			.with(TransformComponent::new().with_position([0.0, 0.0, 0.1].into()))
+			.with(ModelComponent::new(zp_idx, 0))
+			.build();
+
+		self.world.create_entity()
+			.with(TransformComponent::new().with_position([-0.1, 0.0, 0.0].into()))
+			.with(ModelComponent::new(xn_idx, 0))
+			.build();
+		self.world.create_entity()
+			.with(TransformComponent::new().with_position([0.0, -0.1, 0.0].into()))
+			.with(ModelComponent::new(yn_idx, 0))
+			.build();
+		self.world.create_entity()
+			.with(TransformComponent::new().with_position([0.0, 0.0, -0.1].into()))
+			.with(ModelComponent::new(zn_idx, 0))
+			.build();
 	}
 
 	pub fn setup(&mut self) {

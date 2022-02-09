@@ -11,6 +11,11 @@ In the future we could let a bound mesh specify whether its indices should use w
 */
 
 
+
+pub type MeshInputFormat = (VertexProperties, InstanceProperties);
+
+
+
 #[derive(Debug, Clone)]
 pub struct Mesh {
 	pub name: String,

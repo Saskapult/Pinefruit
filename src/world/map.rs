@@ -290,7 +290,7 @@ fn map_mesh(
 	chunk_size: [usize; 3],
 	neighbour_slices: &[Vec<Voxel>; 3], // xp, yp, zp
 	blockmap: &BlockManager,
-	collect_transparent: bool,
+	_collect_transparent: bool,
 ) -> (
 	Vec<(u32, ChunkMeshSegment)>, 	// Vec<(material id, mesh data)>
 	Vec<(usize, bool)>, 	// Vec<(model id, instance)> (bool is temporary, should use instance stuff)
@@ -301,7 +301,15 @@ fn map_mesh(
 
 		// Indices
 		let l = segment.positions.len() as u16;
-		QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
+		match direction {
+			Direction::Xp | Direction::Yn | Direction::Zp => {
+				REVERSE_QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
+			},
+			Direction::Xn | Direction::Yp | Direction::Zn => {
+				QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
+			},
+		}
+		//QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
 
 		// Normals
 		let normal = match direction {
@@ -394,7 +402,7 @@ fn map_mesh(
 
 					// If at least one of them is transparent
 					if a_transparent || b_transparent {
-						// Todo: text if should generate transparent face
+						// Todo: test if should generate transparent face
 
 						// a opaque b transparent
 						// Make positive face for a
@@ -423,13 +431,8 @@ fn map_mesh(
 									mesh_parts.get_mut(&b_material_id).unwrap()
 								}
 							};
-							let new_direction = match direction {
-								Direction::Xp => Direction::Xn,
-								Direction::Yp => Direction::Yn,
-								Direction::Zp => Direction::Zn,
-								_ => panic!("fugg"),
-							};
-							append_face(b_mesh_part, [bx,by,bz], &new_direction);
+							
+							append_face(b_mesh_part, [bx,by,bz], &direction.flip());
 						}
 					}
 				}
@@ -453,53 +456,69 @@ enum Direction {
 	Zp,
 	Zn,
 }
+impl Direction {
+	pub fn flip(&self) -> Self {
+		match self {
+			Direction::Xp => Direction::Xn,
+			Direction::Yp => Direction::Yn,
+			Direction::Zp => Direction::Zn,
+			Direction::Xn => Direction::Xp,
+			Direction::Yn => Direction::Yp,
+			Direction::Zn => Direction::Zp,
+		}
+	}
+}
 
-const XP_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new(0.5, 0.5, -0.5),
-	Vector3::new(0.5, -0.5, -0.5),
-	Vector3::new(0.5, -0.5, 0.5),
-	Vector3::new(0.5, 0.5, 0.5),
+pub const XP_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new( 0.5,  0.5, -0.5),
+	Vector3::new( 0.5, -0.5, -0.5),
+	Vector3::new( 0.5, -0.5,  0.5),
+	Vector3::new( 0.5,  0.5,  0.5),
 ];
-const YP_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new(-0.5, 0.5, 0.5),	// top left
-	Vector3::new(-0.5, 0.5, -0.5),	// bottom left
-	Vector3::new(0.5, 0.5, -0.5),	// bottom right
-	Vector3::new(0.5, 0.5, 0.5),	// top right
+pub const YP_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new( 0.5,  0.5, -0.5),
+	Vector3::new(-0.5,  0.5, -0.5),
+	Vector3::new(-0.5,  0.5,  0.5),
+	Vector3::new( 0.5,  0.5,  0.5),
 ];
-const ZP_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new(-0.5, 0.5, 0.5),
-	Vector3::new(-0.5, -0.5, 0.5),
-	Vector3::new(0.5, -0.5, 0.5),
-	Vector3::new(0.5, 0.5, 0.5),
+pub const ZP_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new( 0.5, -0.5,  0.5),
+	Vector3::new(-0.5, -0.5,  0.5),
+	Vector3::new(-0.5,  0.5,  0.5),
+	Vector3::new( 0.5,  0.5,  0.5),
 ];
-const XN_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new(-0.5, 0.5, 0.5),
-	Vector3::new(-0.5, -0.5, 0.5),
+pub const XN_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new(-0.5,  0.5, -0.5),
 	Vector3::new(-0.5, -0.5, -0.5),
-	Vector3::new(-0.5, 0.5, -0.5),
+	Vector3::new(-0.5, -0.5,  0.5),
+	Vector3::new(-0.5,  0.5,  0.5),
 ];
-const YN_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new(0.5, -0.5, -0.5),
-	Vector3::new(0.5, -0.5, 0.5),
-	Vector3::new(-0.5, -0.5, 0.5),
+pub const YN_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new( 0.5, -0.5, -0.5),
 	Vector3::new(-0.5, -0.5, -0.5),
+	Vector3::new(-0.5, -0.5,  0.5),
+	Vector3::new( 0.5, -0.5,  0.5),
 ];
-const ZN_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new(0.5, 0.5, -0.5),
-	Vector3::new(0.5, -0.5, -0.5),
+pub const ZN_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new( 0.5, -0.5, -0.5),
 	Vector3::new(-0.5, -0.5, -0.5),
-	Vector3::new(-0.5, 0.5, -0.5),
+	Vector3::new(-0.5,  0.5, -0.5),
+	Vector3::new( 0.5,  0.5, -0.5),
 ];
 
-const QUAD_UVS: [[f32; 2]; 4] = [
-	[0.0, 0.0],
-	[0.0, 1.0],
+pub const QUAD_UVS: [[f32; 2]; 4] = [
 	[1.0, 1.0],
 	[1.0, 0.0],
+	[0.0, 0.0],
+	[0.0, 1.0],
 ];
-const QUAD_INDICES: [u16; 6] = [
+pub const QUAD_INDICES: [u16; 6] = [
 	0, 1, 2,
 	2, 3, 0, 
+];
+pub const REVERSE_QUAD_INDICES: [u16; 6] = [
+	2, 1, 0,
+	0, 3, 2, 
 ];
 
 
