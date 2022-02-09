@@ -1,0 +1,25 @@
+(
+    name: "example",
+    source: (
+        file_type: Glsl,
+        vertex_path: "vertex.vert",
+        vertex_entry: "main",
+        fragment_path: "fragment.frag",
+        fragment_entry: "main",
+    ),
+    vertex_inputs: [
+        Vertex,
+        Instance,
+    ],
+    groups: [
+        (
+			
+            bindings: [
+				(binding_usage:CameraMatrix,binding_type:Buffer),
+			]
+		),
+        [
+            (binding_usage:Texture(Albedo),binding_type:Texture(Texture)),
+        ],
+    ],
+)

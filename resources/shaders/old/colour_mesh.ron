@@ -1,0 +1,26 @@
+(
+    name: "colour mesh shader",
+    source: (
+        file_type: Glsl,
+        vertex_path: "colour_mesh.vert",
+        vertex_entry: "main",
+        fragment_path: "colour_mesh.frag",
+        fragment_entry: "main",
+    ),
+    vertex_inputs: [
+        VertexPositional,
+    ],
+    instance_inputs: [
+        InstanceModelMatrix,
+        InstanceColour,
+    ],
+    //push_constants: {},
+    bind_groups: {
+        0: [
+            (0, "camera", Buffer),
+        ],
+        1: [
+            // Nothing!
+        ],
+    },
+)

@@ -1,0 +1,128 @@
+(
+    (
+        name: "kdefault",
+        order: [
+            "make depth texture",
+            "make ssao texture",
+            "make blurred ssao texture",
+            "make albedo texture",
+            "make final texture",
+
+            "depth pass",
+            "ssao generation",
+            "ssao blur",
+			"albedo pass",
+            "ssao application",
+		],
+    ),
+    [
+        Texture((
+            name: "make depth texture",
+            resource_name: "depth",
+            texture_format: Depth32Float,
+            resolution: None,
+            fill_with: Some([1.0]),
+        )),
+        Texture((
+            name: "make ssao texture",
+            resource_name: "ssao",
+            texture_format: R8Unorm,
+            resolution: None,
+            fill_with: None,
+        )),
+        Texture((
+            name: "make blurred ssao texture",
+            resource_name: "blurred_ssao",
+            texture_format: R8Unorm,
+            resolution: None,
+            fill_with: None,
+        )),
+        Texture((
+            name: "make albedo texture",
+            resource_name: "albedo",
+            texture_format: Rgba8Unorm,
+            resolution: None,
+            fill_with: Some([0.1, 0.2, 0.3, 1.0]),
+        )),
+        Texture((
+            name: "make final texture",
+            resource_name: "final",
+            texture_format: Bgra8UnormSrgb,
+            resolution: None,
+            fill_with: None,
+        )),
+
+        Shader((
+            name: "depth pass",
+            shader: "../shaders/depth.ron",
+            render_inputs: [],
+            depth: Some("depth"),
+            aliases: {
+                "camera": "_camera",
+            },
+            outputs: [
+				("depth", Texture),
+			],
+        )),
+        Shader((
+            name: "ssao generation",
+            shader: "../shaders/ssao_generate.ron",
+            render_inputs: [
+                ("depth", Texture),
+                ("ssao_noise", Texture),
+                ("ssao", Texture),
+            ],
+            depth: None,
+            aliases: {},
+            outputs: [
+				("ssao", Texture),
+			],
+        )),
+        Shader((
+            name: "ssao blur",
+            shader: "../shaders/blur.ron",
+            render_inputs: [
+                ("ssao", Texture),
+                ("blurred_ssao", Texture),
+            ],
+            depth: None,
+            aliases: {
+                "input": "ssao",
+                "output": "blurred_ssao",
+            },
+            outputs: [
+				("blurred_ssao", Texture),
+			],
+        )),
+		Shader((
+            name: "albedo pass",
+            shader: "../shaders/albedo.ron",
+            render_inputs: [
+                ("albedo", Texture),
+			],
+            depth: Some("depth"),
+            aliases: {},
+            outputs: [
+				("albedo", Texture),
+			],
+        )),
+        Shader((
+            name: "ssao application",
+            shader: "../shaders/ssao_apply.ron",
+            render_inputs: [
+                ("albedo", Texture),
+                ("blurred_ssao", Texture),
+                ("final", Texture),
+            ],
+            depth: None,
+            aliases: {
+                "ssao": "blurred_ssao",
+                "input": "albedo",
+                "occluded_texture": "final",
+            },
+            outputs: [
+				("final", Texture),
+			],
+        )),
+    ],
+)

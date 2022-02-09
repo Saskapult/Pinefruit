@@ -1,0 +1,23 @@
+[
+	(
+		name: "dirt",
+		graph: "graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/dirt.png"],
+		},
+		floats: {
+			"flat_colour": [0.0, 0.0, 0.0],
+		},
+		sounds: {},
+	), 
+	// (
+	// 	name: "sand",
+	// 	shader: "shaders/albedo.ron",
+	// 	textures: {
+	// 		"albedo": ["blockfaces/sand.png"],
+	// 	},
+	// 	floats: {
+	// 		"flat_colour": [0.0, 0.0, 0.0],
+	// 	},
+	// ),
+]

@@ -1006,7 +1006,7 @@ impl Game {
 		crate::render::Material::from_specification(&PathBuf::from("resources/materials/kmaterials.ron")).drain(..).for_each(|m| {mm.insert(m);});
 
 		let mut tm = rr.textures_manager.write().unwrap();
-		tm.insert(crate::render::Texture::new(&"dirt".to_string(), &PathBuf::from("resources/blockfaces/dirt.png")));
+		tm.insert(crate::render::Texture::new(&"dirt".to_string(), &PathBuf::from("resources//not_for_git/blockfaces/dirt.png")));
 
 		// Make default block
 		self.blocks_manager.write().unwrap().insert(crate::world::Block {

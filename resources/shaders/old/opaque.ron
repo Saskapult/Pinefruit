@@ -1,0 +1,27 @@
+(
+    name: "opaque mesh shader",
+    source: (
+        file_type: Glsl,
+        vertex_path: "opaque.vert",
+        vertex_entry: "main",
+        fragment_path: "opaque.frag",
+        fragment_entry: "main",
+    ),
+    vertex_inputs: [
+        VertexPositional,
+        VertexUV,
+        InstanceModelMatrix,
+    ],
+    //push_constants: {},
+    bind_groups: {
+        0: [
+            (0, "camera", Buffer),
+        ],
+        1: [
+            (0, "albedo", Texture),
+            (1, "normal", Texture),
+            (2, "parallax", Texture),
+            (3, "emissive", Texture),
+        ],
+    },
+)

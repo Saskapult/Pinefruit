@@ -1,0 +1,12 @@
+(
+	blocks: [
+		(
+			name: "dirt",
+			type: "opaque" // Opaque, transparent
+			texture: { // Options: every, front, back, left, right, up, down
+				"every": "textures/blocks/dirt.png",
+			},
+		), 
+		// How to specify cross and liquid?
+	],
+)

@@ -1,0 +1,33 @@
+(
+    name: "ssao application shader",
+    source: (
+        file_type: Glsl,
+        vertex: (
+            path: "fullquad.vert",
+            entry: "main",
+        ),
+        fragment: Some((
+            path: "apply_ssao.frag",
+            entry: "main",
+        )),
+    ),
+    vertex_inputs: [],
+    instance_inputs: [],
+    attachments: [
+        (
+            usage: "occluded_texture", 
+            format: Bgra8UnormSrgb, 
+            blend_colour: Replace,
+            blend_alpha: Replace,
+        ),
+    ],
+    depth_write: None,
+    multisample_count: 1,
+    bind_groups: {
+        0: {
+            0: ("albedo", Texture),
+            1: ("ssao", Texture),
+            2: ("sampler", Sampler),
+        },
+    },
+)

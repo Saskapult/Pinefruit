@@ -1,0 +1,50 @@
+(
+    name: "order independent transparency shader",
+    source: (
+        file_type: Glsl,
+        vertex_path: "oit.vert",
+        vertex_entry: "main",
+        fragment_path: "oit.frag",
+        fragment_entry: "main",
+    ),
+    vertex_inputs: [
+        VertexPosition,
+    ],
+    instance_inputs: [
+        InstanceModelMatrix,
+    ],
+    attachments: [
+        (
+            usage: "accum", 
+            format: Rgba16Float, 
+            blend_colour: One,
+            blend_alpha: One,
+        ),
+        (
+            usage: "revealage", 
+            format: R8Unorm, 
+            blend_colour: Specific(
+                src_factor: Zero,
+                dst_factor: OneMinusSrcAlpha,
+                operation: Add,
+            ),
+            blend_alpha: Specific(
+                src_factor: Zero,
+                dst_factor: OneMinusSrcAlpha,
+                operation: Add,
+            ),
+        ),
+    ],
+    depth_write: Some(false),
+    multisample_count: 1,
+    bind_groups: {
+        0: {
+            0: ("camera", Buffer),
+        },
+        1: {
+            0: ("transparency", Texture),
+            1: ("albedo", Texture),
+			2: ("sampler", Sampler),
+        },
+    },
+)
