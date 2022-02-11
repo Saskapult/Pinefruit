@@ -1,7 +1,7 @@
 [
 	(
 		name: "dirt",
-		graph: "graphs/default.ron",
+		graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/dirt.png"],
 		},
@@ -10,14 +10,22 @@
 		},
 		sounds: {},
 	), 
-	// (
-	// 	name: "sand",
-	// 	shader: "shaders/albedo.ron",
-	// 	textures: {
-	// 		"albedo": ["blockfaces/sand.png"],
-	// 	},
-	// 	floats: {
-	// 		"flat_colour": [0.0, 0.0, 0.0],
-	// 	},
-	// ),
+	(
+		name: "stone",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/stone.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
+	(
+		name: "cobblestone",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/cobblestone.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
 ]

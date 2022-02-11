@@ -9,10 +9,10 @@ resolver = "2"
 
 [dependencies]
 image = "0.23"
-winit = "0.25"
+winit = "0.26.1"
 env_logger = "0.9"
 log = "0.4"
-wgpu = "0.11"
+wgpu = "0.12"
 pollster = "0.2"
 bytemuck = { version = "1.4", features = [ "derive" ] }
 anyhow = "1.0"
@@ -20,18 +20,21 @@ tobj = "3.0"
 nalgebra = "0.29.0"
 #dashmap = "4.0.2"	# Concurrent hashmap
 specs = { version = "0.17.0", features = ["specs-derive"]}
-#nalgebra-glm = "0.15.0"	# Only here for perspective_lh (not anymore!)
 rand = "0.8.4"
 noise = "0.7.0"
 serde = "1.0.132"
 ron = "0.7.0"
-#ttf-parser = "0.14.0"	# Fonts
+# ttf-parser = "0.14.0"	# Fonts
 #quinn = "0.8.0"	# Network communication
-#rapier3d = "0.11.1"	# Physics
+rapier3d = "0.11.1"	# Physics
 #dot_vox = "4.1.0"	# .vox files
-derivative = "2.2.0"	# Sometimes I like to exclude fields from derived traits of a struct, this helps me to do that
 # mlua = "0.7.1"
-
+egui = "0.16.1"
+epi = "0.16.0"
+egui_wgpu_backend = "0.16.0"
+egui-winit = "0.16.0"
+egui_winit_platform = "0.13.0"
+egui_demo_lib = "0.16.0"
 
 [build-dependencies]
 anyhow = "1.0"

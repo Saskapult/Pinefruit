@@ -2,7 +2,7 @@
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use nalgebra::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap, BTreeSet};
 use std::time::{Instant, Duration};
 
 use std::sync::{Arc, Mutex, RwLock};
@@ -32,6 +32,8 @@ struct WindowResource {
 	instance: wgpu::Instance,
 	adapter: wgpu::Adapter,
 	event_queue: Arc<Mutex<Vec<EventWhen>>>,
+	pub window_redraw_queue: BTreeSet<usize>,
+	// event_loop_proxy: EventLoopProxy<EventLoopEvent>,
 }
 impl WindowResource {
 	pub fn new(
@@ -47,6 +49,7 @@ impl WindowResource {
 
 		// This needs to stay in its own thread because it cannot sync
 		let event_thread_handle = thread::spawn(move || {
+			let event_loop_proxy = event_loop_proxy.clone();
 			loop {
 				match event_loop_receiver.recv() {
 					Ok(event) => {
@@ -69,6 +72,8 @@ impl WindowResource {
 			instance,
 			adapter,
 			event_queue,
+			window_redraw_queue: BTreeSet::new(),
+			// event_loop_proxy,
 		}
 	}
 
@@ -190,15 +195,18 @@ struct RenderResource {
 	materials_manager: Arc<RwLock<crate::render::MaterialManager>>,
 	textures_manager: Arc<RwLock<crate::render::TextureManager>>,
 	meshes_manager: Arc<RwLock<crate::render::MeshManager>>,
+	egui_rpass: egui_wgpu_backend::RenderPass,
+	durations: Vec<Duration>,
+	duration_index: usize,
 }
 impl RenderResource {
+	const DURATION_COUNT: usize = 32;
 	pub fn new(adapter: &wgpu::Adapter) -> Self {
 
 		let textures_manager = Arc::new(RwLock::new(crate::render::TextureManager::new()));
 
 		let materials_manager = Arc::new(RwLock::new(crate::render::MaterialManager::new()));
 
-		
 		let meshes_manager = Arc::new(RwLock::new(crate::render::MeshManager::new()));
 
 		let renderer = pollster::block_on(
@@ -210,23 +218,51 @@ impl RenderResource {
 			)
 		);
 
+		let egui_rpass = egui_wgpu_backend::RenderPass::new(
+			&renderer.device, 
+			wgpu::TextureFormat::Bgra8UnormSrgb, 
+			1,
+		);
+
 		Self {
 			renderer,
 			materials_manager,
 			textures_manager,
 			meshes_manager,
+			egui_rpass,
+			durations: Vec::with_capacity(RenderResource::DURATION_COUNT),
+			duration_index: 0,
 		}		
 	}
 
-	// /// Loads materials AND their textures
-	// pub fn load_materials(&mut self) {
-	// 	let mut mm = self.materials_manager.write().unwrap();
-	// 	let mats = crate::render::material::read_materials_file(&PathBuf::from("resources/kmaterials.ron"));
-	// 	for mat in mats {
-	// 		mm.insert(mat);
-	// 	}
-	// }
+	pub fn record_render_duration(&mut self, duration: Duration) {
+		if self.durations.len() == 0 {
+			self.durations.push(duration);
+			self.duration_index += 1;
+		} else {
+			self.duration_index = (self.duration_index + 1) % RenderResource::DURATION_COUNT;
+			if self.duration_index < self.durations.len() {
+				self.durations[self.duration_index] = duration;
+			} else {
+				self.durations.push(duration);
+			}
+		}
+	}
 
+	pub fn get_average_render_duration(&self) -> Duration {
+		self.durations.iter().sum::<Duration>() / (self.durations.len() as u32)
+	}
+
+	pub fn get_median_render_duration(&self) -> Duration {
+		let mut sorted_durations = self.durations.clone();
+		sorted_durations.sort_unstable();
+
+		if sorted_durations.len() % 2 == 0 {
+			(sorted_durations[RenderResource::DURATION_COUNT/2] + sorted_durations[RenderResource::DURATION_COUNT/2+1]) / 2
+		} else {
+			sorted_durations[RenderResource::DURATION_COUNT/2]
+		}
+	}
 }
 
 
@@ -395,17 +431,93 @@ impl ModelComponent {
 
 
 
+
+
+struct PhysicsResource {
+}
+impl PhysicsResource {
+	pub fn new() -> Self {
+		Self {
+		}
+	}
+
+	/// Casts a ray, returns collision position
+	pub fn ray(&self, origin: Vector3<f32>, direction: Vector3<f32>) -> Option<[f32; 3]> {
+		None
+	}
+
+	pub fn tick(&mut self) {
+		info!("Physics tick!");
+	}
+}
+/// A static physics thing
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+struct StaticPhysicsComponent {
+	pub id: u128,
+}
+impl StaticPhysicsComponent {
+	pub fn new(id: u128) -> Self {
+		Self {
+			id,
+		}
+	}
+}
+/// A non-static physics thing
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+struct DynamicPhysicsComponent {
+	pub id: u128,
+}
+impl DynamicPhysicsComponent {
+	pub fn new(id: u128) -> Self {
+		Self {
+			id,
+		}
+	}
+}
+/// Ticks physics and updates all dynamic physics transforms
+struct DynamicPhysicsSystem;
+impl<'a> System<'a> for DynamicPhysicsSystem {
+	type SystemData = (
+		ReadStorage<'a, DynamicPhysicsComponent>,
+		WriteStorage<'a, TransformComponent>,
+		WriteExpect<'a, PhysicsResource>,
+	);
+
+	fn run(
+		&mut self, 
+		(
+			p_dynamic,
+			mut transform,
+			mut p_resource,
+		): Self::SystemData,
+	) { 
+		p_resource.tick();
+
+		for (p_dynamic_c, transform_c) in (&p_dynamic, &mut transform).join() {
+			let id = p_dynamic_c.id;
+			// get position and rotation of object using id
+			// Update transform component
+			transform_c.position[0] = id as f32;
+		}
+	}
+}
+
+
+
+
 // Handles window events
 // Feeds the input resource
 struct WindowEventSystem;
 impl<'a> System<'a> for WindowEventSystem {
-    type SystemData = (
+	type SystemData = (
 		WriteExpect<'a, WindowResource>,
 		WriteExpect<'a, InputResource>,
 		ReadExpect<'a, StepResource>
 	);
 
-    fn run(
+	fn run(
 		&mut self, 
 		(
 			mut window_resource, 
@@ -441,10 +553,14 @@ impl<'a> System<'a> for WindowEventSystem {
 		let mut mdy = 0.0;
 		
 		// Drain items not passed the start of the step
-		let events: Vec<EventWhen> = window_resource.event_queue.lock().unwrap().drain_filter(|e| e.ts < endt).collect();
-		for event in events {
-			let ts = event.ts;
-			match event.event {
+		let events: Vec<EventWhen> = window_resource.event_queue.lock().unwrap().drain_filter(|e| e.when < endt).collect();
+		for event_when in events {
+			let ts = event_when.when;
+			match event_when.event {
+				Event::RedrawRequested(window_id) => {
+					let window_idx = window_resource.id_idx[&window_id];
+					window_resource.window_redraw_queue.insert(window_idx);
+				}
 				Event::UserEvent(event) => {
 					match event {
 						EventLoopEvent::RegisterWindow(window) => {
@@ -453,8 +569,19 @@ impl<'a> System<'a> for WindowEventSystem {
 						_ => {},
 					}
 				},
-				Event::WindowEvent {ref event, window_id} => {
-					match event {
+				Event::WindowEvent {event: ref window_event, window_id} => {
+					
+					// Egui input stuff
+					// Egui only uses window events so filtering by window events is fine
+					let window_idx = window_resource.id_idx[&window_id];
+					let window = window_resource.windows.get_mut(window_idx).unwrap();
+					window.platform.handle_event(&event_when.event);
+					if window.platform.captures_event(&event_when.event) {
+						continue
+					}
+
+					// My input stuff
+					match window_event {
 						WindowEvent::KeyboardInput {input, ..} => {
 							// Send changed key data
 							if let Some(key) = input.virtual_keycode {
@@ -522,7 +649,12 @@ impl<'a> System<'a> for WindowEventSystem {
 							my = position.y;
 						},
 						WindowEvent::Resized (newsize) => {
-							//self.windows[self.id_idx[&window_id]].resize(newsize);
+							// window_resource.windows[
+							// 	window_resource.id_idx[&window_id]
+							// ].resize(
+							// 	&render_resource.renderer.device, 
+							// 	newsize.clone(),
+							// );
 						},
 						WindowEvent::CloseRequested => {
 							let idx = window_resource.id_idx[&window_id];
@@ -574,10 +706,9 @@ impl<'a> System<'a> for WindowEventSystem {
 		input_resource.mouse_presscache = mouse_stillpressed;
 		input_resource.mx = mx;
 		input_resource.my = my;
-		//info!("mdx {}, mdy {}", mdx, mdy);
 		input_resource.mdx = mdx;
 		input_resource.mdy = mdy;
-    }
+	}
 }
 
 
@@ -585,7 +716,7 @@ impl<'a> System<'a> for WindowEventSystem {
 // Reads input resource queue and decides what to do with it
 struct InputSystem;
 impl<'a> System<'a> for InputSystem {
-    type SystemData = (
+	type SystemData = (
 		ReadExpect<'a, InputResource>,
 		ReadExpect<'a, StepResource>,
 		WriteStorage<'a, TransformComponent>,
@@ -603,8 +734,8 @@ impl<'a> System<'a> for InputSystem {
 	) { 
 		let secs = step_resource.step_diff.as_secs_f32();
 
-		let rx = input_resource.mdx as f32 * secs * 0.01;
-		let ry = input_resource.mdy as f32 * secs * 0.01;
+		let rx = input_resource.mdx as f32 * secs * 0.04;
+		let ry = input_resource.mdy as f32 * secs * 0.04;
 
 		let mut displacement = Vector3::from_element(0.0);
 		for (key, kp) in &input_resource.board_keys {
@@ -677,7 +808,7 @@ impl MapSystem {
 	}
 }
 impl<'a> System<'a> for MapSystem {
-    type SystemData = (
+	type SystemData = (
 		WriteExpect<'a, RenderResource>,
 		WriteStorage<'a, MapComponent>,
 		ReadStorage<'a, CameraComponent>,
@@ -698,7 +829,7 @@ impl<'a> System<'a> for MapSystem {
 			let mut chunks_to_show = Vec::new();
 			for (_, transform_c) in (&camera, &transform).join() {
 				let camera_chunk = map_c.map.point_chunk(transform_c.position);
-				let mut cposs = map_c.map.chunks_sphere(camera_chunk, 4);
+				let mut cposs = map_c.map.chunks_sphere(camera_chunk, 5);
 				chunks_to_show.append(&mut cposs);
 			}
 
@@ -725,11 +856,15 @@ impl<'a> System<'a> for MapSystem {
 
 
 
+// pub struct NonFunctionalRepaintSignal;
+// impl epi::backend::RepaintSignal for NonFunctionalRepaintSignal {
+//     fn request_repaint(&self) {}
+// }
 struct RenderSystem;
 impl<'a> System<'a> for RenderSystem {
-    type SystemData = (
+	type SystemData = (
 		WriteExpect<'a, RenderResource>,
-		ReadExpect<'a, WindowResource>,
+		WriteExpect<'a, WindowResource>,
 		ReadStorage<'a, ModelComponent>,
 		ReadStorage<'a, MapComponent>,
 		ReadStorage<'a, CameraComponent>,
@@ -740,7 +875,7 @@ impl<'a> System<'a> for RenderSystem {
 		&mut self, 
 		(
 			mut render_resource, 
-			window_resource,
+			mut window_resource,
 			model,
 			map,
 			camera,
@@ -753,16 +888,37 @@ impl<'a> System<'a> for RenderSystem {
 			match camera_c.target {
 				// Find destination
 				RenderTarget::Window(id) => {
+					// Don't render for windows that don't want to be rendered to
+					// if !window_resource.window_redraw_queue.contains(&id) {
+					// 	info!("render for window {id} is skipped (not queued for rendering)");
+					// }
+					// window_resource.window_redraw_queue.remove(&id);
+
 					if id < window_resource.windows.len() {
 						info!("Rendering to window idx {}", id);
 
-						// Get window
-						let window = &window_resource.windows[id];
+						// Get window data
+						let window = window_resource.windows.get_mut(id).unwrap();
 						window.surface.configure(&render_resource.renderer.device, &window.surface_config);
 						let width = window.surface_config.width;
 						let height = window.surface_config.height;
-						let stex = window.surface.get_current_texture().expect("fugg");
-					
+						let frame = match window.surface.get_current_texture() {
+							Ok(tex) => tex,
+							Err(wgpu::SurfaceError::Outdated) => {
+								// Apparently happens when minimized on Windows
+								error!("Render to outdated texture for window {id}");
+								panic!();
+							},
+							Err(e) => {
+								panic!("{}", e);
+							},
+						};
+						let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+						
+
+						// Game frame
+						let gf_start = Instant::now();
 						// Collect render data
 						let mut render_data = Vec::new();
 						// Models
@@ -808,12 +964,89 @@ impl<'a> System<'a> for RenderSystem {
 							zfar: camera_c.zfar,
 						};
 						
-						render_resource.renderer.render(&stex.texture, width, height, &camera, Instant::now());
+						render_resource.renderer.render(&frame.texture, width, height, &camera, Instant::now());
 
-						stex.present();
+						let gf_duration = Instant::now() - gf_start;
+						// End game frame
 
-						// std::thread::sleep(std::time::Duration::from_millis(10000));
-						// panic!()
+
+						// UI frame
+						let egui_start = Instant::now();
+						window.platform.begin_frame();
+
+						// let app_output = epi::backend::AppOutput::default();
+						// let repaint_signal = Arc::new(NonFunctionalRepaintSignal {});
+						// let mut epi_frame =  epi::Frame::new(epi::backend::FrameData {
+						// 	info: epi::IntegrationInfo {
+						// 		name: "egui_example",
+						// 		web_info: None,
+						// 		cpu_usage: window.previous_frame_time,
+						// 		native_pixels_per_point: Some(window.window.scale_factor() as _),
+						// 		prefer_dark_mode: None,
+						// 	},
+						// 	output: app_output,
+						// 	repaint_signal: repaint_signal.clone(),
+						// });
+
+						let input = egui::RawInput::default();
+						let (_output, shapes) = window.platform.context().run(input, |egui_ctx| {
+							egui::SidePanel::left("my_side_panel").show(egui_ctx, |ui| {
+								ui.heading(format!("Hello World! gf_duration: {}ms", gf_duration.as_millis()));
+								if ui.button("Clickme").clicked() {
+									panic!("Button click");
+								}
+							});
+						});
+
+						//let (_output, shapes) = window.platform.end_frame(Some(&window.window));
+						let paint_jobs = window.platform.context().tessellate(shapes);
+
+						let frame_time = (Instant::now() - egui_start).as_secs_f64() as f32;
+			   			window.previous_frame_time = Some(frame_time);
+
+						let device = render_resource.renderer.device.clone();
+						let queue = render_resource.renderer.queue.clone();
+
+						let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+							label: Some("gui encoder"),
+						});
+
+						// GPU upload
+						let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
+							physical_width: window.window.outer_size().width,
+							physical_height: window.window.outer_size().height,
+							scale_factor: window.window.scale_factor() as f32,
+						};
+						render_resource.egui_rpass.update_texture(
+							&device, 
+							&queue, 
+							&window.platform.context().font_image(),
+						);
+						render_resource.egui_rpass.update_user_textures(
+							&device, 
+							&queue,
+						);
+						render_resource.egui_rpass.update_buffers(
+							&device, 
+							&queue, 
+							&paint_jobs, 
+							&screen_descriptor,
+						);
+
+						render_resource.egui_rpass.execute(
+							&mut encoder,
+							&frame_view,
+							&paint_jobs,
+							&screen_descriptor,
+							None,
+							//Some(wgpu::Color::GREEN),
+						).unwrap();
+						// End UI frame
+
+						queue.submit(std::iter::once(encoder.finish()));
+
+
+						frame.present();
 					} else {
 						error!("Tried to render to nonexistent window! idx: {}", id);
 					}
@@ -831,7 +1064,9 @@ impl<'a> System<'a> for RenderSystem {
 pub struct Game {
 	world: World,
 	blocks_manager: Arc<RwLock<crate::world::BlockManager>>,
-	dispatcher: Dispatcher<'static, 'static>,
+	window_dispatcher: Dispatcher<'static, 'static>,
+	tick_dispatcher: Dispatcher<'static, 'static>,
+	last_tick: Instant,
 }
 impl Game {
 	pub fn new(
@@ -886,9 +1121,9 @@ impl Game {
 			.with(CameraComponent::new())
 			.with(
 				TransformComponent::new()
-				.with_position(Vector3::new(0.0, 0.0, -1.0))
+				.with_position(Vector3::new(0.0, 5.0, -5.0))
 			)
-			.with(MovementComponent{speed: 2.0})
+			.with(MovementComponent{speed: 3.0})
 			.build();
 		// Map
 		world.create_entity()
@@ -896,23 +1131,23 @@ impl Game {
 			.with(MapComponent::new(&blocks_manager))
 			.build();
 
-		// Called to tick the stuff
-		let dispatcher = DispatcherBuilder::new()
+		// Dispatchers
+		let window_dispatcher = DispatcherBuilder::new()
 			.with(WindowEventSystem, "window_system", &[])
-			.with(InputSystem, "input_system", &["window_system"])
+			.build();
+		let tick_dispatcher = DispatcherBuilder::new()
+			.with(InputSystem, "input_system", &[])
 			.with(MapSystem, "map_system", &["input_system"])
 			.with(RenderSystem, "render_system", &["input_system", "map_system"])
 			.build();
 
-		let mut g = Self {
+		Self {
 			world,
 			blocks_manager,
-			dispatcher,
-		};
-
-		g.make_testing_faces();
-
-		g
+			window_dispatcher,
+			tick_dispatcher,
+			last_tick: Instant::now(),
+		}
 	}
 
 	fn make_testing_faces(&mut self) {
@@ -999,39 +1234,83 @@ impl Game {
 	}
 
 	pub fn setup(&mut self) {
-		// Load default materials
-		let rr = self.world.write_resource::<RenderResource>();
+		// Asset loading
+		{
+			let rr = self.world.write_resource::<RenderResource>();
 
-		let mut mm = rr.materials_manager.write().unwrap();
-		crate::render::Material::from_specification(&PathBuf::from("resources/materials/kmaterials.ron")).drain(..).for_each(|m| {mm.insert(m);});
+			let mut matm = rr.materials_manager.write().unwrap();
+			let mut texm = rr.textures_manager.write().unwrap();
+			let mut meshm = rr.meshes_manager.write().unwrap();
 
-		let mut tm = rr.textures_manager.write().unwrap();
-		tm.insert(crate::render::Texture::new(&"dirt".to_string(), &PathBuf::from("resources//not_for_git/blockfaces/dirt.png")));
+			// Load some materials
+			crate::render::load_materials_file(
+				PathBuf::from("resources/materials/kmaterials.ron"),
+				&mut texm,
+				&mut matm,
+			).unwrap();
 
-		// Make default block
-		self.blocks_manager.write().unwrap().insert(crate::world::Block {
-			name: "debug".to_string(),
-			material_idx: 0,
-		});
+			let mut bm = self.blocks_manager.write().unwrap();
+
+			// Add some blocks
+			bm.insert(crate::world::Block {
+				name: "dirt".to_string(),
+				material_idx: 0,
+			});
+			bm.insert(crate::world::Block {
+				name: "stone".to_string(),
+				material_idx: 1,
+			});
+			bm.insert(crate::world::Block {
+				name: "cobblestone".to_string(),
+				material_idx: 2,
+			});
+
+
+			let (obj_models, _) = tobj::load_obj(
+				"resources/not_for_git/teapot.obj", 
+				&tobj::LoadOptions {
+					triangulate: true,
+					single_index: true,
+					..Default::default()
+				},
+			).unwrap();
+			let test_mesh = crate::render::Mesh::from_obj_model(obj_models[0].clone()).unwrap();
+			let test_mesh_idx = meshm.insert(test_mesh);
+			drop(matm);
+			drop(texm);
+			drop(meshm);
+			drop(rr);
+			self.world.create_entity()
+				.with(TransformComponent::new().with_position([1.0, 0.0, 1.0].into()))
+				.with(ModelComponent::new(test_mesh_idx, 0))
+				.build();
+		}
+		
+		// Place testing faces
+		self.make_testing_faces();
 	}
 
 	pub fn tick(&mut self) {
-		info!("Tick!");
-		let st = Instant::now();
-		// Prepare step info
-		{
-			let mut step_resource = self.world.write_resource::<StepResource>();
-			step_resource.last_step = step_resource.this_step;
-			step_resource.this_step = std::time::Instant::now();
-			step_resource.step_diff = step_resource.this_step - step_resource.last_step;
-		}
-		// Step to it
-		self.dispatcher.dispatch(&mut self.world);
+		self.window_dispatcher.dispatch(&mut self.world);
 
-		let en = Instant::now();
-		let dur = en - st;
-		let tps = 1.0 / dur.as_secs_f32();
-		info!("Tock! (duration {}ms, freq: {:.2}tps)", dur.as_millis(), tps);
+		if Instant::now() - self.last_tick >= Duration::from_millis(20) { // 16.7 to 33.3
+			info!("Tick!");
+			let st = Instant::now();
+			
+			{ // Prepare step info
+				let mut step_resource = self.world.write_resource::<StepResource>();
+				step_resource.last_step = step_resource.this_step;
+				step_resource.this_step = std::time::Instant::now();
+				step_resource.step_diff = step_resource.this_step - step_resource.last_step;
+			}
+
+			self.tick_dispatcher.dispatch(&mut self.world);
+
+			let en = Instant::now();
+			let dur = en - st;
+			let tps = 1.0 / dur.as_secs_f32();
+			info!("Tock! (duration {}ms, theoretical frequency: {:.2}tps)", dur.as_millis(), tps);
+		}
 	}
 
 	pub fn new_window(&mut self) {

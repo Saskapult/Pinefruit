@@ -111,10 +111,9 @@ impl BindGroupEntryFormat {
 				wgpu::BindGroupLayoutEntry {
 					binding: i,
 					visibility: wgpu::ShaderStages::FRAGMENT,
-					ty: wgpu::BindingType::Sampler {
-						comparison: false,
-						filtering: true,
-					},
+					ty: wgpu::BindingType::Sampler (
+						wgpu::SamplerBindingType::Filtering,
+					),
 					count: None,
 				}
 			}
@@ -156,14 +155,8 @@ impl BindGroupFormat {
 }
 impl std::fmt::Display for BindGroupFormat {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "[")?;
-		for (i, (_, entry)) in self.entry_formats.iter().enumerate() {
-			write!(f, "{}, ", entry)?;
-			if (self.entry_formats.len() > 0) && (i < self.entry_formats.len()-1) {
-				write!(f, ", ")?;
-			}
-		}
-		write!(f, "]")
+		let g = self.entry_formats.iter().map(|(_, v)| format!("{v}")).collect::<Vec<_>>().join(", ");
+		write!(f, "[{g}]")
 	}
 }
 
@@ -638,11 +631,11 @@ impl ShaderManager {
 				topology: wgpu::PrimitiveTopology::TriangleList,
 				strip_index_format: None,
 				front_face: wgpu::FrontFace::Ccw,
-				cull_mode: Some(wgpu::Face::Back),
-				// cull_mode: None,
+				// cull_mode: Some(wgpu::Face::Back),
+				cull_mode: None,
 				polygon_mode: wgpu::PolygonMode::Fill, // "Line" for wireframe
-				// Requires Features::DEPTH_CLAMPING
-				clamp_depth: false,
+				// Requires Features::DEPTH_CLIP_CONTROL
+				unclipped_depth: false,
 				// Requires Features::CONSERVATIVE_RASTERIZATION
 				conservative: false,
 			},
@@ -652,6 +645,7 @@ impl ShaderManager {
 				mask: !0,
 				alpha_to_coverage_enabled: false,
 			},
+			multiview: None,
 		})
 	}
 }

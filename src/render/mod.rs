@@ -13,6 +13,7 @@ pub mod vertex;
 pub mod graph;
 pub mod light;
 pub mod resources;
+pub mod gui;
 
 pub use camera::*;
 pub use material::*;
@@ -25,3 +26,4 @@ pub use vertex::*;
 pub use light::*;
 pub use graph::*;
 pub use resources::*;
+pub use gui::*;

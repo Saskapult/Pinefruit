@@ -231,7 +231,7 @@ impl Renderer {
 		// Should collect by graph and load, but that's not a task for for current me
 		let materials = self.render_resources.materials.material_manager.read().unwrap();
 		let opaque_models = model_instances.drain_filter(|model_instance| {
-			materials.index(model_instance.material_idx).graph == PathBuf::from("graphs/default.ron")
+			materials.index(model_instance.material_idx).graph == PathBuf::from("resources/graphs/default.ron").canonicalize().unwrap()
 		}).collect::<Vec<_>>();
 		drop(materials);
 		info!("We have {} opaque model instances", opaque_models.len());

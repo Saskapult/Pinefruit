@@ -4,6 +4,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use crate::render::*;
 use std::sync::RwLock;
+use anyhow::*;
 
 
 /*
@@ -99,7 +100,10 @@ impl Mesh {
 		}
 	}
 
-	pub fn vertex_data(&self, vertex_properties: &Vec<VertexProperty>) -> Vec<u8> {
+	/// Gets data for this mesh with these properties.
+	/// Throws and error if lacking requisite data.
+	/// (Todo: actually implement that)
+	pub fn vertex_data(&self, vertex_properties: &Vec<VertexProperty>) -> Result<Vec<u8>> {
 		let mut vertices_bytes = Vec::new();
 		for i in 0..self.positions.as_ref().unwrap().len() {
 			for input in vertex_properties {
@@ -116,15 +120,22 @@ impl Mesh {
 						}));
 					},
 					VertexProperty::VertexUV => {
-						vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexUV {
-							uv: self.uvs.as_ref().unwrap()[i],
-						}));
+						if let Some(uvs) = &self.uvs {
+							vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexUV {
+								uv: uvs[i],
+							}));
+						} else {
+							// Should make error but I don't want to
+							vertices_bytes.extend_from_slice(bytemuck::bytes_of(&VertexUV {
+								uv: [0.0, 0.0],
+							}));
+						}
 					},
 					_ => panic!("Weird vertex input or something idk"),
 				}
 			}
 		}
-		vertices_bytes
+		Ok(vertices_bytes)
 	}
 
 	pub fn quad() -> Self {
@@ -133,6 +144,61 @@ impl Mesh {
 	
 	pub fn cross() -> Self {
 		todo!()
+	}
+
+	pub fn from_obj_model(obj_model: tobj::Model) -> Result<Self> {
+		
+		let positions = match obj_model.mesh.positions.len() > 0 {
+			true => {
+				Some((0..obj_model.mesh.positions.len() / 3).map(|i| {
+					[
+						obj_model.mesh.positions[i * 3 + 0],
+						obj_model.mesh.positions[i * 3 + 1],
+						obj_model.mesh.positions[i * 3 + 2],
+					]
+				}).collect::<Vec<_>>())
+			},
+			false => None,
+		};
+		
+		let normals = match obj_model.mesh.normals.len() > 0 {
+			true => {
+				Some((0..obj_model.mesh.normals.len() / 3).map(|i| {
+					[
+						obj_model.mesh.normals[i * 3 + 0],
+						obj_model.mesh.normals[i * 3 + 1],
+						obj_model.mesh.normals[i * 3 + 2],
+					]
+				}).collect::<Vec<_>>())
+			},
+			false => None,
+		};
+
+		let uvs = match obj_model.mesh.texcoords.len() > 0 {
+			true => {
+				Some((0..obj_model.mesh.texcoords.len() / 3).map(|i| {
+					[
+						obj_model.mesh.texcoords[i * 2 + 0],
+						obj_model.mesh.texcoords[i * 2 + 1],
+					]
+				}).collect::<Vec<_>>())
+			},
+			false => None,
+		};
+
+		let indices = obj_model.mesh.indices.iter().cloned().map(|v| v as u16).collect::<Vec<_>>();
+		
+		Ok(Self {
+			name: obj_model.name,
+			positions,
+			uvs,
+			normals,
+			tangents: None,
+			bitangents: None,
+			colours: None,
+			indices: Some(indices),
+			path: None,
+		})
 	}
 }
 impl std::fmt::Display for Mesh {
@@ -265,7 +331,7 @@ impl BoundMeshManager {
 
 		info!("Binding mesh '{}' with properties '{:?}'", mesh, vertex_properties);
 
-		let vertices_bytes = mesh.vertex_data(vertex_properties);
+		let vertices_bytes = mesh.vertex_data(vertex_properties).unwrap();
 
 		let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 			label: Some(&format!("{} vertex buffer {:?}", &mesh.name, vertex_properties)),

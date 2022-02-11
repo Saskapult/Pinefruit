@@ -7,14 +7,16 @@ use winit::{
 use wgpu;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
+use egui;
 
 
 
-#[derive(Debug)]
 pub struct GameWindow {
 	pub window: Window,
 	pub surface: wgpu::Surface,
 	pub surface_config: wgpu::SurfaceConfiguration,
+	pub platform: egui_winit_platform::Platform,
+	pub previous_frame_time: Option<f32>,
 }
 impl GameWindow {
 	pub fn new(instance: &wgpu::Instance, adapter: &wgpu::Adapter, window: Window) -> Self {
@@ -29,10 +31,20 @@ impl GameWindow {
 		};
 		info!("Created new game window with format {:?}", &surface_config.format);
 
+		let platform = egui_winit_platform::Platform::new(egui_winit_platform::PlatformDescriptor {
+			physical_width: size.width as u32,
+			physical_height: size.height as u32,
+			scale_factor: window.scale_factor(),
+			font_definitions: egui::FontDefinitions::default(),
+			style: Default::default(),
+		});
+
 		Self {
 			window,
 			surface,
 			surface_config,
+			platform,
+			previous_frame_time: None,
 		}
 	}
 
@@ -50,7 +62,7 @@ impl GameWindow {
 #[derive(Debug)]
 pub struct EventWhen {
 	pub event: Event<'static, EventLoopEvent>,
-	pub ts: std::time::Instant,
+	pub when: std::time::Instant,
 }
 
 
@@ -74,10 +86,13 @@ pub fn run_event_loop(
 				match event {
 					EventLoopEvent::Close => *control_flow = ControlFlow::Exit,
 					EventLoopEvent::CreateWindow => {
-						let window = WindowBuilder::new().build(event_loop).unwrap();
+						let window = WindowBuilder::new()
+							.with_title("window title")
+							.build(event_loop)
+							.unwrap();
 						let ew = EventWhen {
 							event: Event::UserEvent(EventLoopEvent::RegisterWindow(window)),
-							ts: std::time::Instant::now(),
+							when: std::time::Instant::now(),
 						};
 						event_queue.lock().unwrap().push(ew);
 					}
@@ -93,7 +108,7 @@ pub fn run_event_loop(
 				if let Some(event) = event.to_static() {
 					let ew = EventWhen {
 						event,
-						ts: std::time::Instant::now(),
+						when: std::time::Instant::now(),
 					};
 					event_queue.lock().unwrap().push(ew);
 				}

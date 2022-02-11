@@ -26,7 +26,6 @@ impl Map {
 	pub fn generate(&mut self) {
 		let perlin = Perlin::new();
 
-
 		for cx in -4..4 {
 			for cy in 0..2 {
 				for cz in -4..4 {
@@ -35,14 +34,14 @@ impl Map {
 						for z in 0..self.chunk_dimensions[2] {
 							let wx = cx * self.chunk_dimensions[0] as i32 + x as i32;
 							let wz = cz * self.chunk_dimensions[2] as i32 + z as i32;
-							let val = perlin.get([wx as f64 + 0.5, wz as f64 + 0.5]);
+							let val = perlin.get([wx as f64 / self.chunk_dimensions[0] as f64, wz as f64 / self.chunk_dimensions[1] as f64]);
 							let ylevel = 2 + ((1.0 + val) * 2.0).floor() as i32;
 							//println!("y level for xz: [{}, {}] is {} ({:.4})", wx, wz, ylevel, val);
 							for y in 0..self.chunk_dimensions[1] {
 								let wy = cy * self.chunk_dimensions[1] as i32 + y as i32;
 								let voxel = {
 									if wy >= ylevel {
-										Voxel::Block(0)
+										Voxel::Block( ((((cx+4) as u32 % 2) + (cz+4) as u32 % 2) + z) % 3)
 									} else {
 										Voxel::Empty
 									}
@@ -55,17 +54,49 @@ impl Map {
 				}
 			}
 		}
-		
-		// // Testing stuff
-		// let mut filled_chunk = Chunk::new_of(chunk_dimensions, Voxel::Block(0));
-		// filled_chunk.set_voxel([3, 3, 0], Voxel::Empty);
-		// filled_chunk.set_voxel([3, 3, 2], Voxel::Empty);
-		// chunks.insert([0, 0, 0], filled_chunk.clone());
-		// chunks.insert([0, 0, 1], filled_chunk.clone());
-		// chunks.insert([1, 0, 0], filled_chunk.clone());
 
-		// let empty_chunk = Chunk::new(chunk_dimensions);
-		// chunks.insert([0, 0, 2], empty_chunk);
+		self.chunks.insert([0, 2, 0], Chunk {
+			size: self.chunk_dimensions,
+			contents: [
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+
+				0, 0, 0, 0,
+				0, 1, 1, 0,
+				0, 1, 1, 0,
+				0, 0, 0, 0,
+
+				0, 0, 0, 0,
+				0, 1, 1, 0,
+				0, 1, 1, 0,
+				0, 0, 0, 0,
+
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+				0, 0, 0, 0,
+			].iter().cloned().map(|v| {
+				if v == 0 {
+					Voxel::Empty
+				} else {
+					Voxel::Block(v-1)
+				}
+			}).collect::<Vec<_>>(),
+		});
+
+		let mut tc = Chunk::new(self.chunk_dimensions);
+		tc.set_voxel([1,1,1], Voxel::Block(0));
+		tc.set_voxel([1,2,1], Voxel::Block(0));
+		tc.set_voxel([1,1,2], Voxel::Block(0));
+		tc.set_voxel([1,2,2], Voxel::Block(0));
+		tc.set_voxel([2,1,1], Voxel::Block(0));
+		tc.set_voxel([2,2,1], Voxel::Block(0));
+		tc.set_voxel([2,1,2], Voxel::Block(0));
+		tc.set_voxel([2,2,2], Voxel::Block(0));
+		self.chunks.insert([2, 2, 0], tc);
+		
 	}
 
 	pub fn is_chunk_loaded(&self, position: [i32; 3]) -> bool {
@@ -297,7 +328,7 @@ fn map_mesh(
 ) {
 
 	fn append_face(segment: &mut ChunkMeshSegment, position: [usize; 3], direction: &Direction) {
-		let [x, y, z] = position;
+		let [px, py, pz] = position;
 
 		// Indices
 		let l = segment.positions.len() as u16;
@@ -309,7 +340,6 @@ fn map_mesh(
 				QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
 			},
 		}
-		//QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
 
 		// Normals
 		let normal = match direction {
@@ -334,7 +364,7 @@ fn map_mesh(
 			Direction::Yn => YN_QUAD_VERTICES,
 			Direction::Zn => ZN_QUAD_VERTICES,
 		};
-		let vertex_position_offset = Vector3::new(x as f32, y as f32, z as f32);
+		let vertex_position_offset = Vector3::new(px as f32, py as f32, pz as f32);
 		quad_positions.iter().for_each(|p| {
 			let vertex_position = vertex_position_offset + p;
 			segment.positions.push(vertex_position.into());
@@ -387,26 +417,26 @@ fn map_mesh(
 						}
 					};
 
-					// Are they transparent? (this is crude make it better)
-					// Todo: Check if specific face is opaque
+					// Are they transparent?
+					// Currently this just checks if they are empty
+					// Todo: Record if either empty and if either transparent
+					// Todo: test if should generate transparent face
+					// Todo: Make specific to block face
 					let a_index = match a {
 						Voxel::Empty => None, 
 						Voxel::Block(idx) => Some(idx),
 					};
-					let a_transparent = !a_index.is_some();
+					let a_empty = !a_index.is_some();
 					let b_index = match b {
 						Voxel::Empty => None, 
 						Voxel::Block(idx) => Some(idx),
 					};
-					let b_transparent = !b_index.is_some();
+					let b_empty = !b_index.is_some();
 
-					// If at least one of them is transparent
-					if a_transparent || b_transparent {
-						// Todo: test if should generate transparent face
+					if a_empty != b_empty {
 
-						// a opaque b transparent
-						// Make positive face for a
-						if !a_transparent && b_transparent {
+						// a opaque b transparent -> make positive face for a at a
+						if !a_empty && b_empty {
 							// Find existing mesh segment or create new one
 							let a_material_id = blockmap.index(a_index.unwrap() as usize).material_idx;
 							let a_mesh_part = {
@@ -419,9 +449,9 @@ fn map_mesh(
 							};
 							append_face(a_mesh_part, [x,y,z], direction);
 						}
-						// a transparent b opaque
-						// Make negative face for b
-						if a_transparent && !b_transparent {
+
+						// a transparent b opaque -> make negative face for b at b
+						if a_empty && !b_empty {
 							let b_material_id = blockmap.index(b_index.unwrap() as usize).material_idx;
 							let b_mesh_part = {
 								if mesh_parts.contains_key(&b_material_id) {
@@ -431,7 +461,6 @@ fn map_mesh(
 									mesh_parts.get_mut(&b_material_id).unwrap()
 								}
 							};
-							
 							append_face(b_mesh_part, [bx,by,bz], &direction.flip());
 						}
 					}

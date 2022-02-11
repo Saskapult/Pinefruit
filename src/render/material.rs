@@ -6,6 +6,7 @@ use std::{
 };
 use crate::render::*;
 use serde::{Serialize, Deserialize};
+use anyhow::{Result, Context};
 
 
 
@@ -30,34 +31,6 @@ pub struct Material {
 	pub textures: HashMap<String, Vec<PathBuf>>,
 	pub floats: HashMap<String, Vec<f32>>,
 	pub sounds: HashMap<String, Vec<PathBuf>>, // step sounds, break sounds
-}
-impl Material {
-	pub fn from_specification(source_path: &PathBuf) -> Vec<Self> {
-		info!("Reading materials file {:?}", source_path);
-		let f = std::fs::File::open(source_path).expect("Failed to open file");
-		let mut specifications: Vec<MaterialSpecification> = ron::de::from_reader(f).expect("Failed to read materials ron file");
-
-		let folder_context = source_path.parent().unwrap();
-
-		let mut materials = Vec::new();
-		for specification in specifications {
-			let textures = specification.textures.iter().map(|(name, texture_paths)| {
-				let canonical_texture_paths = texture_paths.iter().map(|p| {
-					folder_context.join(p).canonicalize().unwrap()
-				}).collect::<Vec<_>>();
-				(name.clone(), canonical_texture_paths)
-			}).collect::<HashMap<_,_>>();
-			materials.push(Material {
-				name: specification.name,
-				graph: specification.graph,
-				source_path: source_path.clone(),
-				textures,
-				floats: HashMap::new(),
-				sounds: HashMap::new(),
-			});
-		}
-		materials
-	}
 }
 impl std::fmt::Display for Material {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -321,6 +294,62 @@ impl BoundMaterialManager {
 		drop(mm);
 		self.insert(bound_material)
 	}
+}
+
+
+
+/// Loads materials from a file along with their assets
+pub fn load_materials_file(
+	path: PathBuf,
+	tm: &mut TextureManager, 
+	mm: &mut MaterialManager, 
+) -> Result<()> {
+	info!("Reading materials file {:?}", &path);
+
+	let canonical_path = path.canonicalize()
+		.with_context(|| format!("Failed to canonicalize path '{:?}'", &path))?;
+	let f = std::fs::File::open(&path)
+		.with_context(|| format!("Failed to read from file path '{:?}'", &canonical_path))?;
+	let material_specs: Vec<MaterialSpecification> = ron::de::from_reader(f)
+		.with_context(|| format!("Failed to parse material ron file '{:?}'", &canonical_path))?;
+	let folder_context = canonical_path.parent().unwrap();
+
+	for material_spec in material_specs {
+		let canonical_graph_path = folder_context.join(&material_spec.graph).canonicalize()
+			.with_context(|| format!("Failed to canonicalize path '{:?}'", &material_spec.graph))?;
+		
+		// For each texture entry in material
+		let mut textures = HashMap::new();
+		for (entry_name, entry_textures) in material_spec.textures {
+			// For each texture in the texture entry
+			let mut canonical_texture_paths = Vec::new();
+			for texture_path in entry_textures {
+				let canonical_texture_path = folder_context.join(&texture_path).canonicalize()
+					.with_context(|| format!("Failed to canonicalize path '{:?}'", &texture_path))?;
+				canonical_texture_paths.push(canonical_texture_path);
+			}
+			textures.insert(entry_name, canonical_texture_paths);
+		}
+
+		// Load textures
+		for (t, tps) in &textures {
+			let tex = Texture::new(t, &tps[0]);
+			tm.insert(tex);
+		}
+
+		let mat = Material {
+			name: material_spec.name,
+			graph: canonical_graph_path,
+			source_path: canonical_path.clone(),
+			textures,
+			floats: HashMap::new(),
+			sounds: HashMap::new(),
+		};
+
+		mm.insert(mat);
+	}
+	
+	Ok(())
 }
 
 
