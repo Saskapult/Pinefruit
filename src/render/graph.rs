@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use std::{collections::{HashMap, HashSet}, time::Instant, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 use crate::render::*;
 use std::path::{Path, PathBuf};
 use wgpu::util::DeviceExt;
@@ -940,7 +940,6 @@ pub fn example_graph_read(
 						graph.add_node(Box::new(TextureNode::from_spec(spec)));
 					}
 				},
-				_ => todo!("Unrecognized node!"),
 			};
 		}
 	}

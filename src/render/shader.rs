@@ -548,7 +548,6 @@ impl ShaderManager {
 			let attribute_segment = match instance_input {
 				InstanceProperty::InstanceModelMatrix => InstanceModelMatrix::attributes(),
 				InstanceProperty::InstanceColour => InstanceColour::attributes(),
-				_ => panic!("Unimplemented instance property"),
 			};
 			for (size, format) in attribute_segment {
 				instance_attributes.push(wgpu::VertexAttribute {

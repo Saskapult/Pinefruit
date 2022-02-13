@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, Context};
-use crate::render::*;
+use crate::material::*;
+use crate::texture::*;
+
 
 
 
@@ -16,9 +18,9 @@ pub struct BlockSpecification {
 
 pub fn load_blocks_file(
 	path: &PathBuf,
-	bm: &mut BlockManager,
-	tm: &mut TextureManager, 
-	mm: &mut MaterialManager, 
+	_bm: &mut BlockManager,
+	_tm: &mut TextureManager, 
+	_mm: &mut MaterialManager, 
 ) -> Result<()> {
 	info!("Reading blocks file {:?}", path);
 
@@ -26,9 +28,9 @@ pub fn load_blocks_file(
 		.with_context(|| format!("Failed to canonicalize path '{:?}'", &path))?;
 	let f = std::fs::File::open(path)
 		.with_context(|| format!("Failed to read from file path '{:?}'", &canonical_path))?;
-	let mut material_specs: Vec<MaterialSpecification> = ron::de::from_reader(f)
+	let mut _material_specs: Vec<MaterialSpecification> = ron::de::from_reader(f)
 		.with_context(|| format!("Failed to parse blocks ron file '{:?}'", &canonical_path))?;
-	let folder_context = canonical_path.parent().unwrap();
+	let _folder_context = canonical_path.parent().unwrap();
 
 	todo!();
 }

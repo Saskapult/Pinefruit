@@ -1,9 +1,12 @@
 use crate::render::*;
 use wgpu::util::DeviceExt;
-use std::collections::{HashMap, BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
 use std::time::Instant;
+use crate::mesh::*;
+use crate::material::*;
+use crate::texture::*;
 
 
 

@@ -8,6 +8,7 @@ mod game;
 mod util;
 mod mesh;
 mod material;
+mod texture;
 
 
 use window::*;

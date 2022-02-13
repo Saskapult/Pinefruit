@@ -2,7 +2,7 @@
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use nalgebra::*;
-use std::collections::{HashMap, BTreeMap, BTreeSet};
+use std::collections::{HashMap, BTreeSet};
 use std::time::{Instant, Duration};
 
 use std::sync::{Arc, Mutex, RwLock};
@@ -21,6 +21,7 @@ use crate::render::Renderer;
 use rapier3d::prelude::*;
 use crate::mesh::*;
 use crate::material::*;
+use crate::texture::*;
 
 
 
@@ -196,7 +197,7 @@ impl StepResource {
 struct RenderResource {
 	pub renderer: Renderer,
 	materials_manager: Arc<RwLock<MaterialManager>>,
-	textures_manager: Arc<RwLock<crate::render::TextureManager>>,
+	textures_manager: Arc<RwLock<TextureManager>>,
 	meshes_manager: Arc<RwLock<MeshManager>>,
 	egui_rpass: egui_wgpu_backend::RenderPass,
 	pub durations: crate::util::DurationHolder,
@@ -204,7 +205,7 @@ struct RenderResource {
 impl RenderResource {
 	pub fn new(adapter: &wgpu::Adapter) -> Self {
 
-		let textures_manager = Arc::new(RwLock::new(crate::render::TextureManager::new()));
+		let textures_manager = Arc::new(RwLock::new(TextureManager::new()));
 
 		let materials_manager = Arc::new(RwLock::new(MaterialManager::new()));
 
@@ -323,36 +324,54 @@ impl MapComponent {
 	pub fn new(blockmanager: &Arc<RwLock<crate::world::BlockManager>>) -> Self {
 		let mut map = crate::world::Map::new([4; 3], blockmanager);
 		map.generate();
-		let chunk_models = HashMap::new();
 		Self {
 			map,
-			chunk_models,
+			chunk_models: HashMap::new(),
 		}		
 	}
 
-	// Regenerates chunk models if needed
+	/// Sets a voxel in the map, regenerating chunks as necessary
 	fn set_voxel(&mut self, pos: [i32; 3], voxel: Voxel) {
 		self.map.set_voxel_world(pos, voxel);
 		let (c, v) = self.map.world_chunk_voxel(pos);
 		let [cdx, cdy, cdz] = self.map.chunk_dimensions;
-		if v[0] as u32 >= cdx {
+		// X cases
+		if v[0] as u32 == cdx-1 {
 			let cx = [c[0]+1, c[1], c[2]];
 			if self.chunk_models.contains_key(&cx) {
 				self.chunk_models.insert(cx, ChunkModelEntry::UnModeled);
 			}
+		} else if v[0] == 0 {
+			let cx = [c[0]-1, c[1], c[2]];
+			if self.chunk_models.contains_key(&cx) {
+				self.chunk_models.insert(cx, ChunkModelEntry::UnModeled);
+			}
 		}
-		if v[1] as u32 >= cdy {
+		// Y cases
+		if v[1] as u32 == cdy-1 {
 			let cy = [c[0], c[1]+1, c[2]];
 			if self.chunk_models.contains_key(&cy) {
 				self.chunk_models.insert(cy, ChunkModelEntry::UnModeled);
 			}
+		} else if v[1] == 0 {
+			let cy = [c[0], c[1]-1, c[2]];
+			if self.chunk_models.contains_key(&cy) {
+				self.chunk_models.insert(cy, ChunkModelEntry::UnModeled);
+			}
 		}
-		if v[2] as u32 >= cdx {
+		// Z cases
+		if v[2] as u32 == cdz-1 {
 			let cz = [c[0], c[1], c[2]+1];
 			if self.chunk_models.contains_key(&cz) {
 				self.chunk_models.insert(cz, ChunkModelEntry::UnModeled);
 			}
+		} else if v[2] == 0 {
+			let cz = [c[0], c[1], c[2]-1];
+			if self.chunk_models.contains_key(&cz) {
+				self.chunk_models.insert(cz, ChunkModelEntry::UnModeled);
+			}
 		}
+		// The main chunk
 		if self.chunk_models.contains_key(&c) {
 			self.chunk_models.insert(c, ChunkModelEntry::UnModeled);
 		}
@@ -551,7 +570,7 @@ impl PhysicsResource {
 		&mut self, 
 		id: &IdentifierComponent,
 		transform: &TransformComponent,
-		mesh: Mesh, 
+		mesh: &mut Mesh, 
 		dynamic: bool,
 	) -> RigidBodyHandle {
 		let axis_angle = match transform.rotation.axis_angle() {
@@ -566,7 +585,7 @@ impl PhysicsResource {
 		if mesh.collider_shape.is_none() {
 			mesh.make_collider_trimesh();
 		}
-		let collider = ColliderBuilder::new(mesh.collider_shape.unwrap())
+		let collider = ColliderBuilder::new(mesh.collider_shape.as_ref().unwrap().clone())
 			.restitution(0.7)
 			.build();
 		let collider_handle = self.collider_set.insert_with_parent(collider, rigid_body_handle, &mut self.rigid_body_set);
@@ -773,6 +792,8 @@ impl<'a> System<'a> for WindowEventSystem {
 							}
 						},
 						WindowEvent::MouseWheel {delta, phase, ..} => {
+							let _d = delta;
+							let _p = phase;
 						},
 						WindowEvent::CursorEntered {..} => {
 						},
@@ -785,6 +806,7 @@ impl<'a> System<'a> for WindowEventSystem {
 							my = position.y;
 						},
 						WindowEvent::Resized (newsize) => {
+							let _ns = newsize;
 							// window_resource.windows[
 							// 	window_resource.id_idx[&window_id]
 							// ].resize(

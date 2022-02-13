@@ -1,5 +1,8 @@
 use crate::render::*;
 use std::sync::{Arc, RwLock};
+use crate::mesh::*;
+use crate::texture::*;
+use crate::material::*;
 
 
 

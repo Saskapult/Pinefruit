@@ -202,13 +202,13 @@ impl Mesh {
 	pub fn make_collider_trimesh(&mut self) {
 		use nalgebra::Point3;
 
-		if self.indices.unwrap().len() % 3 != 0 {
+		if self.indices.as_ref().unwrap().len() % 3 != 0 {
 			warn!("This mesh ('{}') has a number of indices not divisible by three", &self.name);
 		}
 
 		let shape = SharedShape::trimesh(
-			self.positions.unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])).collect::<Vec<_>>(),
-			self.indices.unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]).collect::<Vec<_>>(),
+			self.positions.as_ref().unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])).collect::<Vec<_>>(),
+			self.indices.as_ref().unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]).collect::<Vec<_>>(),
 		);
 
 		self.collider_shape = Some(shape);
@@ -280,11 +280,11 @@ pub fn meshes_trimesh(
 	let mut vertices = Vec::new();
 	let mut indices = Vec::new();
 	for mesh in meshes {
-		if mesh.indices.unwrap().len() % 3 != 0 {
+		if mesh.indices.as_ref().unwrap().len() % 3 != 0 {
 			warn!("This mesh ('{}') has a number of indices not divisible by three", &mesh.name);
 		}
-		vertices.extend(mesh.positions.unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])));
-		indices.extend(mesh.indices.unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]));
+		vertices.extend(mesh.positions.as_ref().unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])));
+		indices.extend(mesh.indices.as_ref().unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]));
 	}
 	
 	Ok(SharedShape::trimesh(

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use crate::world::*;
 use crate::render::*;
+use crate::mesh::*;
 use noise::{NoiseFn, Perlin};
 
 
@@ -372,7 +373,7 @@ fn map_mesh(
 	}
 
 	let mut mesh_parts = HashMap::new();
-	let mut models = Vec::new();
+	let models = Vec::new();
 
 	let [x_size, y_size, z_size] = chunk_size;
 	let x_multiplier = y_size * z_size;
@@ -549,27 +550,3 @@ pub const REVERSE_QUAD_INDICES: [u16; 6] = [
 	2, 1, 0,
 	0, 3, 2, 
 ];
-
-
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use noise::{Perlin, NoiseFn};
-
-	#[test]
-	fn test_namething() {
-		let perlin = Perlin::new();
-		let vals = [
-			[0.1, 2.31],
-			[1.0, 2.3],
-			[3.0, 2.0],
-			[300.0, 20.0],
-		];
-		for v in vals {
-			let p = perlin.get(v);
-			println!("P({:?}) = {}", v, p);
-		}
-		assert!(true);
-	}
-}

@@ -1,7 +1,7 @@
 use std::{path::PathBuf, collections::HashMap};
 use serde::{Serialize, Deserialize};
 use anyhow::*;
-use crate::render::{TextureManager, Texture};
+use crate::texture::*;
 
 
 

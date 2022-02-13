@@ -88,7 +88,6 @@ impl Instance {
 						panic!("instance colour not given!")
 					}
 				},
-				_ => todo!("Unimplemented instance property"),
 			}
 		}
 		bytes
