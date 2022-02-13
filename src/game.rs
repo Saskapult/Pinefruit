@@ -18,6 +18,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::path::PathBuf;
 use crate::render::Renderer;
+use rapier3d::prelude::*;
+use crate::mesh::*;
+use crate::material::*;
 
 
 
@@ -192,22 +195,20 @@ impl StepResource {
 // Todo: add a render queue which other systems write to and is used by the render system
 struct RenderResource {
 	pub renderer: Renderer,
-	materials_manager: Arc<RwLock<crate::render::MaterialManager>>,
+	materials_manager: Arc<RwLock<MaterialManager>>,
 	textures_manager: Arc<RwLock<crate::render::TextureManager>>,
-	meshes_manager: Arc<RwLock<crate::render::MeshManager>>,
+	meshes_manager: Arc<RwLock<MeshManager>>,
 	egui_rpass: egui_wgpu_backend::RenderPass,
-	durations: Vec<Duration>,
-	duration_index: usize,
+	pub durations: crate::util::DurationHolder,
 }
 impl RenderResource {
-	const DURATION_COUNT: usize = 32;
 	pub fn new(adapter: &wgpu::Adapter) -> Self {
 
 		let textures_manager = Arc::new(RwLock::new(crate::render::TextureManager::new()));
 
-		let materials_manager = Arc::new(RwLock::new(crate::render::MaterialManager::new()));
+		let materials_manager = Arc::new(RwLock::new(MaterialManager::new()));
 
-		let meshes_manager = Arc::new(RwLock::new(crate::render::MeshManager::new()));
+		let meshes_manager = Arc::new(RwLock::new(MeshManager::new()));
 
 		let renderer = pollster::block_on(
 			crate::render::Renderer::new(
@@ -230,39 +231,9 @@ impl RenderResource {
 			textures_manager,
 			meshes_manager,
 			egui_rpass,
-			durations: Vec::with_capacity(RenderResource::DURATION_COUNT),
-			duration_index: 0,
-		}		
-	}
-
-	pub fn record_render_duration(&mut self, duration: Duration) {
-		if self.durations.len() == 0 {
-			self.durations.push(duration);
-			self.duration_index += 1;
-		} else {
-			self.duration_index = (self.duration_index + 1) % RenderResource::DURATION_COUNT;
-			if self.duration_index < self.durations.len() {
-				self.durations[self.duration_index] = duration;
-			} else {
-				self.durations.push(duration);
-			}
+			durations: crate::util::DurationHolder::new(32),
 		}
-	}
-
-	pub fn get_average_render_duration(&self) -> Duration {
-		self.durations.iter().sum::<Duration>() / (self.durations.len() as u32)
-	}
-
-	pub fn get_median_render_duration(&self) -> Duration {
-		let mut sorted_durations = self.durations.clone();
-		sorted_durations.sort_unstable();
-
-		if sorted_durations.len() % 2 == 0 {
-			(sorted_durations[RenderResource::DURATION_COUNT/2] + sorted_durations[RenderResource::DURATION_COUNT/2+1]) / 2
-		} else {
-			sorted_durations[RenderResource::DURATION_COUNT/2]
-		}
-	}
+	}	
 }
 
 
@@ -431,52 +402,213 @@ impl ModelComponent {
 
 
 
+/// A numerical identifier (unique).
+/// We don't really need generation because u128 is so huge, but I like futureproofing.
+#[derive(Component, Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Copy, Clone)]
+#[storage(VecStorage)]
+struct IdentifierComponent {
+	id: u128,
+	generation: usize,
+}
+impl IdentifierComponent {
+	pub fn new(
+		id: u128,
+		generation: usize,
+	) -> Self {
+		Self { id, generation }
+	}
+}
+
+
+
+/// A name for display!
+/// Remember, a name is not unique.
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+struct NameComponent {
+	pub name: String,
+}
+impl NameComponent {
+	pub fn new(
+		name: String
+	) -> Self {
+		Self { name }
+	}
+}
+
 
 
 struct PhysicsResource {
+	pub rigid_body_set: RigidBodySet,
+	pub collider_set: ColliderSet,
+	pub query_pipeline: QueryPipeline,
+	query_pipeline_updated: bool,
+	pub gravity: Vector3<f32>,
+	pub integration_parameters: IntegrationParameters,
+	pub physics_pipeline: PhysicsPipeline,
+	pub island_manager: IslandManager,
+	pub broad_phase: BroadPhase,
+	pub narrow_phase: NarrowPhase,
+	pub joint_set: JointSet,
+	pub ccd_solver: CCDSolver,
+
+	pub rigid_body_handle_map: HashMap<RigidBodyHandle, IdentifierComponent>,
+	pub collider_handle_map: HashMap<ColliderHandle, IdentifierComponent>,
 }
 impl PhysicsResource {
-	pub fn new() -> Self {
+	pub fn new(
+	) -> Self {
 		Self {
+			rigid_body_set: RigidBodySet::new(),
+			collider_set: ColliderSet::new(),
+			query_pipeline: QueryPipeline::new(),
+			query_pipeline_updated: false,
+			gravity: vector![0.0, -1.0, 0.0],
+			integration_parameters: IntegrationParameters::default(),
+			physics_pipeline: PhysicsPipeline::new(),
+			island_manager: IslandManager::new(),
+			broad_phase: BroadPhase::new(),
+			narrow_phase: NarrowPhase::new(),
+			joint_set: JointSet::new(),
+			ccd_solver: CCDSolver::new(),
+			
+			rigid_body_handle_map: HashMap::new(),
+			collider_handle_map: HashMap::new(),
 		}
 	}
 
+	pub fn add_ground(&mut self) {
+		self.collider_set.insert(
+			ColliderBuilder::cuboid(100.0, 0.1, 100.0).build()
+		);
+	}
+
 	/// Casts a ray, returns collision position
-	pub fn ray(&self, origin: Vector3<f32>, direction: Vector3<f32>) -> Option<[f32; 3]> {
-		None
+	pub fn ray(
+		&self, 
+		origin: Point3<f32>, 
+		direction: Vector3<f32>,
+	) -> Option<(ColliderHandle, Point3<f32>)> {
+		let ray = Ray::new(origin.into(), direction.into());
+		
+		if let Some((handle, toi)) = self.query_pipeline.cast_ray(
+			&self.collider_set, 
+			&ray, 
+			100.0, 
+			true, 
+			InteractionGroups::all(), 
+			None,
+		) {
+			// The first collider hit has the handle `handle` and it hit after
+			// the ray travelled a distance equal to `ray.dir * toi`.
+			Some((handle, ray.point_at(toi)))
+		} else {
+			None
+		}		
 	}
 
 	pub fn tick(&mut self) {
 		info!("Physics tick!");
+		self.physics_pipeline.step(
+			&self.gravity,
+			&self.integration_parameters,
+			&mut self.island_manager,
+			&mut self.broad_phase,
+			&mut self.narrow_phase,
+			&mut self.rigid_body_set,
+			&mut self.collider_set,
+			&mut self.joint_set,
+			&mut self.ccd_solver,
+			&(),
+			&(),
+		);
+		
+		self.query_pipeline.update(&self.island_manager, &self.rigid_body_set, &self.collider_set);
+	}
+
+	pub fn add_rigid_body_with_mesh(
+		&mut self, 
+		mesh: Mesh, 
+		dynamic: bool,
+	) -> RigidBodyHandle {
+		let rigid_body = match dynamic {
+			true => RigidBodyBuilder::new_dynamic(),
+			false => RigidBodyBuilder::new_static(),
+		}.build();
+		let rb_handle = self.rigid_body_set.insert(rigid_body);
+		let collider = ColliderBuilder::trimesh(
+			mesh.positions.unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])).collect::<Vec<_>>(),
+			mesh.indices.unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]).collect::<Vec<_>>(),
+		).restitution(0.7).build();
+		let _c_handle = self.collider_set.insert_with_parent(collider, rb_handle, &mut self.rigid_body_set);
+
+		self.query_pipeline.update(&self.island_manager, &self.rigid_body_set, &self.collider_set);
+
+		rb_handle
+	}
+
+	pub fn add_mesh_trimesh(
+		&mut self, 
+		id: &IdentifierComponent,
+		transform: &TransformComponent,
+		mesh: Mesh, 
+		dynamic: bool,
+	) -> RigidBodyHandle {
+		let axis_angle = match transform.rotation.axis_angle() {
+			Some((axis, angle)) => axis.into_inner() * angle,
+			None => Vector3::zeros(),
+		};
+		let rigid_body = match dynamic {
+			true => RigidBodyBuilder::new_dynamic(),
+			false => RigidBodyBuilder::new_static(),
+		}.position(Isometry3::new(transform.position, axis_angle)).build();
+		let rigid_body_handle = self.rigid_body_set.insert(rigid_body);
+		if mesh.collider_shape.is_none() {
+			mesh.make_collider_trimesh();
+		}
+		let collider = ColliderBuilder::new(mesh.collider_shape.unwrap())
+			.restitution(0.7)
+			.build();
+		let collider_handle = self.collider_set.insert_with_parent(collider, rigid_body_handle, &mut self.rigid_body_set);
+
+		self.rigid_body_handle_map.insert(rigid_body_handle, *id);
+		self.collider_handle_map.insert(collider_handle, *id);
+
+		rigid_body_handle
 	}
 }
+
+
+
 /// A static physics thing
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 struct StaticPhysicsComponent {
-	pub id: u128,
+	pub rigid_body_handle: RigidBodyHandle,
 }
 impl StaticPhysicsComponent {
-	pub fn new(id: u128) -> Self {
-		Self {
-			id,
-		}
+	pub fn new(rigid_body_handle: RigidBodyHandle) -> Self {
+		Self { rigid_body_handle }
 	}
 }
+
+
+
 /// A non-static physics thing
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 struct DynamicPhysicsComponent {
-	pub id: u128,
+	pub rigid_body_handle: RigidBodyHandle,
 }
 impl DynamicPhysicsComponent {
-	pub fn new(id: u128) -> Self {
-		Self {
-			id,
-		}
+	pub fn new(rigid_body_handle: RigidBodyHandle) -> Self {
+		Self { rigid_body_handle }
 	}
 }
-/// Ticks physics and updates all dynamic physics transforms
+
+
+
+/// Ticks physics and moves affected objects
 struct DynamicPhysicsSystem;
 impl<'a> System<'a> for DynamicPhysicsSystem {
 	type SystemData = (
@@ -493,13 +625,17 @@ impl<'a> System<'a> for DynamicPhysicsSystem {
 			mut p_resource,
 		): Self::SystemData,
 	) { 
+		// Tick physics
 		p_resource.tick();
 
+		// For each thing with dynamic physics, put it where it should be
 		for (p_dynamic_c, transform_c) in (&p_dynamic, &mut transform).join() {
-			let id = p_dynamic_c.id;
 			// get position and rotation of object using id
+			let rbid = p_dynamic_c.rigid_body_handle;
+			let body = &p_resource.rigid_body_set[rbid];
 			// Update transform component
-			transform_c.position[0] = id as f32;
+			transform_c.position = *body.translation();
+			transform_c.rotation = *body.rotation();
 		}
 	}
 }
@@ -865,6 +1001,7 @@ impl<'a> System<'a> for RenderSystem {
 	type SystemData = (
 		WriteExpect<'a, RenderResource>,
 		WriteExpect<'a, WindowResource>,
+		ReadExpect<'a, PhysicsResource>,
 		ReadStorage<'a, ModelComponent>,
 		ReadStorage<'a, MapComponent>,
 		ReadStorage<'a, CameraComponent>,
@@ -876,6 +1013,7 @@ impl<'a> System<'a> for RenderSystem {
 		(
 			mut render_resource, 
 			mut window_resource,
+			pr,
 			model,
 			map,
 			camera,
@@ -988,6 +1126,11 @@ impl<'a> System<'a> for RenderSystem {
 						// 	repaint_signal: repaint_signal.clone(),
 						// });
 
+						let looking_at = pr.ray(
+							transform_c.position.into(), 
+							transform_c.rotation * vector![0.0, 0.0, 1.0],
+						);
+
 						let input = egui::RawInput::default();
 						let (_output, shapes) = window.platform.context().run(input, |egui_ctx| {
 							egui::SidePanel::left("my_side_panel").show(egui_ctx, |ui| {
@@ -995,6 +1138,7 @@ impl<'a> System<'a> for RenderSystem {
 								if ui.button("Clickme").clicked() {
 									panic!("Button click");
 								}
+								ui.label(format!("looking at {:?}", looking_at));
 							});
 						});
 
@@ -1097,6 +1241,9 @@ impl Game {
 		world.register::<ModelComponent>();
 		world.register::<MapComponent>();
 		world.register::<CameraComponent>();
+		world.register::<DynamicPhysicsComponent>();
+		world.register::<IdentifierComponent>();
+		world.register::<NameComponent>();
 
 		// Attach resources
 		let step_resource = StepResource::new();
@@ -1112,8 +1259,12 @@ impl Game {
 			event_queue,
 		);
 		world.insert(window_resource);
+
 		let input_resource = InputResource::new();
 		world.insert(input_resource);
+
+		let physics_resource = PhysicsResource::new();
+		world.insert(physics_resource);
 
 		// Entities
 		// Camera
@@ -1138,7 +1289,8 @@ impl Game {
 		let tick_dispatcher = DispatcherBuilder::new()
 			.with(InputSystem, "input_system", &[])
 			.with(MapSystem, "map_system", &["input_system"])
-			.with(RenderSystem, "render_system", &["input_system", "map_system"])
+			.with(DynamicPhysicsSystem, "dynamic_physics_system", &["input_system"])
+			.with(RenderSystem, "render_system", &["input_system", "map_system", "dynamic_physics_system"])
 			.build();
 
 		Self {
@@ -1155,7 +1307,7 @@ impl Game {
 		let rr = self.world.write_resource::<RenderResource>();
 
 		let xp_idx = {
-			let xp = crate::render::Mesh::new(&"xp_quad".to_string())
+			let xp = Mesh::new(&"xp_quad".to_string())
 				.with_positions(XP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
 				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
 				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
@@ -1163,7 +1315,7 @@ impl Game {
 			rr.meshes_manager.write().unwrap().insert(xp)
 		};
 		let yp_idx = {
-			let xp = crate::render::Mesh::new(&"yp_quad".to_string())
+			let xp = Mesh::new(&"yp_quad".to_string())
 				.with_positions(YP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
 				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
 				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
@@ -1171,7 +1323,7 @@ impl Game {
 			rr.meshes_manager.write().unwrap().insert(xp)
 		};
 		let zp_idx = {
-			let xp = crate::render::Mesh::new(&"zp_quad".to_string())
+			let xp = Mesh::new(&"zp_quad".to_string())
 				.with_positions(ZP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
 				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
 				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
@@ -1180,7 +1332,7 @@ impl Game {
 		};
 
 		let xn_idx = {
-			let xp = crate::render::Mesh::new(&"xn_quad".to_string())
+			let xp = Mesh::new(&"xn_quad".to_string())
 				.with_positions(XN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
 				.with_normals((0..4).map(|_| [-1.0, 0.0, 0.0]).collect::<Vec<_>>())
 				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
@@ -1188,7 +1340,7 @@ impl Game {
 			rr.meshes_manager.write().unwrap().insert(xp)
 		};
 		let yn_idx = {
-			let xp = crate::render::Mesh::new(&"yn_quad".to_string())
+			let xp = Mesh::new(&"yn_quad".to_string())
 				.with_positions(YN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
 				.with_normals((0..4).map(|_| [0.0, -1.0, 0.0]).collect::<Vec<_>>())
 				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
@@ -1196,7 +1348,7 @@ impl Game {
 			rr.meshes_manager.write().unwrap().insert(xp)
 		};
 		let zn_idx = {
-			let xp = crate::render::Mesh::new(&"zn_quad".to_string())
+			let xp = Mesh::new(&"zn_quad".to_string())
 				.with_positions(ZN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
 				.with_normals((0..4).map(|_| [0.0, 0.0, -1.0]).collect::<Vec<_>>())
 				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
@@ -1243,7 +1395,7 @@ impl Game {
 			let mut meshm = rr.meshes_manager.write().unwrap();
 
 			// Load some materials
-			crate::render::load_materials_file(
+			load_materials_file(
 				PathBuf::from("resources/materials/kmaterials.ron"),
 				&mut texm,
 				&mut matm,
@@ -1274,20 +1426,25 @@ impl Game {
 					..Default::default()
 				},
 			).unwrap();
-			let test_mesh = crate::render::Mesh::from_obj_model(obj_models[0].clone()).unwrap();
-			let test_mesh_idx = meshm.insert(test_mesh);
+			let test_mesh = Mesh::from_obj_model(obj_models[0].clone()).unwrap();
+			let test_mesh_idx = meshm.insert(test_mesh.clone());
 			drop(matm);
 			drop(texm);
 			drop(meshm);
 			drop(rr);
 			self.world.create_entity()
-				.with(TransformComponent::new().with_position([1.0, 0.0, 1.0].into()))
+				.with(TransformComponent::new().with_position([0.0, 0.0, 0.0].into()))
 				.with(ModelComponent::new(test_mesh_idx, 0))
 				.build();
+			
+			let mut pr = self.world.write_resource::<PhysicsResource>();
+			pr.add_rigid_body_with_mesh(test_mesh, false);
+			
 		}
+			
 		
 		// Place testing faces
-		self.make_testing_faces();
+		//self.make_testing_faces();
 	}
 
 	pub fn tick(&mut self) {

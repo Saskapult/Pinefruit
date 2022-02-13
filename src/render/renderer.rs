@@ -109,7 +109,7 @@ pub struct Renderer {
 	opaque_models: ModelsQueueResource,
 	opaque_graph: Box<dyn RunnableNode>,
 
-	depth_cache: HashMap<[u32; 2], BoundTexture>, // Should have a limit for how many to store
+	render_durations: Option<crate::util::DurationHolder>,
 }
 impl Renderer {
 	pub async fn new(
@@ -218,7 +218,7 @@ impl Renderer {
 			graph_resources,
 			opaque_models,
 			opaque_graph,
-			depth_cache: HashMap::new(),
+			render_durations: Some(crate::util::DurationHolder::new(32)),
 		}
 	}
 
@@ -273,6 +273,7 @@ impl Renderer {
 		camera: &Camera, 
 		_t: Instant,
 	) {
+		let render_st = Instant::now();
 		// Set default resolution for context
 		self.graph_resources.default_resolution = [width, height];
 
@@ -328,6 +329,10 @@ impl Renderer {
 
 		// Submit queue to make all that stuff happen
 		self.queue.submit(std::iter::once(encoder.finish()));
+
+		if let Some(rdirs) = &mut self.render_durations {
+			rdirs.record(Instant::now() - render_st);
+		}
 	}
 
 	fn get_render_frac(&self, t: Instant) -> f32 {		

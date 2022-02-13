@@ -1,33 +1,25 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
-use wgpu::util::DeviceExt;
-use crate::render::*;
-use std::sync::RwLock;
+use std::{path::PathBuf, collections::HashMap};
 use anyhow::*;
-
-
-/*
-In the future we could let a bound mesh specify whether its indices should use wgpu::IndexFormat::Uint16 or wgpu::IndexFormat::Uint32 based on the length of the mesh's indices vec but 2^16 is fairly big so I don't really care right now
-*/
+use rapier3d::prelude::*;
+use crate::render::vertex::*;
 
 
 
-pub type MeshInputFormat = (VertexProperties, InstanceProperties);
 
-
-
-#[derive(Debug, Clone)]
+#[derive(Derivative, Clone)]
+#[derivative(Debug)]
 pub struct Mesh {
 	pub name: String,
-	pub positions: Option<Vec<[f32; 3]>>,
+	pub positions: Option<Vec<[f32; 3]>>,	// Should not be optional
 	pub uvs: Option<Vec<[f32; 2]>>,
 	pub normals: Option<Vec<[f32; 3]>>,
 	pub tangents: Option<Vec<[f32; 3]>>,
 	pub bitangents: Option<Vec<[f32; 3]>>,
 	pub colours: Option<Vec<[f32; 3]>>,
-	pub indices: Option<Vec<u16>>,
+	pub indices: Option<Vec<u16>>,			// Should not be optional
 	pub path: Option<PathBuf>,
+	#[derivative(Debug="ignore")]
+	pub collider_shape: Option<SharedShape>,
 }
 impl Mesh {
 	pub fn new(name: &String) -> Self {
@@ -41,6 +33,7 @@ impl Mesh {
 			colours: None,
 			indices: None,
 			path: None,
+			collider_shape: None,
 		}
 	}
 
@@ -55,6 +48,7 @@ impl Mesh {
 			colours: self.colours,
 			indices: self.indices,
 			path: self.path,
+			collider_shape: self.collider_shape,
 		}
 	}
 
@@ -69,6 +63,7 @@ impl Mesh {
 			colours: self.colours,
 			indices: self.indices,
 			path: self.path,
+			collider_shape: self.collider_shape,
 		}
 	}
 
@@ -83,6 +78,7 @@ impl Mesh {
 			colours: self.colours,
 			indices: self.indices,
 			path: self.path,
+			collider_shape: self.collider_shape,
 		}
 	}
 
@@ -97,6 +93,7 @@ impl Mesh {
 			colours: self.colours,
 			indices: Some(indices),
 			path: self.path,
+			collider_shape: self.collider_shape,
 		}
 	}
 
@@ -198,7 +195,23 @@ impl Mesh {
 			colours: None,
 			indices: Some(indices),
 			path: None,
+			collider_shape: None,
 		})
+	}
+
+	pub fn make_collider_trimesh(&mut self) {
+		use nalgebra::Point3;
+
+		if self.indices.unwrap().len() % 3 != 0 {
+			warn!("This mesh ('{}') has a number of indices not divisible by three", &self.name);
+		}
+
+		let shape = SharedShape::trimesh(
+			self.positions.unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])).collect::<Vec<_>>(),
+			self.indices.unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]).collect::<Vec<_>>(),
+		);
+
+		self.collider_shape = Some(shape);
 	}
 }
 impl std::fmt::Display for Mesh {
@@ -258,142 +271,24 @@ impl MeshManager {
 
 
 
-/// Vertex property data of a mesh
-#[derive(Debug)]
-pub struct BoundMesh {
-	pub name: String,
-	pub mesh_idx: usize,
-	pub vertex_properties: Vec<VertexProperty>,
-    pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub n_vertices: u32,	// Number of vertices (length of index buffer)
-	// pub n_vertices_unique: u32	// Number of unique vertices (length of vertex buffer)
-}
-impl std::fmt::Display for BoundMesh {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "BoundMesh {} [", &self.name)?;
-		if self.vertex_properties.len() != 0 {
-			if self.vertex_properties.len() > 1 {
-				for bsi in 0..(self.vertex_properties.len()-1) {
-					write!(f, "{:?}, ", self.vertex_properties[bsi])?;
-				}
-			}
-			write!(f, "{:?}", self.vertex_properties[self.vertex_properties.len()-1])?
+/// Create a trimesh from many meshes
+pub fn meshes_trimesh(
+	meshes: Vec<&Mesh>
+) -> Result<SharedShape> {
+	use nalgebra::Point3;
+
+	let mut vertices = Vec::new();
+	let mut indices = Vec::new();
+	for mesh in meshes {
+		if mesh.indices.unwrap().len() % 3 != 0 {
+			warn!("This mesh ('{}') has a number of indices not divisible by three", &mesh.name);
 		}
-		write!(f, "]")
+		vertices.extend(mesh.positions.unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])));
+		indices.extend(mesh.indices.unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]));
 	}
-}
-
-
-
-#[derive(Debug)]
-pub struct BoundMeshManager {
-	device: Arc<wgpu::Device>,
-	queue: Arc<wgpu::Queue>,
-	meshes: Vec<BoundMesh>, // These should be stored in an arena
-	meshes_index_from_name_properties: HashMap<(String, Vec<VertexProperty>), usize>,
-	meshes_index_from_index_properties: HashMap<(usize, Vec<VertexProperty>), usize>,
-	mesh_manager: Arc<RwLock<MeshManager>>,
-}
-impl BoundMeshManager {
-	pub fn new(
-		device: &Arc<wgpu::Device>,
-		queue: &Arc<wgpu::Queue>,
-		mesh_manager: &Arc<RwLock<MeshManager>>,
-	) -> Self {
-		Self {
-			device: device.clone(), 
-			queue: queue.clone(),
-			meshes: Vec::new(),
-			meshes_index_from_name_properties: HashMap::new(),
-			meshes_index_from_index_properties: HashMap::new(),
-			mesh_manager: mesh_manager.clone(),
-		}
-	}
-
-	pub fn index(&self, i: usize) -> &BoundMesh {
-		&self.meshes[i]
-	}
-
-	pub fn insert(&mut self, bound_mesh: BoundMesh) -> usize {
-		let idx = self.meshes.len();
-		let index_key = (bound_mesh.mesh_idx, bound_mesh.vertex_properties.clone());
-		self.meshes_index_from_index_properties.insert(index_key, idx);
-		let name_key = (bound_mesh.name.clone(), bound_mesh.vertex_properties.clone());
-		self.meshes_index_from_name_properties.insert(name_key, idx);
-		self.meshes.push(bound_mesh);
-		idx
-	}
-
-	pub fn bind_by_index(&mut self, mesh_idx: usize, vertex_properties: &Vec<VertexProperty>) -> usize {
-		let mm = self.mesh_manager.read().unwrap();
-		let mesh = mm.index(mesh_idx);
-
-		info!("Binding mesh '{}' with properties '{:?}'", mesh, vertex_properties);
-
-		let vertices_bytes = mesh.vertex_data(vertex_properties).unwrap();
-
-		let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-			label: Some(&format!("{} vertex buffer {:?}", &mesh.name, vertex_properties)),
-			contents: vertices_bytes.as_slice(),
-			usage: wgpu::BufferUsages::VERTEX,
-		});
-		let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-			label: Some(&format!("{} index buffer {:?}", &mesh.name, vertex_properties)),
-			contents: bytemuck::cast_slice(mesh.indices.as_ref().unwrap().as_slice()),
-			usage: wgpu::BufferUsages::INDEX,
-		});
-
-		let bound_mesh = BoundMesh {
-			name: mesh.name.clone(), 
-			mesh_idx,
-			vertex_properties: vertex_properties.clone(), 
-			vertex_buffer, 
-			index_buffer, 
-			n_vertices: mesh.indices.as_ref().unwrap().len() as u32,
-		};
-		
-		drop(mm);
-		self.insert(bound_mesh)
-	}
-
-	pub fn index_from_name_properites(&self, name: &String, vertex_properties: &Vec<VertexProperty>) -> Option<usize> {
-		let key = (name.clone(), vertex_properties.clone());
-		if self.meshes_index_from_name_properties.contains_key(&key) {
-			Some(self.meshes_index_from_name_properties[&key])
-		} else {
-			None
-		}
-	}
-
-	pub fn index_from_name_properites_bind(&mut self, name: &String, vertex_properties: &Vec<VertexProperty>) -> usize {
-		let mm = self.mesh_manager.read().unwrap();
-		let key = (name.clone(), vertex_properties.clone());
-		if self.meshes_index_from_name_properties.contains_key(&key) {
-			self.meshes_index_from_name_properties[&key]
-		} else if let Some(mesh_idx) = mm.index_name(name) {
-			drop(mm);
-			self.bind_by_index(mesh_idx, vertex_properties)
-		} else {
-			panic!("Tried to access a nonexistent mesh!")
-		}
-	}
-
-	pub fn index_from_index_properites(&self, i: usize, vertex_properties: &Vec<VertexProperty>) -> Option<usize> {
-		let key = (i, vertex_properties.clone());
-		if self.meshes_index_from_index_properties.contains_key(&key) {
-			Some(self.meshes_index_from_index_properties[&key])
-		} else {
-			None
-		}
-	}
-
-	pub fn index_from_index_properites_bind(&mut self, mesh_idx: usize, vertex_properties: &Vec<VertexProperty>) -> usize {
-		let key = (mesh_idx, vertex_properties.clone());
-		if self.meshes_index_from_index_properties.contains_key(&key) {
-			self.meshes_index_from_index_properties[&key]
-		} else {
-			self.bind_by_index(mesh_idx, vertex_properties)
-		}
-	}
+	
+	Ok(SharedShape::trimesh(
+		vertices,
+		indices,
+	))
 }

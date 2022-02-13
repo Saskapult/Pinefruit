@@ -957,6 +957,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "derivative",
  "egui",
  "egui-winit",
  "egui_demo_lib",

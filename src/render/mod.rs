@@ -3,27 +3,25 @@ Please send help, I don't know what I'm doing
 */
 
 pub mod camera;
-pub mod material;
-pub mod mesh;
+pub mod boundmaterial;
+pub mod boundmesh;
 pub mod model;
 pub mod renderer;
 pub mod shader;
-pub mod texture;
+pub mod boundtexture;
 pub mod vertex;
 pub mod graph;
 pub mod light;
 pub mod resources;
-pub mod gui;
 
 pub use camera::*;
-pub use material::*;
-pub use mesh::*;
+pub use boundmaterial::*;
+pub use boundmesh::*;
 pub use model::*;
 pub use renderer::*;
 pub use shader::*;
-pub use texture::*;
+pub use boundtexture::*;
 pub use vertex::*;
 pub use light::*;
 pub use graph::*;
 pub use resources::*;
-pub use gui::*;

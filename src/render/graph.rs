@@ -3,6 +3,7 @@ use std::{collections::{HashMap, HashSet}, time::Instant, sync::Arc};
 use crate::render::*;
 use std::path::{Path, PathBuf};
 use wgpu::util::DeviceExt;
+use anyhow::*;
 
 
 /*
@@ -124,14 +125,17 @@ impl GraphLocals {
 		idx
 	}
 
+	/// Creates a bind group containing all of the specified resources.
+	/// May fail if a requested resource does not exist.
 	pub fn create_resources_group(
 		&mut self, 
 		format: &BindGroupFormat, 
 		resources: &mut RenderResources,
-	) -> usize {
+	) -> Result<usize> {
 		debug!("Creating resources bg for '{}'", format);
 
-		// Just for testing
+		// The default sampler, used for every requested sampler
+		// Todo: make this customizable
 		let sampler_thing = self.device.create_sampler(&wgpu::SamplerDescriptor {
 			address_mode_u: wgpu::AddressMode::Repeat,
 			address_mode_v: wgpu::AddressMode::Repeat,
@@ -153,7 +157,7 @@ impl GraphLocals {
 						});
 					} else {
 						error!("No buffer found for resource id '{}'", resource_id);
-						panic!("Tried to reterive nonexistent resource buffer")
+						panic!("Tried to retreive nonexistent resource buffer")
 					}
 				},
 				BindingType::Texture => {
@@ -166,7 +170,7 @@ impl GraphLocals {
 						});
 					} else {
 						error!("No texture found for resource id '{}'", resource_id);
-						panic!("Tried to reterive nonexistent resource buffer")
+						panic!("Tried to retreive nonexistent resource buffer")
 					}
 				}
 				BindingType::Sampler => {
@@ -175,7 +179,7 @@ impl GraphLocals {
 						resource: wgpu::BindingResource::Sampler(&sampler_thing),
 					});
 				},
-				_ => todo!(),
+				_ => todo!("Resource group binding type is not yet implemented"),
 			}
 		}
 
@@ -188,19 +192,20 @@ impl GraphLocals {
 		let bind_group = resources.device.create_bind_group(&wgpu::BindGroupDescriptor {
 			entries: &bindings[..],
 			layout,
-			label: Some(&*format!("resources group '{}'", format)),
+			label: Some(&*format!("resources group with format '{}'", format)),
 		});
 
 		let idx = self.resources_bgs.len();
 		self.resource_bg_index_of_format.insert(format.clone(), idx);
 		self.resources_bgs.push(bind_group);
-		idx
+		Ok(idx)
 	}
 
 	pub fn resource_bg(&self, i: usize) -> &wgpu::BindGroup {
 		&self.resources_bgs[i]
 	}
 
+	/// Find index of resource bind group if it exists
 	pub fn resource_bg_of_format(&self, bgf: &BindGroupFormat) -> Option<usize> {
 		if self.resource_bg_index_of_format.contains_key(bgf) {
 			Some(self.resource_bg_index_of_format[bgf])
@@ -209,11 +214,12 @@ impl GraphLocals {
 		}
 	}
 
-	pub fn resource_bg_of_format_create(&mut self, bgf: &BindGroupFormat, resources: &mut RenderResources) -> usize {
+	/// Find index of resource bind group, create it if it doesn't exist
+	pub fn resource_bg_of_format_create(&mut self, bgf: &BindGroupFormat, resources: &mut RenderResources) -> Result<usize> {
 		if self.resource_bg_index_of_format.contains_key(bgf) {
-			self.resource_bg_index_of_format[bgf]
+			Ok(self.resource_bg_index_of_format[bgf])
 		} else {
-			self.create_resources_group(bgf, resources)
+			Ok(self.create_resources_group(bgf, resources)?)
 		}
 	}
 }
@@ -343,7 +349,7 @@ struct GraphNodeSpecification {
 enum NodeType {
 	// Graph(GraphNode),
 	Shader(ShaderNode),
-	Texture(CreateTextureNode),
+	Texture(TextureNode),
 }
 
 
@@ -352,7 +358,7 @@ enum NodeType {
 enum NodeSpecificationType {
 	// Graph(GraphNodeSpecification),
 	Shader(ShaderNodeSpecification),
-	Texture(CreateTextureNodeSpecification)
+	Texture(TextureNodeSpecification)
 }
 
 
@@ -361,7 +367,7 @@ enum NodeSpecificationType {
 enum QueueType {
 	Models(usize),	// Takes meshes and materials
 	Meshes(usize),	// Takes only meshes
-	FullQuad,		// Only operates on textures or something idk
+	FullQuad,		// Only operates on textures
 }
 
 
@@ -370,17 +376,23 @@ enum QueueType {
 /// 
 /// Currently a mesh queue is just a model queue with an empty material bgf.
 /// This is bad.
-/// in order to recify it a lot of code needs to be rewritten and I don't wanna.
+/// in order to recify it a lot of code needs to be rewritten.
+/// It shouldn't affect perfmormance that much so I will leave this until I'm desperate.
+/// 
+/// A buffer, named 'fug_buff', is used to convince wgpu to let me draw a fullscreen quad.
+/// It would be ideal to just draw using vertex indices but wgpu wants a buffer to be bound.
 #[derive(Debug)]
 struct ShaderNode {
 	name: String,
 	shader_path: PathBuf,
 	shader_idx: usize,
 
+	// The input formts for this node, if it needs them
 	mesh_input_format: Option<MeshInputFormat>,
 	material_input_bgf: Option<BindGroupFormat>,
-
 	resources_idx: Option<usize>,
+
+	// The queue index (if initialized) (if necessary)
 	render_queue: Option<QueueType>,
 
 	inputs: HashSet<(String, GraphResourceType)>,
@@ -391,19 +403,18 @@ struct ShaderNode {
 	fugg_buff: Option<wgpu::Buffer>,
 }
 impl ShaderNode {
-	pub fn from_spec(spec: &ShaderNodeSpecification, folder_context: &Path, shaders: &mut ShaderManager) -> Self {
+	pub fn from_spec(
+		spec: &ShaderNodeSpecification, 
+		folder_context: &Path, 
+		shaders: &mut ShaderManager,
+	) -> Result<Self> {
 		let mut inputs = spec.render_inputs.clone();
 		if let Some(depth_id) = &spec.depth {
 			inputs.insert((depth_id.clone(), GraphResourceType::Texture));
 		}
 
-		let shader_path = match folder_context.join(&spec.shader).canonicalize() {
-			Ok(v) => v,
-			Err(e) => {
-				error!("Failed to canonicalize shader path ('{:?}' + '{:?}')", &folder_context, &spec.shader);
-				panic!("{}", e);
-			}
-		};
+		let shader_path = folder_context.join(&spec.shader).canonicalize()
+			.with_context(|| format!("Failed to canonicalize shader path ('{:?}' + '{:?}')", &folder_context, &spec.shader))?;
 			
 		let shader_idx = match shaders.index_from_path(&shader_path) {
 			Some(idx) => idx,
@@ -412,16 +423,13 @@ impl ShaderNode {
 		let shader = shaders.index(shader_idx);
 
 		// Add globals input if needed
-		match shader.resources_bg_index {
-			Some(idx) => {
-				let globals_bgf = ShaderNode::resources_alias_filter(&spec.aliases, shader.bind_groups[&idx].format().clone());
-				inputs.insert(("_globals".to_string(), GraphResourceType::Resources(globals_bgf)));
-			},
-			None => {},
+		if let Some(idx) = shader.resources_bg_index {
+			let globals_bgf = ShaderNode::resources_alias_filter(&spec.aliases, shader.bind_groups[&idx].format().clone());
+			inputs.insert(("_globals".to_string(), GraphResourceType::Resources(globals_bgf)));
 		}
 
 		// Mesh input
-		let mesh_input = {
+		let mesh_input_format = {
 			if shader.vertex_properties.len() > 0 || shader.instance_properties.len() > 0 {
 				inputs.insert(("meshes".to_string(), GraphResourceType::Meshes(
 					shader.vertex_properties.clone(), 
@@ -434,7 +442,7 @@ impl ShaderNode {
 		};
 		
 		// Material input
-		let material_input = match shader.material_bg_index {
+		let material_input_bgf = match shader.material_bg_index {
 			Some(idx) => {
 				inputs.insert(("materials".to_string(), GraphResourceType::Materials(
 					shader.bind_groups[&idx].format(),
@@ -452,7 +460,7 @@ impl ShaderNode {
 		};
 
 		// Add model input if needed
-		if mesh_input.is_some() && material_input.is_some() {
+		if mesh_input_format.is_some() && material_input_bgf.is_some() {
 			inputs.insert(("models".to_string(), GraphResourceType::Models((
 				shader.instance_properties.clone(), 
 				shader.vertex_properties.clone(), 
@@ -460,12 +468,12 @@ impl ShaderNode {
 			))));
 		}
 
-		Self {
+		Ok(Self {
 			name: spec.name.clone(),
 			shader_path: spec.shader.clone(),
 			shader_idx,
-			mesh_input_format: mesh_input,
-			material_input_bgf: material_input,
+			mesh_input_format,
+			material_input_bgf,
 			resources_idx: None,
 			render_queue: None,
 			inputs,
@@ -473,9 +481,10 @@ impl ShaderNode {
 			aliases: spec.aliases.clone(),
 			outputs: spec.outputs.clone(),
 			fugg_buff: None,
-		}
+		})
 	}
 
+	/// Checks if there is an alias for something
 	fn alias_for(&self, s: &String) -> Option<&String> {
 		if self.aliases.contains_key(s) {
 			Some(&self.aliases[s])
@@ -484,6 +493,7 @@ impl ShaderNode {
 		}
 	}
 
+	/// Filters a bind group to use this node's aliases
 	fn resources_alias_filter(
 		aliases: &HashMap<String, String>, 
 		mut bgf: BindGroupFormat,
@@ -523,12 +533,15 @@ impl RunnableNode for ShaderNode {
 		let instance_properties = shader.instance_properties.clone();
 		let vertex_properties = shader.vertex_properties.clone();
 		let globals_bgf = shader.bind_groups[&0].format();
-		//let materials_bgf = shader.bind_groups[&1].format().clone();
+		let materials_bgf = match shader.material_bg_index {
+			Some(idx) => Some(shader.bind_groups[&idx].format().clone()),
+			None => None,
+		};
 		drop(shader);
 
 		let filtered_globals_bgf = ShaderNode::resources_alias_filter(&self.aliases, globals_bgf);
 		self.resources_idx = Some(
-			graph_resources.resource_bg_of_format_create(&filtered_globals_bgf, render_resources)
+			graph_resources.resource_bg_of_format_create(&filtered_globals_bgf, render_resources).unwrap()
 		);
 		trace!("Shader node {} chose globals idx {}", &self.name, &self.resources_idx.unwrap());
 
@@ -537,12 +550,9 @@ impl RunnableNode for ShaderNode {
 			// If takes mesh input find the mesh bit
 			let takes_meshes = vertex_properties.len() > 0 || instance_properties.len() > 0;
 			if takes_meshes {
-				// Reacquire shader
-				let shader = render_resources.shaders.index(self.shader_idx);
-				match shader.material_bg_index {
-					Some(_idx) => {
-						// Model input
-						let materials_bgf = render_resources.shaders.index(self.shader_idx).bind_groups[&1].format().clone(); // Bad crude workaround
+				match materials_bgf {
+					Some(materials_bgf) => {
+						// Takes materials too, so model input
 						let model_format = (instance_properties, vertex_properties, materials_bgf);
 						let queue_index = model_resources.queue_index_of_format(&model_format).unwrap();
 						trace!("Shader node {} chose model queue idx {} (format: {:?})", &self.name, &queue_index, &model_format);
@@ -573,7 +583,7 @@ impl RunnableNode for ShaderNode {
 			self.fugg_buff = Some(render_resources.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 				label: Some("fugg Buffer"),
 				contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-				usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
+				usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
 			}));
 		}
 	}
@@ -740,7 +750,7 @@ struct ShaderNodeSpecification {
 
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CreateTextureNodeSpecification {
+pub struct TextureNodeSpecification {
 	pub name: String,
 	pub resource_name: String,
 	pub texture_format: TextureFormat,
@@ -752,7 +762,7 @@ pub struct CreateTextureNodeSpecification {
 
 /// Creates a texture or clears it if it already exists
 #[derive(Debug)]
-pub struct CreateTextureNode {
+pub struct TextureNode {
 	name: String,
 	resource_id: String,
 	texture_format: TextureFormat,
@@ -762,8 +772,8 @@ pub struct CreateTextureNode {
 	inputs: HashSet<(String, GraphResourceType)>,
 	outputs: HashSet<(String, GraphResourceType)>,
 }
-impl CreateTextureNode {
-	pub fn from_spec(spec: &CreateTextureNodeSpecification) -> Self {
+impl TextureNode {
+	pub fn from_spec(spec: &TextureNodeSpecification) -> Self {
 		Self {
 			name: spec.name.clone(),
 			resource_id: spec.resource_name.clone(),
@@ -826,7 +836,7 @@ impl CreateTextureNode {
 		context.get_texture(idx)
 	}
 }
-impl RunnableNode for CreateTextureNode {
+impl RunnableNode for TextureNode {
 	fn name(&self) -> &String {
 		&self.name
 	}
@@ -922,12 +932,12 @@ pub fn example_graph_read(
 			match ns {
 				NodeSpecificationType::Shader(spec) => {
 					if name == spec.name {
-						graph.add_node(Box::new(ShaderNode::from_spec(spec, context, shaders)));
+						graph.add_node(Box::new(ShaderNode::from_spec(spec, context, shaders).unwrap()));
 					}
 				},
 				NodeSpecificationType::Texture(spec) => {
 					if name == spec.name {
-						graph.add_node(Box::new(CreateTextureNode::from_spec(spec)));
+						graph.add_node(Box::new(TextureNode::from_spec(spec)));
 					}
 				},
 				_ => todo!("Unrecognized node!"),

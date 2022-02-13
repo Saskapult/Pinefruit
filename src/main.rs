@@ -5,6 +5,9 @@ mod render;
 mod window;
 mod world;
 mod game;
+mod util;
+mod mesh;
+mod material;
 
 
 use window::*;
@@ -13,6 +16,9 @@ use std::thread;
 
 #[macro_use]
 extern crate log;
+
+#[macro_use]
+extern crate derivative;
 
 
 
