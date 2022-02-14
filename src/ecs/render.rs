@@ -23,7 +23,7 @@ enum RenderTarget {
 
 
 pub struct RenderResource {
-	pub renderer: Renderer,
+	pub render_instance: RenderInstance,
 	pub materials_manager: Arc<RwLock<MaterialManager>>,
 	pub textures_manager: Arc<RwLock<TextureManager>>,
 	pub meshes_manager: Arc<RwLock<MeshManager>>,
@@ -40,7 +40,7 @@ impl RenderResource {
 		let meshes_manager = Arc::new(RwLock::new(MeshManager::new()));
 
 		let renderer = pollster::block_on(
-			crate::render::Renderer::new(
+			crate::render::RenderInstance::new(
 				adapter,
 				&textures_manager,
 				&meshes_manager,
@@ -55,7 +55,7 @@ impl RenderResource {
 		);
 
 		Self {
-			renderer,
+			render_instance: renderer,
 			materials_manager,
 			textures_manager,
 			meshes_manager,
@@ -172,8 +172,8 @@ impl RenderSystem {
 		let frame_time = (Instant::now() - egui_start).as_secs_f64() as f32;
 		   window.previous_frame_time = Some(frame_time);
 
-		let device = render_resource.renderer.device.clone();
-		let queue = render_resource.renderer.queue.clone();
+		let device = render_resource.render_instance.device.clone();
+		let queue = render_resource.render_instance.queue.clone();
 
 		// GPU upload
 		let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
@@ -261,7 +261,7 @@ impl RenderSystem {
 		render_data: Vec<ModelInstance>,
 		destination_texture: &wgpu::Texture,
 	) {
-		render_resource.renderer.set_data(render_data);
+		render_resource.render_instance.set_data(render_data);
 
 		let render_camera = crate::render::Camera {
 			position: camera_transform.position,
@@ -271,7 +271,7 @@ impl RenderSystem {
 			zfar: camera.zfar,
 		};
 		
-		render_resource.renderer.render(
+		render_resource.render_instance.render(
 			&mut encoder,
 			destination_texture, 
 			width, 
@@ -321,7 +321,7 @@ impl<'a> System<'a> for RenderSystem {
 
 					// Get window data
 					let mut window = window_resource.windows.get_mut(id).unwrap();
-					window.surface.configure(&render_resource.renderer.device, &window.surface_config);
+					window.surface.configure(&render_resource.render_instance.device, &window.surface_config);
 					
 					let frame = match window.surface.get_current_texture() {
 						Ok(tex) => tex,
@@ -336,7 +336,7 @@ impl<'a> System<'a> for RenderSystem {
 					};
 					let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-					let mut encoder = render_resource.renderer.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+					let mut encoder = render_resource.render_instance.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 						label: Some("Render Encoder"),
 					});
 
@@ -372,7 +372,7 @@ impl<'a> System<'a> for RenderSystem {
 						);
 					}
 					
-					render_resource.renderer.queue.submit(std::iter::once(encoder.finish()));
+					render_resource.render_instance.queue.submit(std::iter::once(encoder.finish()));
 
 
 					frame.present();

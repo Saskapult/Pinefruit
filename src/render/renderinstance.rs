@@ -93,7 +93,7 @@ pub struct RenderModelInstance {
 
 
 #[derive(Debug)]
-pub struct Renderer {
+pub struct RenderInstance {
 	pub device: Arc<wgpu::Device>,
 	pub queue: Arc<wgpu::Queue>,
 
@@ -112,7 +112,7 @@ pub struct Renderer {
 	opaque_models: ModelsQueueResource,
 	opaque_graph: Box<dyn RunnableNode>,
 }
-impl Renderer {
+impl RenderInstance {
 	pub async fn new(
 		adapter: &wgpu::Adapter,
 		textures_data_manager: &Arc<RwLock<TextureManager>>,
