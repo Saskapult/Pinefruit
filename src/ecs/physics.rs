@@ -114,6 +114,7 @@ impl PhysicsResource {
 		rb_handle
 	}
 
+	// Adds a trimesh to an entity
 	pub fn add_mesh_trimesh<'a>(
 		&mut self, 
 		entity: &Entity,
@@ -133,10 +134,10 @@ impl PhysicsResource {
 			false => RigidBodyBuilder::new_static(),
 		}.position(Isometry3::new(transform.position, axis_angle)).build();
 		let rigid_body_handle = self.rigid_body_set.insert(rigid_body);
-		if mesh.collider_shape.is_none() {
+		if mesh.collider_trimesh.is_none() {
 			mesh.make_trimesh().unwrap();
 		}
-		let collider = ColliderBuilder::new(mesh.collider_shape.as_ref().unwrap().clone())
+		let collider = ColliderBuilder::new(mesh.collider_trimesh.as_ref().unwrap().clone())
 			.restitution(0.7)
 			.build();
 		let _collider_handle = self.collider_set.insert_with_parent(collider, rigid_body_handle, &mut self.rigid_body_set);

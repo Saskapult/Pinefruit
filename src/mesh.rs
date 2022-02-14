@@ -20,7 +20,9 @@ pub struct Mesh {
 	pub indices: Option<Vec<u16>>,			// Should not be optional
 	pub path: Option<PathBuf>,
 	#[derivative(Debug="ignore")]
-	pub collider_shape: Option<SharedShape>,
+	pub collider_trimesh: Option<SharedShape>,
+	#[derivative(Debug="ignore")]
+	pub collider_convexhull: Option<SharedShape>,
 }
 impl Mesh {
 	pub fn new(name: &String) -> Self {
@@ -34,67 +36,36 @@ impl Mesh {
 			colours: None,
 			indices: None,
 			path: None,
-			collider_shape: None,
+			collider_trimesh: None,
+			collider_convexhull: None,
 		}
 	}
 
 	pub fn with_positions(self, positions: Vec<[f32; 3]>) -> Self {
 		Self {
-			name: self.name,
 			positions: Some(positions),
-			uvs: self.uvs,
-			normals: self.normals,
-			tangents: self.tangents,
-			bitangents: self.bitangents,
-			colours: self.colours,
-			indices: self.indices,
-			path: self.path,
-			collider_shape: self.collider_shape,
+			..self
 		}
 	}
 
 	pub fn with_uvs(self, uvs: Vec<[f32; 2]>) -> Self {
 		Self {
-			name: self.name,
-			positions: self.positions,
 			uvs: Some(uvs),
-			normals: self.normals,
-			tangents: self.tangents,
-			bitangents: self.bitangents,
-			colours: self.colours,
-			indices: self.indices,
-			path: self.path,
-			collider_shape: self.collider_shape,
+			..self
 		}
 	}
 
 	pub fn with_normals(self, normals: Vec<[f32; 3]>) -> Self {
 		Self {
-			name: self.name,
-			positions: self.positions,
-			uvs: self.uvs,
 			normals: Some(normals),
-			tangents: self.tangents,
-			bitangents: self.bitangents,
-			colours: self.colours,
-			indices: self.indices,
-			path: self.path,
-			collider_shape: self.collider_shape,
+			..self
 		}
 	}
 
 	pub fn with_indices(self, indices: Vec<u16>) -> Self {
 		Self {
-			name: self.name,
-			positions: self.positions,
-			uvs: self.uvs,
-			normals: self.normals,
-			tangents: self.tangents,
-			bitangents: self.bitangents,
-			colours: self.colours,
 			indices: Some(indices),
-			path: self.path,
-			collider_shape: self.collider_shape,
+			..self
 		}
 	}
 
@@ -196,12 +167,20 @@ impl Mesh {
 			colours: None,
 			indices: Some(indices),
 			path: None,
-			collider_shape: None,
+			collider_trimesh: None,
+			collider_convexhull: None,
 		})
 	}
 
 	pub fn make_trimesh(&mut self) -> Result<()> {
-		self.collider_shape = Some(mesh_trimesh(&self)?);
+		let (vertices, indices) = mesh_rapier_convert(&self)?;
+		self.collider_trimesh = Some(SharedShape::trimesh(vertices, indices));
+		Ok(())
+	}
+
+	pub fn make_convexhull(&mut self) -> Result<()> {
+		let (vertices, indices) = mesh_rapier_convert(&self)?;
+		self.collider_convexhull = Some(SharedShape::trimesh(vertices, indices));
 		Ok(())
 	}
 }
@@ -274,38 +253,30 @@ impl MeshManager {
 
 
 
-pub fn mesh_trimesh(mesh: &Mesh) -> Result<SharedShape> {
+fn mesh_rapier_convert(mesh: &Mesh) -> Result<(Vec<Point<Real>>, Vec<[u32; 3]>)> {
 	use nalgebra::Point3;
-
 	if mesh.indices.as_ref().unwrap().len() % 3 != 0 {
 		warn!("This mesh ('{}') has a number of indices not divisible by three", &mesh.name);
 	}
+	let vertices = mesh.positions.as_ref().unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])).collect::<Vec<_>>();
+	let indices = mesh.indices.as_ref().unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]).collect::<Vec<_>>();
 
-	let shape = SharedShape::trimesh(
-		mesh.positions.as_ref().unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])).collect::<Vec<_>>(),
-		mesh.indices.as_ref().unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]).collect::<Vec<_>>(),
-	);
-
-	Ok(shape)
+	Ok((vertices, indices))
 }
 
 
 
-/// Create a trimesh from many meshes
+/// Create a trimesh from multiple meshes
 pub fn meshes_trimesh(
 	meshes: Vec<&Mesh>
 ) -> Result<SharedShape> {
-	use nalgebra::Point3;
-
 	let mut vertices = Vec::new();
 	let mut indices = Vec::new();
 	for mesh in meshes {
-		if mesh.indices.as_ref().unwrap().len() % 3 != 0 {
-			// return Err(MeshError::NonTriMeshError)
-			warn!("This mesh ('{}') has a number of indices not divisible by three", &mesh.name);
-		}
-		vertices.extend(mesh.positions.as_ref().unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])));
-		indices.extend(mesh.indices.as_ref().unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]));
+		let (mesh_vertices, mut mesh_indices) = mesh_rapier_convert(mesh)?;
+		let vl = vertices.len() as u32;
+		vertices.extend(mesh_vertices);
+		indices.extend(mesh_indices.drain(..).map(|[i, j ,k]| [i + vl, j + vl, k + vl]));
 	}
 	
 	Ok(SharedShape::trimesh(

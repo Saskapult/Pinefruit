@@ -92,6 +92,8 @@ pub struct RenderModelInstance {
 
 
 
+/// A render instance is a thing that renders stuff on a GPU instance.
+/// It holds gpu data which it pulls from other data.
 #[derive(Debug)]
 pub struct RenderInstance {
 	pub device: Arc<wgpu::Device>,

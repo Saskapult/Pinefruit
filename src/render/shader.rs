@@ -435,7 +435,23 @@ impl ShaderManager {
 			push_constant_ranges: &[],
 		});
 
-		let pipeline = self.shader_pipeline(specification, &specification_path, &pipeline_layout);
+		let pipeline = self.shader_pipeline(
+			specification, 
+			&specification_path, 
+			&pipeline_layout,
+			wgpu::PrimitiveState {
+				topology: wgpu::PrimitiveTopology::TriangleList,
+				strip_index_format: None,
+				front_face: wgpu::FrontFace::Ccw,
+				cull_mode: Some(wgpu::Face::Back),
+				// cull_mode: None,
+				polygon_mode: wgpu::PolygonMode::Fill, // "Line" for wireframe
+				// Requires Features::DEPTH_CLIP_CONTROL
+				unclipped_depth: false,
+				// Requires Features::CONSERVATIVE_RASTERIZATION
+				conservative: false,
+			},
+		);
 
 		let resources_bg_index = match bind_groups.contains_key(&0) {
 			true => Some(0),
@@ -511,6 +527,7 @@ impl ShaderManager {
 		specification: &ShaderSpecification, 
 		specification_path: &PathBuf,
 		layout: &wgpu::PipelineLayout,
+		primitive: wgpu::PrimitiveState,
 	) -> wgpu::RenderPipeline {
 		let pipeline_label = format!("{} pipeline", specification.name);
 
@@ -625,19 +642,7 @@ impl ShaderManager {
 			layout: Some(layout),
 			vertex,
 			fragment,
-			// Should we allow this to be specified in function arguments?
-			primitive: wgpu::PrimitiveState {
-				topology: wgpu::PrimitiveTopology::TriangleList,
-				strip_index_format: None,
-				front_face: wgpu::FrontFace::Ccw,
-				// cull_mode: Some(wgpu::Face::Back),
-				cull_mode: None,
-				polygon_mode: wgpu::PolygonMode::Fill, // "Line" for wireframe
-				// Requires Features::DEPTH_CLIP_CONTROL
-				unclipped_depth: false,
-				// Requires Features::CONSERVATIVE_RASTERIZATION
-				conservative: false,
-			},
+			primitive,
 			depth_stencil,
 			multisample: wgpu::MultisampleState {
 				count: specification.multisample_count,

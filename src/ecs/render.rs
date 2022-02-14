@@ -158,7 +158,7 @@ impl RenderSystem {
 		let input = egui::RawInput::default();
 		let (_output, shapes) = window.platform.context().run(input, |egui_ctx| {
 			egui::SidePanel::left("my_side_panel").show(egui_ctx, |ui| {
-				ui.heading(format!("Hello World! gf_duration: {}ms", render_resource.durations.latest().as_millis()));
+				ui.heading(format!("Hello World! gf_duration: {}ms", -1));
 				if ui.button("Clickme").clicked() {
 					panic!("Button click");
 				}
