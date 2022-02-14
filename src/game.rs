@@ -247,7 +247,6 @@ impl Game {
 				.with(ModelComponent::new(test_mesh_idx, 0))
 				.build();
 			
-				
 			let mut pr = self.world.write_resource::<PhysicsResource>();
 			pr.add_rigid_body_with_mesh(test_mesh, false);
 			
