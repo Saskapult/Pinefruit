@@ -111,8 +111,6 @@ pub struct Renderer {
 	graph_resources: GraphLocals,
 	opaque_models: ModelsQueueResource,
 	opaque_graph: Box<dyn RunnableNode>,
-
-	render_durations: Option<crate::util::DurationHolder>,
 }
 impl Renderer {
 	pub async fn new(
@@ -221,7 +219,6 @@ impl Renderer {
 			graph_resources,
 			opaque_models,
 			opaque_graph,
-			render_durations: Some(crate::util::DurationHolder::new(32)),
 		}
 	}
 
@@ -270,13 +267,13 @@ impl Renderer {
 	/// Renders some objects from the perspective of a camera
 	pub fn render(
 		&mut self, 
+		mut encoder: &mut wgpu::CommandEncoder,
 		dest: &wgpu::Texture, 
 		width: u32,
 		height: u32,
 		camera: &Camera, 
 		_t: Instant,
 	) {
-		let render_st = Instant::now();
 		// Set default resolution for context
 		self.graph_resources.default_resolution = [width, height];
 
@@ -300,10 +297,6 @@ impl Renderer {
 		// // Update instance buffer to the current time
 		// let render_frac = self.get_render_frac(t);
 		// self.opaque_models.update_instances(render_frac);
-
-		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("Render Encoder"),
-		});
 
 		// Run opaque graph
 		encoder.push_debug_group("opaque");
@@ -329,13 +322,6 @@ impl Renderer {
 			},
 			output_texture.size,
 		);
-
-		// Submit queue to make all that stuff happen
-		self.queue.submit(std::iter::once(encoder.finish()));
-
-		if let Some(rdirs) = &mut self.render_durations {
-			rdirs.record(Instant::now() - render_st);
-		}
 	}
 
 	fn get_render_frac(&self, t: Instant) -> f32 {		

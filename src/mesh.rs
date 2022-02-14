@@ -2,6 +2,7 @@ use std::{path::PathBuf, collections::HashMap};
 use anyhow::*;
 use rapier3d::prelude::*;
 use crate::render::vertex::*;
+// use thiserror::Error;
 
 
 
@@ -199,19 +200,9 @@ impl Mesh {
 		})
 	}
 
-	pub fn make_collider_trimesh(&mut self) {
-		use nalgebra::Point3;
-
-		if self.indices.as_ref().unwrap().len() % 3 != 0 {
-			warn!("This mesh ('{}') has a number of indices not divisible by three", &self.name);
-		}
-
-		let shape = SharedShape::trimesh(
-			self.positions.as_ref().unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])).collect::<Vec<_>>(),
-			self.indices.as_ref().unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]).collect::<Vec<_>>(),
-		);
-
-		self.collider_shape = Some(shape);
+	pub fn make_trimesh(&mut self) -> Result<()> {
+		self.collider_shape = Some(mesh_trimesh(&self)?);
+		Ok(())
 	}
 }
 impl std::fmt::Display for Mesh {
@@ -271,6 +262,35 @@ impl MeshManager {
 
 
 
+// #[derive(Error, Debug)]
+// pub enum MeshError {
+// 	#[error("Mesh has a number of indices which is not divisible by three")]
+// 	NonTriMeshError,
+// 	#[error("Mesh has an index with no corresponding data value")]
+// 	IndexBoundsError,
+// 	#[error("Mesh is missing data required for compilation")]
+// 	LacksPropertyError,
+// }
+
+
+
+pub fn mesh_trimesh(mesh: &Mesh) -> Result<SharedShape> {
+	use nalgebra::Point3;
+
+	if mesh.indices.as_ref().unwrap().len() % 3 != 0 {
+		warn!("This mesh ('{}') has a number of indices not divisible by three", &mesh.name);
+	}
+
+	let shape = SharedShape::trimesh(
+		mesh.positions.as_ref().unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])).collect::<Vec<_>>(),
+		mesh.indices.as_ref().unwrap().chunks_exact(3).map(|i| [i[0] as u32, i[1] as u32, i[2] as u32]).collect::<Vec<_>>(),
+	);
+
+	Ok(shape)
+}
+
+
+
 /// Create a trimesh from many meshes
 pub fn meshes_trimesh(
 	meshes: Vec<&Mesh>
@@ -281,6 +301,7 @@ pub fn meshes_trimesh(
 	let mut indices = Vec::new();
 	for mesh in meshes {
 		if mesh.indices.as_ref().unwrap().len() % 3 != 0 {
+			// return Err(MeshError::NonTriMeshError)
 			warn!("This mesh ('{}') has a number of indices not divisible by three", &mesh.name);
 		}
 		vertices.extend(mesh.positions.as_ref().unwrap().iter().map(|pos| Point3::new(pos[0], pos[1], pos[2])));

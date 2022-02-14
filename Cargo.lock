@@ -977,6 +977,7 @@ dependencies = [
  "ron",
  "serde",
  "specs",
+ "thiserror",
  "tobj",
  "wgpu",
  "winit",

@@ -47,6 +47,10 @@ impl DurationHolder {
 		}
 	}
 
+	pub fn latest(&self) -> Duration {
+		self.durations[self.durations_index]
+	}
+
 	pub fn average(&self) -> Duration {
 		self.durations.iter().sum::<Duration>() / (self.durations.len() as u32)
 	}

@@ -9,6 +9,7 @@ mod util;
 mod mesh;
 mod material;
 mod texture;
+mod ecs;
 
 
 use window::*;

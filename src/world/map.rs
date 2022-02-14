@@ -327,7 +327,7 @@ fn map_mesh(
 	Vec<(u32, ChunkMeshSegment)>, 	// Vec<(material id, mesh data)>
 	Vec<(usize, bool)>, 	// Vec<(model id, instance)> (bool is temporary, should use instance stuff)
 ) {
-
+	#[inline]
 	fn append_face(segment: &mut ChunkMeshSegment, position: [usize; 3], direction: &Direction) {
 		let [px, py, pz] = position;
 
