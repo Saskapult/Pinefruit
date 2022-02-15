@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use crate::render::*;
 use crate::mesh::*;
 use crate::material::*;
@@ -28,7 +28,8 @@ pub struct RenderResource {
 	pub textures_manager: Arc<RwLock<TextureManager>>,
 	pub meshes_manager: Arc<RwLock<MeshManager>>,
 	egui_rpass: egui_wgpu_backend::RenderPass,
-	pub durations: crate::util::DurationHolder,
+	pub submit_durations: crate::util::DurationHolder,
+	pub encode_durations: crate::util::DurationHolder,
 }
 impl RenderResource {
 	pub fn new(adapter: &wgpu::Adapter) -> Self {
@@ -60,7 +61,8 @@ impl RenderResource {
 			textures_manager,
 			meshes_manager,
 			egui_rpass,
-			durations: crate::util::DurationHolder::new(32),
+			submit_durations: crate::util::DurationHolder::new(32),
+			encode_durations: crate::util::DurationHolder::new(32),
 		}
 	}	
 }
@@ -158,11 +160,12 @@ impl RenderSystem {
 		let input = egui::RawInput::default();
 		let (_output, shapes) = window.platform.context().run(input, |egui_ctx| {
 			egui::SidePanel::left("my_side_panel").show(egui_ctx, |ui| {
-				ui.heading(format!("Hello World! gf_duration: {}ms", -1));
-				if ui.button("Clickme").clicked() {
-					panic!("Button click");
-				}
-				// ui.label(format!("looking at {:?}", looking_at));
+				ui.label(format!("submit time: {}ms", render_resource.submit_durations.latest().unwrap_or(Duration::ZERO).as_millis()));
+				ui.label(format!("encode time: {}ms", render_resource.encode_durations.latest().unwrap_or(Duration::ZERO).as_millis()));
+
+				// if ui.button("Clickme").clicked() {
+				// 	panic!("Button click");
+				// }
 			});
 		});
 
@@ -170,7 +173,7 @@ impl RenderSystem {
 		let paint_jobs = window.platform.context().tessellate(shapes);
 
 		let frame_time = (Instant::now() - egui_start).as_secs_f64() as f32;
-		   window.previous_frame_time = Some(frame_time);
+		window.previous_frame_time = Some(frame_time);
 
 		let device = render_resource.render_instance.device.clone();
 		let queue = render_resource.render_instance.queue.clone();
@@ -342,6 +345,7 @@ impl<'a> System<'a> for RenderSystem {
 
 					// If should render game
 					if true {
+						let encode_st = Instant::now();
 						let width = window.surface_config.width;
 						let height = window.surface_config.height;
 						RenderSystem::render_game(
@@ -360,6 +364,7 @@ impl<'a> System<'a> for RenderSystem {
 							),
 							&frame.texture,
 						);
+						render_resource.encode_durations.record(Instant::now() - encode_st);
 					}
 
 					// If should render ui
@@ -372,8 +377,9 @@ impl<'a> System<'a> for RenderSystem {
 						);
 					}
 					
+					let submit_st = Instant::now();
 					render_resource.render_instance.queue.submit(std::iter::once(encoder.finish()));
-
+					render_resource.submit_durations.record(Instant::now() - submit_st);
 
 					frame.present();
 				},

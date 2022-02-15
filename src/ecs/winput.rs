@@ -64,7 +64,6 @@ impl WindowResource {
 			adapter,
 			event_queue,
 			window_redraw_queue: BTreeSet::new(),
-			// event_loop_proxy,
 		}
 	}
 
@@ -230,9 +229,14 @@ impl<'a> System<'a> for WindowEventSystem {
 					
 					// Egui input stuff
 					// Egui only uses window events so filtering by window events is fine
+					if !window_resource.id_idx.contains_key(&window_id) {
+						warn!("input for old window");
+						continue
+					}
 					let window_idx = window_resource.id_idx[&window_id];
 					let window = window_resource.windows.get_mut(window_idx).unwrap();
 					window.platform.handle_event(&event_when.event);
+					// Check if egui wants me to not handle this
 					if window.platform.captures_event(&event_when.event) {
 						continue
 					}

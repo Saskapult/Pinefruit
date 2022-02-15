@@ -36,7 +36,25 @@ impl GameWindow {
 			physical_height: size.height as u32,
 			scale_factor: window.scale_factor(),
 			font_definitions: egui::FontDefinitions::default(),
-			style: Default::default(),
+			style: egui::Style {
+				visuals: egui::style::Visuals {
+					widgets: egui::style::Widgets {
+						noninteractive: egui::style::WidgetVisuals {
+							// window background
+							bg_fill: egui::Color32::TRANSPARENT, 
+							// separators, indentation lines, windows outlines
+							bg_stroke: egui::Stroke::none(),
+							// normal text color
+							fg_stroke: egui::Stroke::new(1.0, egui::Color32::WHITE), 
+							corner_radius: 0.0,
+							expansion: 0.0,
+						},
+						..Default::default()
+					},
+					..Default::default()
+				},
+				..Default::default()
+			},
 		});
 
 		Self {

@@ -259,7 +259,10 @@ impl Game {
 	pub fn tick(&mut self) {
 		self.window_dispatcher.dispatch(&mut self.world);
 
-		if Instant::now() - self.last_tick >= Duration::from_millis(20) { // 16.7 to 33.3
+		let now = Instant::now();
+		if now - self.last_tick >= Duration::from_millis(20) { // 16.7 to 33.3
+			self.last_tick = now;
+
 			info!("Tick!");
 			let st = Instant::now();
 			

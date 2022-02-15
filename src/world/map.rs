@@ -41,7 +41,7 @@ impl Map {
 							for y in 0..self.chunk_dimensions[1] {
 								let wy = cy * self.chunk_dimensions[1] as i32 + y as i32;
 								let voxel = {
-									if wy >= ylevel {
+									if wy <= ylevel {
 										Voxel::Block( ((((cx+4) as u32 % 2) + (cz+4) as u32 % 2) + z) % 3)
 									} else {
 										Voxel::Empty
@@ -125,7 +125,7 @@ impl Map {
 				}
 				xp
 			},
-			None => vec![Voxel::Block(0); (self.chunk_dimensions[1] * self.chunk_dimensions[2]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_dimensions[1] * self.chunk_dimensions[2]) as usize],
 		};
 		debug!("Extracting yp slice");
 		let yp_slice = match self.chunk([px, py+1, pz]) {
@@ -139,7 +139,7 @@ impl Map {
 				}
 				yp
 			},
-			None => vec![Voxel::Block(0); (self.chunk_dimensions[0] * self.chunk_dimensions[2]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[2]) as usize],
 		};
 		debug!("Extracting zp slice");
 		let zp_slice = match self.chunk([px, py, pz+1]) {
@@ -153,7 +153,7 @@ impl Map {
 				}
 				zp
 			},
-			None => vec![Voxel::Block(0); (self.chunk_dimensions[0] * self.chunk_dimensions[1]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[1]) as usize],
 		};
 		let slices = [xp_slice, yp_slice, zp_slice];
 
@@ -182,14 +182,21 @@ impl Map {
 		for x in (cx-radius)..(cx+radius+1) {
 			for y in (cy-radius)..(cy+radius+1) {
 				for z in (cz-radius)..(cz+radius+1) {
-					// If in sphere
-					if x^2 + y^2 + z^2 < radius {
+					if Map::within_chunks_sphere([x, y, z], centre, radius) {
 						res.push([x,y,z]);
 					}
 				}
 			}
 		}
 		res
+	}
+
+	#[inline]
+	pub fn within_chunks_sphere(cpos: [i32; 3], centre: [i32; 3], radius: i32) -> bool {
+		let x = cpos[0] - centre[0];
+		let y = cpos[1] - centre[1];
+		let z = cpos[2] - centre[2];
+		(x.pow(2) + y.pow(2) + z.pow(2)) < radius.pow(2)
 	}
 
 	// Returns the positions of all chunks that should be rendered from this camera
@@ -325,7 +332,7 @@ fn map_mesh(
 	_collect_transparent: bool,
 ) -> (
 	Vec<(u32, ChunkMeshSegment)>, 	// Vec<(material id, mesh data)>
-	Vec<(usize, bool)>, 	// Vec<(model id, instance)> (bool is temporary, should use instance stuff)
+	Vec<ModelInstance>,
 ) {
 	#[inline]
 	fn append_face(segment: &mut ChunkMeshSegment, position: [usize; 3], direction: &Direction) {
@@ -334,11 +341,13 @@ fn map_mesh(
 		// Indices
 		let l = segment.positions.len() as u16;
 		match direction {
-			Direction::Xp | Direction::Yn | Direction::Zp => {
-				REVERSE_QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
-			},
 			Direction::Xn | Direction::Yp | Direction::Zn => {
+				REVERSE_QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
+				// QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
+			},
+			Direction::Xp | Direction::Yn | Direction::Zp => {
 				QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
+				// REVERSE_QUAD_INDICES.iter().for_each(|index| segment.indices.push(l + *index));
 			},
 		}
 
@@ -378,7 +387,7 @@ fn map_mesh(
 	let [x_size, y_size, z_size] = chunk_size;
 	let x_multiplier = y_size * z_size;
 	let y_multiplier = z_size;
-	let _z_multiplier = 1;
+	let z_multiplier = 1;
 
 	const DIRECTIONS_VECTORS: &[(Direction, [i32; 3])] = &[
 		(Direction::Xp, [1, 0, 0]), 
@@ -386,7 +395,7 @@ fn map_mesh(
 		(Direction::Zp, [0, 0, 1]), 
 	];
 	for (direction, direction_vector) in DIRECTIONS_VECTORS {
-		debug!("Meshing {:?}", direction);
+		trace!("Meshing {:?}", direction);
 		let dvx = direction_vector[0] as usize;
 		let dvy = direction_vector[1] as usize;
 		let dvz = direction_vector[2] as usize;
@@ -398,15 +407,15 @@ fn map_mesh(
 			for y in 0..y_size {
 				let y_offset = y * y_multiplier;
 				for z in 0..z_size {
+					let z_offset = z * z_multiplier;
 
 					// Get 'a' and 'b' blocks to compare
-					let a = chunk_contents[x_offset + y_offset + z];
+					let a = chunk_contents[x_offset + y_offset + z_offset];
 					let bx = x + dvx;
 					let by = y + dvy;
 					let bz = z + dvz;
 					let b = {
 						// These *should* already be cache-optimized, so don't worry about that
-						// Todo: re-order so we don't do 3 comparisons in regular case
 						if bx == x_size {
 							neighbour_slices[0][by*x_size + bz]
 						} else if by == y_size {
@@ -414,7 +423,7 @@ fn map_mesh(
 						} else if bz == z_size {
 							neighbour_slices[2][bx*z_size + by]
 						} else {
-							chunk_contents[bx*x_multiplier + by*y_multiplier + bz]
+							chunk_contents[bx*x_multiplier + by*y_multiplier + bz*z_multiplier]
 						}
 					};
 
@@ -427,15 +436,16 @@ fn map_mesh(
 						Voxel::Empty => None, 
 						Voxel::Block(idx) => Some(idx),
 					};
-					let a_empty = !a_index.is_some();
+					let a_empty = a_index.is_none();
 					let b_index = match b {
 						Voxel::Empty => None, 
 						Voxel::Block(idx) => Some(idx),
 					};
-					let b_empty = !b_index.is_some();
+					let b_empty = b_index.is_none();
 
 					if a_empty != b_empty {
 
+						// Slice faces forward
 						// a opaque b transparent -> make positive face for a at a
 						if !a_empty && b_empty {
 							// Find existing mesh segment or create new one
@@ -451,6 +461,7 @@ fn map_mesh(
 							append_face(a_mesh_part, [x,y,z], direction);
 						}
 
+						// Slice faces backward
 						// a transparent b opaque -> make negative face for b at b
 						if a_empty && !b_empty {
 							let b_material_id = blockmap.index(b_index.unwrap() as usize).material_idx;

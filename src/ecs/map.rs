@@ -142,11 +142,32 @@ impl<'a> System<'a> for MapSystem {
 			for (_, transform_c) in (&camera, &transform).join() {
 				let camera_chunk = map_c.map.point_chunk(transform_c.position);
 				let mut cposs = map_c.map.chunks_sphere(camera_chunk, 5);
-				chunks_to_show.append(&mut cposs);
+				chunks_to_show.append(&mut cposs);				
 			}
-
 			info!("Need to show {} chunks!", chunks_to_show.len());
 
+			// // Unload some chunks
+			// let mut chunks_to_remove = Vec::new();
+			// for chunk_position in map_c.chunk_models.keys() {
+			// 	let mut should_remove = true;
+			// 	for (_, transform_c) in (&camera, &transform).join() {
+			// 		let camera_chunk = map_c.map.point_chunk(transform_c.position);
+			// 		should_remove &= Map::within_chunks_sphere(*chunk_position, camera_chunk, 5+1);
+			// 		if !should_remove {
+			// 			break
+			// 		}
+			// 	}
+			// 	if should_remove {
+			// 		chunks_to_remove.push(*chunk_position)
+			// 	}
+			// }
+			// for chunk_position in chunks_to_remove {
+			// 	if let Some(_cme) = map_c.chunk_models.remove(&chunk_position) {
+			// 		// Todo: unload mesh and all that
+			// 	}
+			// }
+
+			// Load some chunks
 			for chunk_position in chunks_to_show {
 				if map_c.chunk_models.contains_key(&chunk_position) {
 					match map_c.chunk_models[&chunk_position] {
