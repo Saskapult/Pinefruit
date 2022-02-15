@@ -4,7 +4,6 @@
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Voxel {
 	Empty,
-	// Replace with Cube?
 	Block(u32),
 }
 
@@ -15,6 +14,7 @@ pub struct Chunk {
 	pub size: [u32; 3],
 	pub contents: Vec<Voxel>,
 	// Won't have block map because same type (memory size) is used for storage anyway
+	//fully_empty: bool
 }
 impl Chunk {
 	pub fn new(size: [u32; 3]) -> Self {

@@ -53,6 +53,7 @@ impl Game {
 		world.register::<MapComponent>();
 		world.register::<CameraComponent>();
 		world.register::<DynamicPhysicsComponent>();
+		world.register::<StaticPhysicsComponent>();
 
 		// Attach resources
 		let step_resource = StepResource::new();
@@ -98,7 +99,8 @@ impl Game {
 		let tick_dispatcher = DispatcherBuilder::new()
 			.with(InputSystem, "input_system", &[])
 			.with(MapSystem, "map_system", &["input_system"])
-			.with(DynamicPhysicsSystem, "dynamic_physics_system", &["input_system"])
+			.with(PhysicsInitializationSystem, "physics_init", &["input_system"])
+			.with(DynamicPhysicsSystem, "dynamic_physics_system", &["input_system", "physics_init"])
 			.with(RenderSystem, "render_system", &["input_system", "map_system", "dynamic_physics_system"])
 			.build();
 
@@ -202,7 +204,6 @@ impl Game {
 
 			let mut matm = rr.materials_manager.write().unwrap();
 			let mut texm = rr.textures_manager.write().unwrap();
-			let mut meshm = rr.meshes_manager.write().unwrap();
 
 			// Load some materials
 			load_materials_file(
@@ -210,7 +211,10 @@ impl Game {
 				&mut texm,
 				&mut matm,
 			).unwrap();
+		}
 
+		// Block loading
+		{
 			let mut bm = self.blocks_manager.write().unwrap();
 
 			// Add some blocks
@@ -226,7 +230,13 @@ impl Game {
 				name: "cobblestone".to_string(),
 				material_idx: 2,
 			});
+		}
 
+		// Teapot loading
+		let teapot_mesh_idx = {
+			let rr = self.world.write_resource::<RenderResource>();
+
+			let mut meshm = rr.meshes_manager.write().unwrap();
 
 			let (obj_models, _) = tobj::load_obj(
 				"resources/not_for_git/teapot.obj", 
@@ -237,21 +247,30 @@ impl Game {
 				},
 			).unwrap();
 			let test_mesh = Mesh::from_obj_model(obj_models[0].clone()).unwrap();
-			let test_mesh_idx = meshm.insert(test_mesh.clone());
-			drop(matm);
-			drop(texm);
-			drop(meshm);
-			drop(rr);
+			meshm.insert(test_mesh.clone())
+		};
+
+		// {
+		// 	let mut pr = self.world.write_resource::<PhysicsResource>();
+		// 	pr.add_ground()
+		// }
+
+		// Static and dynamic teapots
+		{
 			self.world.create_entity()
-				.with(TransformComponent::new().with_position([0.0, 0.0, 0.0].into()))
-				.with(ModelComponent::new(test_mesh_idx, 0))
+				.with(TransformComponent::new().with_position([0.0, 3.0, 0.0].into()))
+				.with(ModelComponent::new(teapot_mesh_idx, 0))
+				.with(StaticPhysicsComponent::new())
 				.build();
 			
-			let mut pr = self.world.write_resource::<PhysicsResource>();
-			pr.add_rigid_body_with_mesh(test_mesh, false);
-			
+			self.world.create_entity()
+				.with(TransformComponent::new().with_position([1.0, 10.0, 0.0].into()))
+				.with(ModelComponent::new(teapot_mesh_idx, 0))
+				.with(DynamicPhysicsComponent::new())
+				.build();
 		}
 		
+
 		// Place testing faces
 		//self.make_testing_faces();
 	}

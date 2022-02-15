@@ -159,7 +159,7 @@ impl RenderSystem {
 
 		let input = egui::RawInput::default();
 		let (_output, shapes) = window.platform.context().run(input, |egui_ctx| {
-			egui::SidePanel::left("my_side_panel").show(egui_ctx, |ui| {
+			egui::SidePanel::left("info panel").min_width(300.0).resizable(false).show(egui_ctx, |ui| {
 				ui.label(format!("submit time: {}ms", render_resource.submit_durations.latest().unwrap_or(Duration::ZERO).as_millis()));
 				ui.label(format!("encode time: {}ms", render_resource.encode_durations.latest().unwrap_or(Duration::ZERO).as_millis()));
 

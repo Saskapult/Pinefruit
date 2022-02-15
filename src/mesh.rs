@@ -155,7 +155,9 @@ impl Mesh {
 			false => None,
 		};
 
-		let indices = obj_model.mesh.indices.iter().cloned().map(|v| v as u16).collect::<Vec<_>>();
+		let indices = obj_model.mesh.indices.chunks_exact(3).map(|v| {
+			[v[2] as u16, v[1] as u16, v[0] as u16]
+		}).collect::<Vec<_>>().concat();
 		
 		Ok(Self {
 			name: obj_model.name,
@@ -172,16 +174,14 @@ impl Mesh {
 		})
 	}
 
-	pub fn make_trimesh(&mut self) -> Result<()> {
+	pub fn make_trimesh(&self) -> Result<SharedShape> {
 		let (vertices, indices) = mesh_rapier_convert(&self)?;
-		self.collider_trimesh = Some(SharedShape::trimesh(vertices, indices));
-		Ok(())
+		Ok(SharedShape::trimesh(vertices, indices))
 	}
 
-	pub fn make_convexhull(&mut self) -> Result<()> {
+	pub fn make_convexhull(&self) -> Result<SharedShape> {
 		let (vertices, indices) = mesh_rapier_convert(&self)?;
-		self.collider_convexhull = Some(SharedShape::trimesh(vertices, indices));
-		Ok(())
+		Ok(SharedShape::convex_decomposition(vertices.as_slice(), indices.as_slice()))
 	}
 }
 impl std::fmt::Display for Mesh {
