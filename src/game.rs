@@ -250,10 +250,10 @@ impl Game {
 			meshm.insert(test_mesh.clone())
 		};
 
-		// {
-		// 	let mut pr = self.world.write_resource::<PhysicsResource>();
-		// 	pr.add_ground()
-		// }
+		{
+			let mut pr = self.world.write_resource::<PhysicsResource>();
+			pr.add_ground()
+		}
 
 		// Static and dynamic teapots
 		{

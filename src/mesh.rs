@@ -180,8 +180,8 @@ impl Mesh {
 	}
 
 	pub fn make_convexhull(&self) -> Result<SharedShape> {
-		let (vertices, indices) = mesh_rapier_convert(&self)?;
-		Ok(SharedShape::convex_decomposition(vertices.as_slice(), indices.as_slice()))
+		let (vertices, _indices) = mesh_rapier_convert(&self)?;
+		Ok(SharedShape::convex_hull(vertices.as_slice()).unwrap())
 	}
 }
 impl std::fmt::Display for Mesh {

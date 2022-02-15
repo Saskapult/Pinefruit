@@ -31,7 +31,7 @@ impl PhysicsResource {
 			rigid_body_set: RigidBodySet::new(),
 			collider_set: ColliderSet::new(),
 			query_pipeline: QueryPipeline::new(),
-			gravity: vector![0.0, -1.0, 0.0],
+			gravity: vector![0.0, -9.81, 0.0],
 			integration_parameters: IntegrationParameters::default(),
 			physics_pipeline: PhysicsPipeline::new(),
 			island_manager: IslandManager::new(),
@@ -213,7 +213,7 @@ impl PhysicsInitializationSystem {
 			None => Vector3::zeros(),
 		};
 		let rigid_body = match dynamic {
-			true => RigidBodyBuilder::new_dynamic(),//.additional_mass(1.0),
+			true => RigidBodyBuilder::new_dynamic().additional_mass(1.0),
 			false => RigidBodyBuilder::new_static(),
 		}.position(Isometry3::new(transform.position, axis_angle)).build();
 		let rigid_body_handle = physics_resource.rigid_body_set.insert(rigid_body);
@@ -221,7 +221,7 @@ impl PhysicsInitializationSystem {
 		// Collider
 		let mm = render_resource.meshes_manager.read().unwrap();
 		let mesh = mm.index(model.mesh_idx);
-		let collider_shape = mesh.make_trimesh().unwrap();
+		let collider_shape = mesh.make_convexhull().unwrap();
 		let collider = ColliderBuilder::new(collider_shape)
 			.density(100.0)
 			.build();
@@ -314,11 +314,9 @@ impl<'a> System<'a> for DynamicPhysicsSystem {
 
 		// For each thing with dynamic physics, put it where it should be
 		for (p_dynamic_c, transform_c) in (&p_dynamic, &mut transform).join() {
-			error!("Hey there's a dynamic thing!");
 			// get position and rotation of object using id
 			if let Some(rbid) = p_dynamic_c.rigid_body_handle {
 				let body = &p_resource.rigid_body_set[rbid];
-				error!("Moving {:?} -> {:?}", &transform_c.position, body.translation());
 				// Update transform component
 				transform_c.position = *body.translation();
 				transform_c.rotation = *body.rotation();
