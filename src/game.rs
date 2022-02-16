@@ -76,22 +76,6 @@ impl Game {
 		let physics_resource = PhysicsResource::new();
 		world.insert(physics_resource);
 
-		// Entities
-		// Camera
-		world.create_entity()
-			.with(CameraComponent::new())
-			.with(
-				TransformComponent::new()
-				.with_position(Vector3::new(0.0, 5.0, -5.0))
-			)
-			.with(MovementComponent{speed: 3.0})
-			.build();
-		// Map
-		world.create_entity()
-			.with(TransformComponent::new())
-			.with(MapComponent::new(&blocks_manager))
-			.build();
-
 		// Dispatchers
 		let window_dispatcher = DispatcherBuilder::new()
 			.with(WindowEventSystem, "window_system", &[])
@@ -198,7 +182,7 @@ impl Game {
 	}
 
 	pub fn setup(&mut self) {
-		// Asset loading
+		// Material loading
 		{
 			let rr = self.world.write_resource::<RenderResource>();
 
@@ -217,19 +201,16 @@ impl Game {
 		{
 			let mut bm = self.blocks_manager.write().unwrap();
 
-			// Add some blocks
-			bm.insert(crate::world::Block {
-				name: "dirt".to_string(),
-				material_idx: 0,
-			});
-			bm.insert(crate::world::Block {
-				name: "stone".to_string(),
-				material_idx: 1,
-			});
-			bm.insert(crate::world::Block {
-				name: "cobblestone".to_string(),
-				material_idx: 2,
-			});
+			let rr = self.world.write_resource::<RenderResource>();
+			let mut mm = rr.materials_manager.write().unwrap();
+			let mut tm = rr.textures_manager.write().unwrap();
+
+			crate::world::blocks::load_blocks_file(
+				&PathBuf::from("resources/kblocks.ron"),
+				&mut bm,
+				&mut tm,
+				&mut mm,
+			).unwrap();
 		}
 
 		// Teapot loading
@@ -263,10 +244,27 @@ impl Game {
 				.with(StaticPhysicsComponent::new())
 				.build();
 			
+			// self.world.create_entity()
+			// 	.with(TransformComponent::new().with_position([1.0, 10.0, 0.0].into()))
+			// 	.with(ModelComponent::new(teapot_mesh_idx, 0))
+			// 	.with(DynamicPhysicsComponent::new())
+			// 	.build();
+		}
+
+		{
+			// Camera
 			self.world.create_entity()
-				.with(TransformComponent::new().with_position([1.0, 10.0, 0.0].into()))
-				.with(ModelComponent::new(teapot_mesh_idx, 0))
-				.with(DynamicPhysicsComponent::new())
+				.with(CameraComponent::new())
+				.with(
+					TransformComponent::new()
+					.with_position(Vector3::new(0.0, 5.0, -5.0))
+				)
+				.with(MovementComponent{speed: 4.0})
+				.build();
+			// Map
+			self.world.create_entity()
+				.with(TransformComponent::new())
+				.with(MapComponent::new(&self.blocks_manager))
 				.build();
 		}
 		
@@ -282,11 +280,11 @@ impl Game {
 		if now - self.last_tick >= Duration::from_millis(20) { // 16.7 to 33.3
 			self.last_tick = now;
 
-			info!("Tick!");
-			let st = Instant::now();
+			let tick_st = Instant::now();
 			
 			{ // Prepare step info
 				let mut step_resource = self.world.write_resource::<StepResource>();
+				
 				step_resource.last_step = step_resource.this_step;
 				step_resource.this_step = std::time::Instant::now();
 				step_resource.step_diff = step_resource.this_step - step_resource.last_step;
@@ -294,8 +292,10 @@ impl Game {
 
 			self.tick_dispatcher.dispatch(&mut self.world);
 
-			let en = Instant::now();
-			let dur = en - st;
+			let dur = Instant::now() - tick_st;
+
+			self.world.write_resource::<StepResource>().step_durations.record(dur);
+
 			let tps = 1.0 / dur.as_secs_f32();
 			info!("Tock! (duration {}ms, theoretical frequency: {:.2}tps)", dur.as_millis(), tps);
 		}

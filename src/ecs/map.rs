@@ -29,7 +29,7 @@ pub struct MapComponent {
 }
 impl MapComponent {
 	pub fn new(blockmanager: &Arc<RwLock<crate::world::BlockManager>>) -> Self {
-		let mut map = crate::world::Map::new([4; 3], blockmanager);
+		let mut map = crate::world::Map::new([16; 3], blockmanager);
 		map.generate();
 		Self {
 			map,

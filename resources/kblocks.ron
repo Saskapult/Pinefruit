@@ -1,12 +1,36 @@
-(
-	blocks: [
-		(
-			name: "dirt",
-			type: "opaque" // Opaque, transparent
-			texture: { // Options: every, front, back, left, right, up, down
-				"every": "textures/blocks/dirt.png",
-			},
-		), 
-		// How to specify cross and liquid?
-	],
-)
+
+[
+	(
+		name: "dirt",
+		faces: { // Options: every, front, back, left, right, up, down
+			"every": "materials/kmaterials.ron::dirt",
+		},
+		sounds: {},
+	), 
+	(
+		name: "stone",
+		faces: {
+			"every": "materials/kmaterials.ron::stone",
+		},
+		sounds: {},
+	), 
+	(
+		name: "sand",
+		faces: {
+			"every": "materials/kmaterials.ron::sand",
+		},
+		sounds: {},
+	), 
+	(
+		name: "grass",
+		faces: {
+			"up": "materials/kmaterials.ron::grass",
+			"left": "materials/kmaterials.ron::grass_side",
+			"right": "materials/kmaterials.ron::grass_side",
+			"front": "materials/kmaterials.ron::grass_side",
+			"back": "materials/kmaterials.ron::grass_side",
+			"down": "materials/kmaterials.ron::dirt",
+		},
+		sounds: {},
+	), 
+]

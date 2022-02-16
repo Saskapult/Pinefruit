@@ -1,5 +1,16 @@
 [
 	(
+		name: "debug",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/debug.png"],
+		},
+		floats: {
+			"flat_colour": [0.0, 0.0, 0.0],
+		},
+		sounds: {},
+	),
+	(
 		name: "dirt",
 		graph: "../graphs/default.ron",
 		textures: {
@@ -24,6 +35,33 @@
 		graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/cobblestone.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
+	(
+		name: "sand",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/sand.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
+	(
+		name: "grass_side",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/grass_side.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
+	(
+		name: "grass",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/grass.png"],
 		},
 		floats: {},
 		sounds: {},

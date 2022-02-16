@@ -4,7 +4,6 @@ use std::sync::{Arc, RwLock};
 use crate::world::*;
 use crate::render::*;
 use crate::mesh::*;
-use noise::{NoiseFn, Perlin};
 
 
 
@@ -25,79 +24,23 @@ impl Map {
 	}
 
 	pub fn generate(&mut self) {
-		let perlin = Perlin::new();
+		let bm = &self.blocks.read().unwrap();
+		
+		let tgen = TerrainGenerator::new();
 
 		for cx in -4..4 {
-			for cy in 0..2 {
+			for cy in -1..2 {
 				for cz in -4..4 {
-					let mut chunk = Chunk::new(self.chunk_dimensions);
-					for x in 0..self.chunk_dimensions[0] {
-						for z in 0..self.chunk_dimensions[2] {
-							let wx = cx * self.chunk_dimensions[0] as i32 + x as i32;
-							let wz = cz * self.chunk_dimensions[2] as i32 + z as i32;
-							let val = perlin.get([wx as f64 / self.chunk_dimensions[0] as f64, wz as f64 / self.chunk_dimensions[1] as f64]);
-							let ylevel = 2 + ((1.0 + val) * 2.0).floor() as i32;
-							//println!("y level for xz: [{}, {}] is {} ({:.4})", wx, wz, ylevel, val);
-							for y in 0..self.chunk_dimensions[1] {
-								let wy = cy * self.chunk_dimensions[1] as i32 + y as i32;
-								let voxel = {
-									if wy <= ylevel {
-										Voxel::Block( ((((cx+4) as u32 % 2) + (cz+4) as u32 % 2) + z) % 3)
-									} else {
-										Voxel::Empty
-									}
-								};
-								chunk.set_voxel([x as i32, y as i32, z as i32], voxel)
-							}
-						}
-					}
+					let chunk = tgen.generate_chunk(
+						[cx, cy, cz], 
+						Chunk::new(self.chunk_dimensions),
+						&bm,
+					);
 					self.chunks.insert([cx as i32, cy as i32, cz as i32], chunk);
 				}
 			}
 		}
 
-		self.chunks.insert([0, 2, 0], Chunk {
-			size: self.chunk_dimensions,
-			contents: [
-				0, 0, 0, 0,
-				0, 0, 0, 0,
-				0, 0, 0, 0,
-				0, 0, 0, 0,
-
-				0, 0, 0, 0,
-				0, 1, 1, 0,
-				0, 1, 1, 0,
-				0, 0, 0, 0,
-
-				0, 0, 0, 0,
-				0, 1, 1, 0,
-				0, 1, 1, 0,
-				0, 0, 0, 0,
-
-				0, 0, 0, 0,
-				0, 0, 0, 0,
-				0, 0, 0, 0,
-				0, 0, 0, 0,
-			].iter().cloned().map(|v| {
-				if v == 0 {
-					Voxel::Empty
-				} else {
-					Voxel::Block(v-1)
-				}
-			}).collect::<Vec<_>>(),
-		});
-
-		let mut tc = Chunk::new(self.chunk_dimensions);
-		tc.set_voxel([1,1,1], Voxel::Block(0));
-		tc.set_voxel([1,2,1], Voxel::Block(0));
-		tc.set_voxel([1,1,2], Voxel::Block(0));
-		tc.set_voxel([1,2,2], Voxel::Block(0));
-		tc.set_voxel([2,1,1], Voxel::Block(0));
-		tc.set_voxel([2,2,1], Voxel::Block(0));
-		tc.set_voxel([2,1,2], Voxel::Block(0));
-		tc.set_voxel([2,2,2], Voxel::Block(0));
-		self.chunks.insert([2, 2, 0], tc);
-		
 	}
 
 	pub fn is_chunk_loaded(&self, position: [i32; 3]) -> bool {
@@ -171,7 +114,7 @@ impl Map {
 				.with_uvs(segment.uvs)
 				.with_normals(segment.normals)
 				.with_indices(segment.indices);
-			(material_idx as usize, mesh)
+			(material_idx, mesh)
 		}).collect::<Vec<_>>()
 	}
 
@@ -331,7 +274,7 @@ fn map_mesh(
 	blockmap: &BlockManager,
 	_collect_transparent: bool,
 ) -> (
-	Vec<(u32, ChunkMeshSegment)>, 	// Vec<(material id, mesh data)>
+	Vec<(usize, ChunkMeshSegment)>, 	// Vec<(material idx, mesh data)>
 	Vec<ModelInstance>,
 ) {
 	#[inline]
@@ -449,31 +392,47 @@ fn map_mesh(
 						// a opaque b transparent -> make positive face for a at a
 						if !a_empty && b_empty {
 							// Find existing mesh segment or create new one
-							let a_material_id = blockmap.index(a_index.unwrap() as usize).material_idx;
-							let a_mesh_part = {
-								if mesh_parts.contains_key(&a_material_id) {
-									mesh_parts.get_mut(&a_material_id).unwrap()
+							let a_block = blockmap.index(a_index.unwrap() as usize);
+							let material_id = match direction {
+								Direction::Xp => a_block.xp_material_idx,
+								Direction::Yp => a_block.yp_material_idx,
+								Direction::Zp => a_block.zp_material_idx,
+								Direction::Xn => a_block.xn_material_idx,
+								Direction::Yn => a_block.yn_material_idx,
+								Direction::Zn => a_block.zn_material_idx,
+							};
+							let mesh_part = {
+								if mesh_parts.contains_key(&material_id) {
+									mesh_parts.get_mut(&material_id).unwrap()
 								} else {
-									mesh_parts.insert(a_material_id, ChunkMeshSegment::new());
-									mesh_parts.get_mut(&a_material_id).unwrap()
+									mesh_parts.insert(material_id, ChunkMeshSegment::new());
+									mesh_parts.get_mut(&material_id).unwrap()
 								}
 							};
-							append_face(a_mesh_part, [x,y,z], direction);
+							append_face(mesh_part, [x,y,z], direction);
 						}
 
 						// Slice faces backward
 						// a transparent b opaque -> make negative face for b at b
 						if a_empty && !b_empty {
-							let b_material_id = blockmap.index(b_index.unwrap() as usize).material_idx;
-							let b_mesh_part = {
-								if mesh_parts.contains_key(&b_material_id) {
-									mesh_parts.get_mut(&b_material_id).unwrap()
+							let b_block = blockmap.index(b_index.unwrap() as usize);
+							let material_id = match direction.flip() {
+								Direction::Xp => b_block.xp_material_idx,
+								Direction::Yp => b_block.yp_material_idx,
+								Direction::Zp => b_block.zp_material_idx,
+								Direction::Xn => b_block.xn_material_idx,
+								Direction::Yn => b_block.yn_material_idx,
+								Direction::Zn => b_block.zn_material_idx,
+							};
+							let mesh_part = {
+								if mesh_parts.contains_key(&material_id) {
+									mesh_parts.get_mut(&material_id).unwrap()
 								} else {
-									mesh_parts.insert(b_material_id, ChunkMeshSegment::new());
-									mesh_parts.get_mut(&b_material_id).unwrap()
+									mesh_parts.insert(material_id, ChunkMeshSegment::new());
+									mesh_parts.get_mut(&material_id).unwrap()
 								}
 							};
-							append_face(b_mesh_part, [bx,by,bz], &direction.flip());
+							append_face(mesh_part, [bx,by,bz], &direction.flip());
 						}
 					}
 				}
@@ -511,11 +470,19 @@ impl Direction {
 }
 
 pub const XP_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new( 0.5,  0.5, -0.5),
+	
 	Vector3::new( 0.5, -0.5, -0.5),
 	Vector3::new( 0.5, -0.5,  0.5),
 	Vector3::new( 0.5,  0.5,  0.5),
+
+	Vector3::new( 0.5,  0.5, -0.5),
 ];
+// pub const XP_QUAD_VERTICES: [Vector3<f32>; 4] = [
+// 	Vector3::new( 0.5,  0.5, -0.5),
+// 	Vector3::new( 0.5, -0.5, -0.5),
+// 	Vector3::new( 0.5, -0.5,  0.5),
+// 	Vector3::new( 0.5,  0.5,  0.5),
+// ];
 pub const YP_QUAD_VERTICES: [Vector3<f32>; 4] = [
 	Vector3::new( 0.5,  0.5, -0.5),
 	Vector3::new(-0.5,  0.5, -0.5),
@@ -529,10 +496,12 @@ pub const ZP_QUAD_VERTICES: [Vector3<f32>; 4] = [
 	Vector3::new( 0.5,  0.5,  0.5),
 ];
 pub const XN_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new(-0.5,  0.5, -0.5),
+	
 	Vector3::new(-0.5, -0.5, -0.5),
 	Vector3::new(-0.5, -0.5,  0.5),
 	Vector3::new(-0.5,  0.5,  0.5),
+
+	Vector3::new(-0.5,  0.5, -0.5),
 ];
 pub const YN_QUAD_VERTICES: [Vector3<f32>; 4] = [
 	Vector3::new( 0.5, -0.5, -0.5),
@@ -549,9 +518,9 @@ pub const ZN_QUAD_VERTICES: [Vector3<f32>; 4] = [
 
 pub const QUAD_UVS: [[f32; 2]; 4] = [
 	[1.0, 1.0],
-	[1.0, 0.0],
-	[0.0, 0.0],
 	[0.0, 1.0],
+	[0.0, 0.0],
+	[1.0, 0.0],
 ];
 pub const QUAD_INDICES: [u16; 6] = [
 	0, 1, 2,

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use rapier3d::prelude::*;
 use crate::mesh::*;
+use crate::util::DurationHolder;
 use nalgebra::*;
 use specs::prelude::*;
 use specs::{Component, VecStorage};
@@ -23,6 +25,7 @@ pub struct PhysicsResource {
 	pub ccd_solver: CCDSolver,
 
 	pub rigid_body_handle_map: HashMap<RigidBodyHandle, Entity>,
+	pub physics_tick_durations: DurationHolder,
 }
 impl PhysicsResource {
 	pub fn new(
@@ -41,6 +44,7 @@ impl PhysicsResource {
 			ccd_solver: CCDSolver::new(),
 			
 			rigid_body_handle_map: HashMap::new(),
+			physics_tick_durations: DurationHolder::new(5),
 		}
 	}
 
@@ -76,6 +80,9 @@ impl PhysicsResource {
 
 	pub fn tick(&mut self) {
 		info!("Physics tick!");
+
+		let tick_st = Instant::now();
+
 		self.physics_pipeline.step(
 			&self.gravity,
 			&self.integration_parameters,
@@ -91,6 +98,8 @@ impl PhysicsResource {
 		);
 		
 		self.query_pipeline.update(&self.island_manager, &self.rigid_body_set, &self.collider_set);
+
+		self.physics_tick_durations.record(Instant::now() - tick_st);
 	}
 
 	pub fn add_rigid_body_with_mesh(

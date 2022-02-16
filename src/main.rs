@@ -10,6 +10,7 @@ mod mesh;
 mod material;
 mod texture;
 mod ecs;
+mod noise;
 
 
 use window::*;

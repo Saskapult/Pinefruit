@@ -3,6 +3,8 @@ use nalgebra::*;
 // use specs::prelude::*;
 use specs::{Component, VecStorage};
 
+use crate::util::DurationHolder;
+
 
 
 
@@ -12,6 +14,7 @@ pub struct StepResource {
 	pub last_step: Instant, // Time of last step
 	pub this_step: Instant, // Time of current step
 	pub step_diff: Duration, // this-last
+	pub step_durations: DurationHolder,
 }
 impl StepResource {
 	pub fn new() -> Self {
@@ -20,6 +23,7 @@ impl StepResource {
 			last_step: heh,
 			this_step: heh, 
 			step_diff: heh - heh,
+			step_durations: DurationHolder::new(5),
 		}
 	}
 }

@@ -4,7 +4,7 @@
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Voxel {
 	Empty,
-	Block(u32),
+	Block(usize),
 }
 
 
