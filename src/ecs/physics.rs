@@ -123,7 +123,7 @@ impl PhysicsResource {
 		rb_handle
 	}
 
-	/// Adds a trimesh to an entity
+	/// Creates a new rigid body with a trimesh collider
 	pub fn add_mesh_trimesh<'a>(
 		&mut self, 
 		entity: &Entity,
@@ -143,34 +143,12 @@ impl PhysicsResource {
 			false => RigidBodyBuilder::new_static(),
 		}.position(Isometry3::new(transform.position, axis_angle)).build();
 		let rigid_body_handle = self.rigid_body_set.insert(rigid_body);
-		if mesh.collider_trimesh.is_none() {
-			mesh.make_trimesh().unwrap();
-		}
-		let collider = ColliderBuilder::new(mesh.collider_trimesh.as_ref().unwrap().clone())
+
+		let collider = ColliderBuilder::new(mesh.make_trimesh().unwrap())
 			.restitution(0.7)
 			.density(1.0)
 			.build();
 		let _collider_handle = self.collider_set.insert_with_parent(collider, rigid_body_handle, &mut self.rigid_body_set);
-
-		// Add to the handle map
-		self.rigid_body_handle_map.insert(rigid_body_handle, *entity);
-		
-		// Insert the proper component
-		if dynamic {
-			let prev = dynamic_physics.insert(*entity, DynamicPhysicsComponent {
-				rigid_body_handle: Some(rigid_body_handle),
-			}).unwrap();
-			if prev.is_some() {
-				warn!("Overwrote dynamic physics component for entity {entity:?}");
-			}
-		} else {
-			let prev = static_physics.insert(*entity, StaticPhysicsComponent {
-				rigid_body_handle: Some(rigid_body_handle),
-			}).unwrap();
-			if prev.is_some() {
-				warn!("Overwrote static physics component for entity {entity:?}");
-			}
-		}
 
 		rigid_body_handle
 	}
@@ -182,11 +160,11 @@ impl PhysicsResource {
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 pub struct StaticPhysicsComponent {
-	pub rigid_body_handle: Option<RigidBodyHandle>,
+	pub rigid_body_handle: RigidBodyHandle,
 }
 impl StaticPhysicsComponent {
-	pub fn new() -> Self {
-		Self { rigid_body_handle: None }
+	pub fn new(rigid_body_handle: RigidBodyHandle) -> Self {
+		Self { rigid_body_handle }
 	}
 }
 
@@ -196,11 +174,24 @@ impl StaticPhysicsComponent {
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 pub struct DynamicPhysicsComponent {
-	pub rigid_body_handle: Option<RigidBodyHandle>,
+	pub rigid_body_handle: RigidBodyHandle,
 }
 impl DynamicPhysicsComponent {
-	pub fn new() -> Self {
-		Self { rigid_body_handle: None }
+	pub fn new(rigid_body_handle: RigidBodyHandle) -> Self {
+		Self { rigid_body_handle }
+	}
+}
+
+
+/// Marks an entity as needing to be physically initialized
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+pub struct PhysicsInitializationComponent {
+	dynamic: bool,
+}
+impl PhysicsInitializationComponent {
+	pub fn new(dynamic: bool) -> Self {
+		Self { dynamic }
 	}
 }
 
@@ -248,6 +239,7 @@ impl<'a> System<'a> for PhysicsInitializationSystem {
 		Entities<'a>,
 		WriteStorage<'a, DynamicPhysicsComponent>,
 		WriteStorage<'a, StaticPhysicsComponent>,
+		WriteStorage<'a, PhysicsInitializationComponent>,
 		ReadStorage<'a, TransformComponent>,
 		ReadStorage<'a, ModelComponent>,
 		WriteExpect<'a, PhysicsResource>,
@@ -260,40 +252,37 @@ impl<'a> System<'a> for PhysicsInitializationSystem {
 			entities,
 			mut dynamic_objects,
 			mut static_objects,
+			mut init_objects,
 			transforms,
 			models,
 			mut physics_resource,
 			render_resource,
 		): Self::SystemData,
 	) { 
-		for (entity, p_dynamic_c, transform, model) in (&entities, &mut dynamic_objects, &transforms, &models).join() {
-			if p_dynamic_c.rigid_body_handle.is_none() {
-				info!("Initializing dynamic physics component for entity {:?}", entity);
-				
-				let rbh = PhysicsInitializationSystem::add_model_with_trimesh(
-					&mut physics_resource,
-					&render_resource,
-					transform,
-					model,
-					true,
-				);
-				p_dynamic_c.rigid_body_handle = Some(rbh);
-				physics_resource.rigid_body_handle_map.insert(rbh, entity);
-			}
-		}
-		for (entity, p_static_c, transform, model) in (&entities, &mut static_objects, &transforms, &models).join() {
-			if p_static_c.rigid_body_handle.is_none() {
-				info!("Initializing static physics component for entity {:?}", entity);
-
-				let rbh = PhysicsInitializationSystem::add_model_with_trimesh(
-					&mut physics_resource,
-					&render_resource,
-					transform,
-					model,
-					false,
-				);
-				p_static_c.rigid_body_handle = Some(rbh);
-				physics_resource.rigid_body_handle_map.insert(rbh, entity);
+		// Init for entity with transform and model
+		for (entity, init_tag, transform, model) in (&entities, &mut init_objects, &transforms, &models).join() {
+			info!("Initializing physics component for entity {:?} (dynamic: {})", entity, init_tag.dynamic);
+			init_objects.remove(entity);
+			let rbh = PhysicsInitializationSystem::add_model_with_trimesh(
+				&mut physics_resource,
+				&render_resource,
+				transform,
+				model,
+				init_tag.dynamic,
+			);
+			physics_resource.rigid_body_handle_map.insert(rbh, entity);
+			if init_tag.dynamic {
+				dynamic_objects.insert(entity, DynamicPhysicsComponent::new(rbh));
+				let prev = physics_resource.rigid_body_handle_map.insert(rbh, entity);
+				if prev.is_some() {
+					warn!("Overwrote dynamic physics component for entity {entity:?}");
+				}
+			} else {
+				static_objects.insert(entity, StaticPhysicsComponent::new(rbh));
+				let prev = physics_resource.rigid_body_handle_map.insert(rbh, entity);
+				if prev.is_some() {
+					warn!("Overwrote static physics component for entity {entity:?}");
+				}
 			}
 		}
 	}
@@ -313,24 +302,21 @@ impl<'a> System<'a> for DynamicPhysicsSystem {
 	fn run(
 		&mut self, 
 		(
-			p_dynamic,
-			mut transform,
-			mut p_resource,
+			dynamic_objects,
+			mut transforms,
+			mut physics_resource,
 		): Self::SystemData,
 	) { 
 		// Tick physics
-		p_resource.tick();
+		physics_resource.tick();
 
 		// For each thing with dynamic physics, put it where it should be
-		for (p_dynamic_c, transform_c) in (&p_dynamic, &mut transform).join() {
+		for (p_dynamic_c, transform_c) in (&dynamic_objects, &mut transforms).join() {
 			// get position and rotation of object using id
-			if let Some(rbid) = p_dynamic_c.rigid_body_handle {
-				let body = &p_resource.rigid_body_set[rbid];
-				// Update transform component
-				transform_c.position = *body.translation();
-				transform_c.rotation = *body.rotation();
-			}
-			
+			let body = &physics_resource.rigid_body_set[p_dynamic_c.rigid_body_handle];
+			// Update transform component
+			transform_c.position = *body.translation();
+			transform_c.rotation = *body.rotation();
 		}
 	}
 }

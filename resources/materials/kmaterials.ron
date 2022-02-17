@@ -66,4 +66,40 @@
 		floats: {},
 		sounds: {},
 	),
+	(
+		name: "log_side",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/log_side.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
+	(
+		name: "log_top",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/log_top.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
+	(
+		name: "planks",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/planks.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
+	(
+		name: "leaves",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/blockfaces/leaves.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
 ]

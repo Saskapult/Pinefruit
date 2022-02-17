@@ -25,6 +25,7 @@ pub struct WindowResource {
 	adapter: wgpu::Adapter,
 	event_queue: Arc<Mutex<Vec<EventWhen>>>,
 	pub window_redraw_queue: BTreeSet<usize>,
+	pub capturing_cursor: bool,
 }
 impl WindowResource {
 	pub fn new(
@@ -64,6 +65,7 @@ impl WindowResource {
 			adapter,
 			event_queue,
 			window_redraw_queue: BTreeSet::new(),
+			capturing_cursor: false,
 		}
 	}
 
@@ -236,6 +238,7 @@ impl<'a> System<'a> for WindowEventSystem {
 					let window_idx = window_resource.id_idx[&window_id];
 					let window = window_resource.windows.get_mut(window_idx).unwrap();
 					window.platform.handle_event(&event_when.event);
+					
 					// Check if egui wants me to not handle this
 					if window.platform.captures_event(&event_when.event) {
 						continue
@@ -244,8 +247,24 @@ impl<'a> System<'a> for WindowEventSystem {
 					// My input stuff
 					match window_event {
 						WindowEvent::KeyboardInput {input, ..} => {
-							// Send changed key data
+							// If the cursor is not inside of this window don't register the input
+							if !window.cursor_inside {
+								continue
+							}
+
 							if let Some(key) = input.virtual_keycode {
+								
+								// Make sure we are always able to free the cursor
+								match key {
+									winit::event::VirtualKeyCode::Escape => {
+										// let modifiers = ModifiersState::default();
+										window.window.set_cursor_grab(false).unwrap();
+										window.window.set_cursor_visible(true);
+										window_resource.capturing_cursor = false;
+									},
+									_ => {},
+								}
+
 								match input.state {
 									ElementState::Pressed => {
 										// If this button was not already pressed, record the pressing
@@ -277,8 +296,6 @@ impl<'a> System<'a> for WindowEventSystem {
 						},
 						WindowEvent::MouseInput {state, button, ..} => {
 							let button = *button;
-							info!("mb {:?}", &button);
-							// Mouse button presses
 							match state {
 								ElementState::Pressed => {
 									if !mouse_pressmap.contains_key(&button) {
@@ -302,8 +319,13 @@ impl<'a> System<'a> for WindowEventSystem {
 							let _p = phase;
 						},
 						WindowEvent::CursorEntered {..} => {
+							window.cursor_inside = true;
+							window.window.set_cursor_grab(true).unwrap();
+							window.window.set_cursor_visible(false);
+							window_resource.capturing_cursor = true;
 						},
 						WindowEvent::CursorLeft {..} => {
+							window.cursor_inside = false;
 						},
 						WindowEvent::CursorMoved {position, ..} => {
 							// Don't use this for camera control!
@@ -330,7 +352,7 @@ impl<'a> System<'a> for WindowEventSystem {
 				Event::DeviceEvent {event, ..} => {
 					match event {
 						DeviceEvent::MouseMotion {delta} => {
-							if mouse_pressmap.contains_key(&MouseButton::Left) {
+							if window_resource.capturing_cursor {
 								mdx += delta.0;
 								mdy += delta.1;
 							}

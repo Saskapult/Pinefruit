@@ -1,5 +1,6 @@
 use crate::world::*;
 use noise::{NoiseFn, Perlin};
+use noise::Seedable;
 
 
 
@@ -7,9 +8,9 @@ pub struct TerrainGenerator {
 	perlin: Perlin,
 }
 impl TerrainGenerator {
-	pub fn new() -> Self {
+	pub fn new(seed: u32) -> Self {
 		Self {
-			perlin: Perlin::new(),
+			perlin: Perlin::new().set_seed(seed),
 		}
 	}
 

@@ -26,7 +26,7 @@ impl Map {
 	pub fn generate(&mut self) {
 		let bm = &self.blocks.read().unwrap();
 		
-		let tgen = TerrainGenerator::new();
+		let tgen = TerrainGenerator::new(0);
 
 		for cx in -4..4 {
 			for cy in -1..2 {

@@ -17,6 +17,7 @@ pub struct GameWindow {
 	pub surface_config: wgpu::SurfaceConfiguration,
 	pub platform: egui_winit_platform::Platform,
 	pub previous_frame_time: Option<f32>,
+	pub cursor_inside: bool,
 }
 impl GameWindow {
 	pub fn new(instance: &wgpu::Instance, adapter: &wgpu::Adapter, window: Window) -> Self {
@@ -63,6 +64,7 @@ impl GameWindow {
 			surface_config,
 			platform,
 			previous_frame_time: None,
+			cursor_inside: false,
 		}
 	}
 
