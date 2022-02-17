@@ -19,7 +19,6 @@ impl TerrainGenerator {
 		mut chunk: Chunk,
 		bm: &BlockManager,
 	) -> Chunk {
-		println!("{:#?}", &bm);
 		let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
 		let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();
 

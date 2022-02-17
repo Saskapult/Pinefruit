@@ -392,6 +392,9 @@ struct ShaderNode {
 	material_input_bgf: Option<BindGroupFormat>,
 	resources_idx: Option<usize>,
 
+	// Index of texture, should store bool
+	colour_attachments: Vec<(usize, bool)>,
+	depth_attachment: Option<(usize, bool)>,
 	// The queue index (if initialized) (if necessary)
 	render_queue: Option<QueueType>,
 
@@ -484,6 +487,8 @@ impl ShaderNode {
 			material_input_bgf,
 			resources_idx: None,
 			render_queue: None,
+			colour_attachments: Vec::new(),
+			depth_attachment: None,
 			inputs,
 			depth: spec.depth.clone(),
 			aliases: spec.aliases.clone(),
@@ -587,6 +592,34 @@ impl RunnableNode for ShaderNode {
 			}
 		});
 
+		let shader = render_resources.shaders.index(self.shader_idx);
+		self.colour_attachments = shader.attachments.iter().map(|attachment| {
+			let resource_name = {
+				match self.alias_for(&attachment.usage) {
+					Some(alias) => alias.clone(),
+					None => attachment.usage.clone(),
+				}
+			};
+			let attachment_key = (resource_name.clone(), GraphResourceType::Texture);
+			if self.inputs.contains(&attachment_key) {
+				let store = self.outputs.contains(&attachment_key);
+				let idx = graph_resources.get_index_of_id(&attachment_key.0, GraphResourceType::Texture).expect("Attachment not found!");
+				(idx, store)
+			} else {
+				panic!("Shader requires attachment not found in node inputs!")
+			}
+		}).collect::<Vec<_>>();
+
+		self.depth_attachment = match &self.depth {
+			Some(depth_id) => {
+				let depth_key = (depth_id.clone(), GraphResourceType::Texture);
+				let depth_write = self.outputs.contains(&depth_key);
+				let idx = graph_resources.get_index_of_id(&depth_key.0, GraphResourceType::Texture).expect("Depth attatchment not found!?");
+				Some((idx, depth_write))
+			},
+			_ => None,
+		};
+
 		// Workaround buffer for FullQuad because wgpu needs something to be bound in vertex and instance in order to draw
 		if self.fugg_buff.is_none() {
 			self.fugg_buff = Some(render_resources.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -609,52 +642,24 @@ impl RunnableNode for ShaderNode {
 		
 		let shader = resources.shaders.index(self.shader_idx);
 
-		let colour_attachments = shader.attachments.iter().map(|attachment| {
-			let resource_name = {
-				match self.alias_for(&attachment.usage) {
-					Some(alias) => alias.clone(),
-					None => attachment.usage.clone(),
-				}
-			};
-			trace!("Attaching attachment {} ({})", &resource_name, &attachment.usage);
-			let attachment_key = (resource_name.clone(), GraphResourceType::Texture);
-			// error!("key is {:?}", &attatchment_key);
-			if self.inputs.contains(&attachment_key) {
-				let store = self.outputs.contains(&attachment_key);
-				trace!("Attachment store: {}", store);
-
-				let attachment_texture = context.get_texture({
-					let idx = context.get_index_of_id(&attachment_key.0, GraphResourceType::Texture).expect("Attachment not found!");
-					trace!("attachment idx is {}", idx);					
-					idx
-				});
-
-				wgpu::RenderPassColorAttachment {
-					view: &attachment_texture.view,
-					resolve_target: None, // Same as view unless using multisampling
-					ops: wgpu::Operations {
-						load: wgpu::LoadOp::Load,
-						store,
-					},
-				}
-			} else {
-				panic!("Shader requires attachment not found in node inputs!")
+		let colour_attachments = self.colour_attachments.iter().cloned().map(|(idx, store)| {
+			wgpu::RenderPassColorAttachment {
+				view: &context.get_texture(idx).view,
+				resolve_target: None, // Same as view unless using multisampling
+				ops: wgpu::Operations {
+					load: wgpu::LoadOp::Load,
+					store,
+				},
 			}
 		}).collect::<Vec<_>>();
 
-		let depth_stencil_attachment = match &self.depth {
-			Some(depth_id) => {
-				let depth_key = (depth_id.clone(), GraphResourceType::Texture);
-				let depth_write = self.outputs.contains(&depth_key);
-
-				trace!("Attaching depth from '{}' (write: {})", depth_id, depth_write);
-
-				let dt = context.get_texture(context.get_index_of_id(&depth_key.0, GraphResourceType::Texture).expect("Depth attatchment not found!?"));
+		let depth_stencil_attachment = match self.depth_attachment.clone() {
+			Some((idx, store)) => {
 				Some(wgpu::RenderPassDepthStencilAttachment {
-					view: &dt.view,
+					view: &context.get_texture(idx).view,
 					depth_ops: Some(wgpu::Operations {
 						load: wgpu::LoadOp::Load,
-						store: depth_write,
+						store,
 					}),
 					stencil_ops: None,
 				})
@@ -778,6 +783,8 @@ pub struct TextureNode {
 	resolution: Option<[u32; 2]>,
 	fill_with: Option<Vec<f32>>,
 
+	texture_idx: usize,
+
 	inputs: HashSet<(String, GraphResourceType)>,
 	outputs: HashSet<(String, GraphResourceType)>,
 }
@@ -791,45 +798,15 @@ impl TextureNode {
 			fill_with: spec.fill_with.clone(),
 			inputs: HashSet::new(),
 			outputs: [(spec.resource_name.clone(), GraphResourceType::Texture)].iter().cloned().collect::<HashSet<_>>(),
+			texture_idx: 0,
 		}
 	}
 
-	fn get_texture<'a>(
+	fn create_texture(
 		&self,
-		context: &'a mut GraphLocals, 
+		context: &mut GraphLocals, 
 		render_resources: &mut RenderResources, 
-	) -> &'a BoundTexture {
-		
-		let [width, height] = match self.resolution {
-			Some(r) => r,
-			None => context.default_resolution,
-		};
-
-		let texxy = match context.get_index_of_id(&self.resource_id, GraphResourceType::Texture) {
-			Some(idx) => {
-				let [tex_width, tex_height] = {
-					let texxy = context.get_texture(idx);
-					[texxy.size.width, texxy.size.height]
-				};
-				if width != tex_width || height != tex_height {
-					self.create_texture(context, render_resources)
-				} else {
-					context.get_texture(idx)
-				}
-			},
-			None => {
-				self.create_texture(context, render_resources)
-			},
-		};
-
-		texxy
-	}
-
-	fn create_texture<'a>(
-		&self,
-		context: &'a mut GraphLocals, 
-		render_resources: &mut RenderResources, 
-	) -> &'a BoundTexture {
+	) -> usize {
 		let [width, height] = match self.resolution {
 			Some(r) => r,
 			None => context.default_resolution,
@@ -841,8 +818,7 @@ impl TextureNode {
 			width,
 			height,
 		);
-		let idx = context.insert_texture(t, &self.resource_id);
-		context.get_texture(idx)
+		context.insert_texture(t, &self.resource_id)
 	}
 }
 impl RunnableNode for TextureNode {
@@ -859,15 +835,15 @@ impl RunnableNode for TextureNode {
 	}
 
 	fn update(&mut self, context: &mut GraphLocals, _: &mut ModelsQueueResource, render_resources: &mut RenderResources) {
-		// Create if not exists
-		let _texxy = self.get_texture(context, render_resources);
+		// Should create if not exists but I'm lazy
+		self.texture_idx = self.create_texture(context, render_resources);
 	}
 
 	fn run(
 		&self, 
 		context: &mut GraphLocals, 
 		_: &ModelsQueueResource,
-		render_resources: &mut RenderResources, 
+		_: &mut RenderResources, 
 		encoder: &mut wgpu::CommandEncoder,
 	) {
 		debug!("Running texture node {}", &self.name);
@@ -875,7 +851,7 @@ impl RunnableNode for TextureNode {
 
 		// Fill with stuff if needed
 		if let Some(fill_with) = &self.fill_with {
-			let texxy = self.get_texture(context, render_resources);
+			let texxy = context.get_texture(self.texture_idx);
 			let colour_attachments = match self.texture_format.is_depth() {
 				true => vec![],
 				false => {vec![
