@@ -55,7 +55,7 @@ vec3 normal_from_depth(float depth, vec2 tc) {
 	vec3 p1 = vec3(offset1, depth1 - depth);
 	vec3 p2 = vec3(offset2, depth2 - depth);
 	vec3 normal = cross(p1, p2);
-	normal.z = -normal.z;
+	// normal.z = -normal.z;
 	return normalize(normal);
 }
 

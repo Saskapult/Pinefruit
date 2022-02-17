@@ -1,4 +1,5 @@
 use crate::render::*;
+use crate::util::DurationHolder;
 use wgpu::util::DeviceExt;
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
@@ -113,6 +114,10 @@ pub struct RenderInstance {
 	graph_resources: GraphLocals,
 	opaque_models: ModelsQueueResource,
 	opaque_graph: Box<dyn RunnableNode>,
+
+	pub duration_profiling: bool,
+	pub update_durations: DurationHolder,
+	pub encode_durations: DurationHolder,
 }
 impl RenderInstance {
 	pub async fn new(
@@ -221,13 +226,42 @@ impl RenderInstance {
 			graph_resources,
 			opaque_models,
 			opaque_graph,
+
+			duration_profiling: true,
+			update_durations: DurationHolder::new(5),
+			encode_durations: DurationHolder::new(5),
 		}
 	}
 
-	pub fn set_data(&mut self, mut model_instances: Vec<ModelInstance>) {
-		info!("We have {} model instances", model_instances.len());
+	/// (Re)initializes the graphs.
+	/// Run this when a graph is added or the resolution changes
+	pub fn init_graphs(&mut self) {
+		let [width, height] = [800, 600];
 		
-		// Load materials if not loaded?
+		// Get model input formats
+		let graph_inputs = self.opaque_graph.inputs();
+		let model_inputs = graph_inputs.iter().filter_map(|(_, grt)| {
+			match grt {
+				GraphResourceType::Models(model_input) => Some(model_input.clone()),
+				_ => None,
+			}
+		}).collect::<HashSet<_>>();
+
+		self.graph_resources.default_resolution = [width, height]; // needed for texture making
+		self.opaque_models.update_formats(model_inputs);
+		self.opaque_graph.update(&mut self.graph_resources, &mut self.opaque_models, &mut self.render_resources);
+
+		// Update ssao
+		self.ssao_uniform.update(width, height);
+		self.queue.write_buffer(
+			&self.graph_resources.get_buffer(self.ssao_buffer_index), 
+			0, 
+			bytemuck::cast_slice(&[self.ssao_uniform]),
+		);
+	}
+
+	pub fn set_data(&mut self, mut model_instances: Vec<ModelInstance>) {
+		let update_st = Instant::now();
 
 		// Collect all using kdefault
 		// Should collect by graph and load, but that's not a task for for current me
@@ -236,34 +270,11 @@ impl RenderInstance {
 			materials.index(model_instance.material_idx).graph == PathBuf::from("resources/graphs/default.ron").canonicalize().unwrap()
 		}).collect::<Vec<_>>();
 		drop(materials);
-		info!("We have {} opaque model instances", opaque_models.len());
-
-		let graph_stuff = self.opaque_graph.inputs().clone();
 		
-		// Make model inputs
-		let model_inputs = graph_stuff.iter().filter_map(|(_, grt)| {
-			match grt {
-				GraphResourceType::Models(model_input) => Some(model_input.clone()),
-				_ => None,
-			}
-		}).collect::<HashSet<_>>();
-		self.opaque_models.update_formats(model_inputs);
 		self.opaque_models.update_models(opaque_models, &mut self.render_resources);
-		self.opaque_models.update_instances(0.0);
+		self.opaque_models.update_instances(0.0);		
 
-		// Make resource groups
-		// graph_stuff.iter().filter_map(|(_, grt)| {
-		// 	match grt {
-		// 		GraphResourceType::Resources(resources_input) => Some(resources_input.clone()),
-		// 		_ => None,
-		// 	}
-		// }).for_each(|f| {
-		// 	self.graph_resources.create_resources_group(&f, &mut self.render_resources);
-		// });
-
-		// Update graph
-		self.graph_resources.default_resolution = [800, 600]; // needed for texture making
-		self.opaque_graph.update(&mut self.graph_resources, &mut self.opaque_models, &mut self.render_resources);
+		self.update_durations.record(Instant::now() - update_st);
 	}
 
 	/// Renders some objects from the perspective of a camera
@@ -276,8 +287,7 @@ impl RenderInstance {
 		camera: &Camera, 
 		_t: Instant,
 	) {
-		// Set default resolution for context
-		self.graph_resources.default_resolution = [width, height];
+		let encode_st = Instant::now();
 
 		// Update camera
 		self.camera_uniform.update(&camera, width as f32, height as f32);
@@ -285,15 +295,6 @@ impl RenderInstance {
 			&self.graph_resources.get_buffer(self.camera_buffer_index), 
 			0, 
 			bytemuck::cast_slice(&[self.camera_uniform]),
-		);
-
-		// Update ssao
-		// Todo: only do this when resolution changes
-		self.ssao_uniform.update(width, height);
-		self.queue.write_buffer(
-			&self.graph_resources.get_buffer(self.ssao_buffer_index), 
-			0, 
-			bytemuck::cast_slice(&[self.ssao_uniform]),
 		);
 
 		// // Update instance buffer to the current time
@@ -324,6 +325,8 @@ impl RenderInstance {
 			},
 			output_texture.size,
 		);
+
+		self.encode_durations.record(Instant::now() - encode_st);
 	}
 
 	fn get_render_frac(&self, t: Instant) -> f32 {		

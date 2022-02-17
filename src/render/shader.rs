@@ -546,9 +546,9 @@ impl ShaderManager {
 				vertex_attributes.push(wgpu::VertexAttribute {
 					offset: vertex_attributes_length,
 					shader_location: vertex_attributes.len() as u32,
-					format,
+					format: *format,
 				});
-				vertex_attributes_length += size as wgpu::BufferAddress;
+				vertex_attributes_length += *size as wgpu::BufferAddress;
 			}
 		}
 		let vertex_layout = wgpu::VertexBufferLayout {
@@ -570,9 +570,9 @@ impl ShaderManager {
 				instance_attributes.push(wgpu::VertexAttribute {
 					offset: instance_attributes_length,
 					shader_location: (vertex_attributes.len() + instance_attributes.len()) as u32,
-					format,
+					format: *format,
 				});
-				instance_attributes_length += size as wgpu::BufferAddress;
+				instance_attributes_length += *size as wgpu::BufferAddress;
 			}
 		}
 		let instance_layout = wgpu::VertexBufferLayout {

@@ -163,8 +163,6 @@ pub fn modelq_from_meshq(mesh_queue: MeshQueue, materials: Vec<usize>) -> ModelQ
 /// 
 /// Instances have been set up to support interpolation based on time.
 /// This could be useful in the future.
-/// 
-/// Oh also a lot of this could be parallelized with only minor changes.
 #[derive(Debug)]
 pub struct ModelsQueueResource {
 	device: Arc<wgpu::Device>,
@@ -193,7 +191,7 @@ impl ModelsQueueResource {
 		}
 	}
 
-	/// Update the list of formats which might be needed
+	/// Update the list of formats in which models should be provided
 	pub fn update_formats(
 		&mut self, 
 		formats: HashSet<ShaderInput>, 
@@ -204,16 +202,16 @@ impl ModelsQueueResource {
 		self.queues.resize(formats.len(), (0, Vec::with_capacity(self.raw_models.len())));
 
 		// Resize instances
-		// Does not add new buffers
+		// Does not add or remove buffers
 		self.instances_buffer_index_of_format = formats.iter().map(|(ip, _, _)| {
 			(ip.clone(), 0)
 		}).collect::<HashMap<_,_>>();
-		//self.instances_buffers.resize(formats.len(), None);
 	}
 
 	/// Adds a format, compiling models and instances, without prior setup.
-	/// This can cause reallocation so it's not great to do repeatedly.
-	/// Useful for something graph related idk.
+	/// Calling this at all will cause at least one model resource reallocation.
+	/// Please just don't use this.
+	#[deprecated]
 	pub fn add_format(
 		&mut self,
 		format: &ShaderInput,
@@ -267,12 +265,18 @@ impl ModelsQueueResource {
 		models: Vec<ModelInstance>,
 		resources: &mut RenderResources,
 	) {
-		info!("Given {} models", models.len());
 		for ((_, vp, mbgf), &queue_idx) in self.queue_index_of_format.iter() {
 			// I don't want to allocate a new vector
 			// The existing vector should either be extended or truncated
 			let queue_content = &mut self.queues.get_mut(queue_idx).unwrap().1;
 			queue_content.resize(models.len(), (0,0,0));
+
+			// Another way of doing stuff
+			// queue_content.iter_mut().enumerate().map(|(i, c)| {
+			// 	c.0 = resources.materials.index_from_index_format_bind(models[i].material_idx, mbgf, &mut resources.shaders, &mut resources.textures);
+			// 	c.1 = resources.meshes.index_from_index_properites_bind(models[i].mesh_idx, vp);
+			// 	c.2 = 1;
+			// });
 
 			models.iter().enumerate().for_each(|(i, model)| {
 				let mesh_idx = resources.meshes.index_from_index_properites_bind(model.mesh_idx, vp);
@@ -280,34 +284,47 @@ impl ModelsQueueResource {
 				let count = 1;
 				queue_content[i] = (material_idx, mesh_idx, count);
 			});
-			info!("{} models for queue {}", queue_content.len(), queue_idx);
 		}
 		self.raw_models = models;
-		
 	}
 
+	/// Updates the instances of the loaded models.
+	/// Is meant to interpolate between two timesteps, currently does not.
 	pub fn update_instances(
 		&mut self, 
 		_t: f32,
 	) {
+		// This is usually very small so I'm okay with reallocation
 		self.instances_buffers = Vec::with_capacity(self.queue_index_of_format.len());
 
 		for (instance_properties, _, _) in self.queue_index_of_format.keys() {
-			// Could use Vec::with_capacity() if we added a way to get the number of bytes from instance properties
-			let mut instances_data = Vec::new();
-			for model in &self.raw_models {
-				let instance_data = model.instance.data(&instance_properties);
-				instances_data.extend_from_slice(&instance_data[..]);
+			// Find the size of the vector we should allocate
+			let mut instances_entry_length = 0;
+			for instance_property in instance_properties {
+				let attributes = match instance_property {
+					InstanceProperty::InstanceModelMatrix => InstanceModelMatrix::attributes(),
+					InstanceProperty::InstanceColour => InstanceColour::attributes(),
+				};
+				for (size, _) in attributes {
+					instances_entry_length += *size;
+				}
 			}
 
+			// Allocate intermediate vector and fill
+			let mut instances_data = Vec::with_capacity(instances_entry_length * self.raw_models.len());
+			for model in &self.raw_models {
+				instances_data.append(&mut model.instance.data(&instance_properties));
+			}
+
+			// Load into buffer
 			let instances_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 				label: Some("Instance Buffer"),
 				contents: &instances_data[..],
 				usage: wgpu::BufferUsages::VERTEX,
 			});
 
+			// Overwrite old entry
 			let idx = self.instances_buffers.len();
-			// Should overwrite entry
 			self.instances_buffer_index_of_format.insert(instance_properties.clone(), idx);
 			self.instances_buffers.push(instances_buffer);
 		}

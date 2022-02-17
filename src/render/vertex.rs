@@ -98,7 +98,7 @@ impl Instance {
 
 /// Trait for "can be put in vertex buffer"
 pub trait Vertexable {
-	// const for emum value entry??
+	const ASEG: AttributeSegment;
 	fn attributes() -> AttributeSegment;
 }
 
@@ -106,7 +106,7 @@ pub trait Vertexable {
 
 /// Attributes generated at the current field offset
 /// length (bytes), vertex format
-pub type AttributeSegment = Vec<(usize, wgpu::VertexFormat)>;
+pub type AttributeSegment = &'static [(usize, wgpu::VertexFormat)];
 
 
 
@@ -116,10 +116,9 @@ pub struct VertexPosition {
 	pub position: [f32; 3],
 }
 impl Vertexable for VertexPosition {
+	const ASEG: AttributeSegment = &[(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3)];
 	fn attributes() -> AttributeSegment {
-		vec![
-			(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3),
-		]
+		Self::ASEG
 	}
 }
 
@@ -130,10 +129,9 @@ pub struct VertexNormal {
 	pub normal: [f32; 3],
 }
 impl Vertexable for VertexNormal {
+	const ASEG: AttributeSegment = &[(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3)];
 	fn attributes() -> AttributeSegment {
-		vec![
-			(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3),
-		]
+		Self::ASEG
 	}
 }
 
@@ -146,10 +144,9 @@ pub struct VertexColour {
 	pub colour: [f32; 3],
 }
 impl Vertexable for VertexColour {
+	const ASEG: AttributeSegment = &[(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3)];
 	fn attributes() -> AttributeSegment {
-		vec![
-			(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3),
-		]
+		Self::ASEG
 	}
 }
 
@@ -161,10 +158,9 @@ pub struct VertexUV {
 	pub uv: [f32; 2],
 }
 impl Vertexable for VertexUV {
+	const ASEG: AttributeSegment = &[(mem::size_of::<[f32; 2]>(), wgpu::VertexFormat::Float32x2)];
 	fn attributes() -> AttributeSegment {
-		vec![
-			(mem::size_of::<[f32; 2]>(), wgpu::VertexFormat::Float32x2),
-		]
+		Self::ASEG
 	}
 }
 
@@ -176,10 +172,9 @@ pub struct VertexTextureID {
 	pub id: u32,
 }
 impl Vertexable for VertexTextureID {
+	const ASEG: AttributeSegment = &[(mem::size_of::<u32>(), wgpu::VertexFormat::Uint32)];
 	fn attributes() -> AttributeSegment {
-		vec![
-			(mem::size_of::<u32>(), wgpu::VertexFormat::Uint32),
-		]
+		Self::ASEG
 	}
 }
 
@@ -200,13 +195,14 @@ impl InstanceModelMatrix {
 	}
 }
 impl Vertexable for InstanceModelMatrix {
+	const ASEG: AttributeSegment = &[
+		(mem::size_of::<[f32; 4]>(), wgpu::VertexFormat::Float32x4),
+		(mem::size_of::<[f32; 4]>(), wgpu::VertexFormat::Float32x4),
+		(mem::size_of::<[f32; 4]>(), wgpu::VertexFormat::Float32x4),
+		(mem::size_of::<[f32; 4]>(), wgpu::VertexFormat::Float32x4),
+	];
 	fn attributes() -> AttributeSegment {
-		vec![
-			(mem::size_of::<[f32; 4]>(), wgpu::VertexFormat::Float32x4),
-			(mem::size_of::<[f32; 4]>(), wgpu::VertexFormat::Float32x4),
-			(mem::size_of::<[f32; 4]>(), wgpu::VertexFormat::Float32x4),
-			(mem::size_of::<[f32; 4]>(), wgpu::VertexFormat::Float32x4),
-		]
+		Self::ASEG
 	}
 }
 
@@ -225,9 +221,8 @@ impl InstanceColour {
 	}
 }
 impl Vertexable for InstanceColour {
+	const ASEG: AttributeSegment = &[(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3)];
 	fn attributes() -> AttributeSegment {
-		vec![
-			(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3),
-		]
+		Self::ASEG
 	}
 }

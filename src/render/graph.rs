@@ -459,13 +459,21 @@ impl ShaderNode {
 			},
 		};
 
-		// Add model input if needed
-		if mesh_input_format.is_some() && material_input_bgf.is_some() {
-			inputs.insert(("models".to_string(), GraphResourceType::Models((
-				shader.instance_properties.clone(), 
-				shader.vertex_properties.clone(), 
-				shader.bind_groups[&1].format(),
-			))));
+		// Add model input
+		if mesh_input_format.is_some() {
+			if material_input_bgf.is_some() {
+				inputs.insert(("models".to_string(), GraphResourceType::Models((
+					shader.instance_properties.clone(), 
+					shader.vertex_properties.clone(), 
+					shader.bind_groups[&1].format(),
+				))));
+			} else {
+				inputs.insert(("models".to_string(), GraphResourceType::Models((
+					shader.instance_properties.clone(), 
+					shader.vertex_properties.clone(), 
+					BindGroupFormat::empty(),
+				))));
+			}
 		}
 
 		Ok(Self {
@@ -565,7 +573,8 @@ impl RunnableNode for ShaderNode {
 							Some(idx) => idx,
 							None => {
 								// This should really not be done here but whatever
-								model_resources.add_format(&model_format, render_resources)
+								// model_resources.add_format(&model_format, render_resources)
+								panic!("I told you not to do that anymore!")
 							}
 						};
 						trace!("Shader node {} chose mesh queue idx {} (format: {:?})", &self.name, &queue_index, &model_format);

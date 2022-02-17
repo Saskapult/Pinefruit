@@ -23,7 +23,7 @@ enum RenderTarget {
 
 
 pub struct RenderResource {
-	pub render_instance: RenderInstance,
+	pub instance: RenderInstance,
 	pub materials_manager: Arc<RwLock<MaterialManager>>,
 	pub textures_manager: Arc<RwLock<TextureManager>>,
 	pub meshes_manager: Arc<RwLock<MeshManager>>,
@@ -40,7 +40,7 @@ impl RenderResource {
 
 		let meshes_manager = Arc::new(RwLock::new(MeshManager::new()));
 
-		let renderer = pollster::block_on(
+		let mut instance = pollster::block_on(
 			crate::render::RenderInstance::new(
 				adapter,
 				&textures_manager,
@@ -48,15 +48,16 @@ impl RenderResource {
 				&materials_manager,
 			)
 		);
+		instance.init_graphs();
 
 		let egui_rpass = egui_wgpu_backend::RenderPass::new(
-			&renderer.device, 
+			&instance.device, 
 			wgpu::TextureFormat::Bgra8UnormSrgb, 
 			1,
 		);
 
 		Self {
-			render_instance: renderer,
+			instance,
 			materials_manager,
 			textures_manager,
 			meshes_manager,
@@ -181,6 +182,14 @@ impl RenderSystem {
 				let physics_p = physics_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
 				ui.label(format!("physics time: {:>2}ms (~{:.2}%)", physics_time.as_millis(), physics_p));
 
+				let rupdate_time = render_resource.instance.update_durations.latest().unwrap_or(Duration::ZERO);
+				let rupdate_p = rupdate_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
+				ui.label(format!("rupdate time: {:>2}ms (~{:.2}%)", rupdate_time.as_millis(), rupdate_p));
+
+				let rencode_time = render_resource.instance.encode_durations.latest().unwrap_or(Duration::ZERO);
+				let rencode_p = rencode_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
+				ui.label(format!("rencode time: {:>2}ms (~{:.2}%)", rencode_time.as_millis(), rencode_p));
+
 				// if ui.button("Clickme").clicked() {
 				// 	panic!("Button click");
 				// }
@@ -193,8 +202,8 @@ impl RenderSystem {
 		let frame_time = (Instant::now() - egui_start).as_secs_f64() as f32;
 		window.previous_frame_time = Some(frame_time);
 
-		let device = render_resource.render_instance.device.clone();
-		let queue = render_resource.render_instance.queue.clone();
+		let device = render_resource.instance.device.clone();
+		let queue = render_resource.instance.queue.clone();
 
 		// GPU upload
 		let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
@@ -282,7 +291,7 @@ impl RenderSystem {
 		render_data: Vec<ModelInstance>,
 		destination_texture: &wgpu::Texture,
 	) {
-		render_resource.render_instance.set_data(render_data);
+		render_resource.instance.set_data(render_data);
 
 		let render_camera = crate::render::Camera {
 			position: camera_transform.position,
@@ -292,7 +301,7 @@ impl RenderSystem {
 			zfar: camera.zfar,
 		};
 		
-		render_resource.render_instance.render(
+		render_resource.instance.render(
 			&mut encoder,
 			destination_texture, 
 			width, 
@@ -346,7 +355,7 @@ impl<'a> System<'a> for RenderSystem {
 
 					// Get window data
 					let mut window = window_resource.windows.get_mut(id).unwrap();
-					window.surface.configure(&render_resource.render_instance.device, &window.surface_config);
+					window.surface.configure(&render_resource.instance.device, &window.surface_config);
 					
 					let frame = match window.surface.get_current_texture() {
 						Ok(tex) => tex,
@@ -361,7 +370,7 @@ impl<'a> System<'a> for RenderSystem {
 					};
 					let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-					let mut encoder = render_resource.render_instance.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+					let mut encoder = render_resource.instance.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 						label: Some("Render Encoder"),
 					});
 
@@ -402,7 +411,7 @@ impl<'a> System<'a> for RenderSystem {
 					}
 					
 					let submit_st = Instant::now();
-					render_resource.render_instance.queue.submit(std::iter::once(encoder.finish()));
+					render_resource.instance.queue.submit(std::iter::once(encoder.finish()));
 					render_resource.submit_durations.record(Instant::now() - submit_st);
 
 					frame.present();
