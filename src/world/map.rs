@@ -4,7 +4,16 @@ use std::sync::{Arc, RwLock};
 use crate::world::*;
 use crate::render::*;
 use crate::mesh::*;
+use thiserror::Error;
 
+
+
+
+#[derive(Error, Debug)]
+pub enum MapError {
+	#[error("hey this chunk isnt loaded")]
+	ChunkUnloaded,
+}
 
 
 
@@ -122,9 +131,9 @@ impl Map {
 		let [cx, cy, cz] = centre;
 		let mut res = Vec::new();
 		// Consider bounding cube
-		for x in (cx-radius)..(cx+radius+1) {
-			for y in (cy-radius)..(cy+radius+1) {
-				for z in (cz-radius)..(cz+radius+1) {
+		for x in (cx-radius)..=(cx+radius) {
+			for y in (cy-radius)..=(cy+radius) {
+				for z in (cz-radius)..=(cz+radius) {
 					if Map::within_chunks_sphere([x, y, z], centre, radius) {
 						res.push([x,y,z]);
 					}
@@ -170,35 +179,47 @@ impl Map {
 	// This, however, should be dealt with by the calling party and not within this function
 	pub fn set_voxel_world(&mut self, world_coords: [i32; 3], voxel: Voxel) {
 		let (cpos, cvpos) = self.world_chunk_voxel(world_coords);
+		debug!("world {:?} -> chunk {:?} voxel {:?} to {:?}", &world_coords, &cpos, &cvpos, &voxel);
 		if let Some(chunk) = self.chunk_mut(cpos) {
 			chunk.set_voxel(cvpos, voxel);
 		} else {
-			panic!("Tried to set a voxel in an unloaded chunk!");
+			warn!("Tried to set a voxel in an unloaded chunk");
+		}
+	}
+
+	pub fn get_voxel_world(&mut self, world_coords: [i32; 3]) -> Option<Voxel> {
+		let (cpos, cvpos) = self.world_chunk_voxel(world_coords);
+		debug!("world {:?} -> chunk {:?} voxel {:?}", &world_coords, &cpos, &cvpos);
+		if let Some(chunk) = self.chunk(cpos) {
+			Some(chunk.get_voxel(cvpos))
+		} else {
+			None
 		}
 	}
 
 	// Gets the coordinates of the chunk in which the wold position resides 
 	pub fn world_chunk(&self, world_coords: [i32; 3]) -> [i32; 3] {
 		let chunk_pos = [
-			world_coords[0] / (self.chunk_dimensions[0] as i32),
-			world_coords[1] / (self.chunk_dimensions[1] as i32),
-			world_coords[2] / (self.chunk_dimensions[2] as i32),
+			world_coords[0] / (self.chunk_dimensions[0] as i32) - if world_coords[0] < 0 { 1 } else { 0 },
+			world_coords[1] / (self.chunk_dimensions[1] as i32) - if world_coords[1] < 0 { 1 } else { 0 },
+			world_coords[2] / (self.chunk_dimensions[2] as i32) - if world_coords[2] < 0 { 1 } else { 0 },
 		];
 		chunk_pos
 	}
 
 	// Gets the coordinates of the chunk and the coordinates of the voxel within the chunk in which the wold position resides 
 	pub fn world_chunk_voxel(&self, world_coords: [i32; 3]) -> ([i32; 3], [i32; 3]) {
-		let chunk_pos = [
-			world_coords[0] / (self.chunk_dimensions[0] as i32),
-			world_coords[1] / (self.chunk_dimensions[1] as i32),
-			world_coords[2] / (self.chunk_dimensions[2] as i32),
-		];
-		let chunk_voxel_pos = [
+		let chunk_pos = self.world_chunk(world_coords);
+		let mut chunk_voxel_pos = [
 			world_coords[0] % (self.chunk_dimensions[0] as i32),
 			world_coords[1] % (self.chunk_dimensions[1] as i32),
 			world_coords[2] % (self.chunk_dimensions[2] as i32),
 		];
+		chunk_voxel_pos.iter_mut().zip(self.chunk_dimensions.iter()).for_each(|(v, cs)| {
+			if *v < 0 {
+				*v = *cs as i32 + *v;
+			}
+		});
 		(chunk_pos, chunk_voxel_pos)
 	}
 
@@ -212,38 +233,128 @@ impl Map {
 	}
 
 	// Gets the coordinates of the chunk in which this point resides
-	pub fn point_chunk(&self, point: Vector3<f32>) -> [i32; 3] {
+	pub fn point_chunk(&self, point: &Vector3<f32>) -> [i32; 3] {
 		let chunk_pos = [
-			(point[0] / (self.chunk_dimensions[0] as f32)).floor() as i32,
-			(point[1] / (self.chunk_dimensions[1] as f32)).floor() as i32,
-			(point[2] / (self.chunk_dimensions[2] as f32)).floor() as i32,
+			point[0].floor() as i32 / self.chunk_dimensions[0] as i32,
+			point[1].floor() as i32 / self.chunk_dimensions[1] as i32,
+			point[2].floor() as i32 / self.chunk_dimensions[2] as i32,
 		];
 		chunk_pos
 	}
 
 	// Gets the coordinates of the chunk and the coordinates of the voxel within the chunk in which the point resides 
-	pub fn point_chunk_voxel(&self, point: Vector3<f32>) -> ([i32; 3], [i32; 3]) {
-		let chunk_pos = [
-			(point[0] / (self.chunk_dimensions[0] as f32)).floor() as i32,
-			(point[1] / (self.chunk_dimensions[1] as f32)).floor() as i32,
-			(point[2] / (self.chunk_dimensions[2] as f32)).floor() as i32,
-		];
+	pub fn point_chunk_voxel(&self, point: &Vector3<f32>) -> ([i32; 3], [i32; 3]) {
+		let chunk_pos = self.point_chunk(point);
 		let chunk_voxel_pos = [
-			(point[0].floor() as u32 % self.chunk_dimensions[0]) as i32,
-			(point[1].floor() as u32 % self.chunk_dimensions[1]) as i32,
-			(point[2].floor() as u32 % self.chunk_dimensions[2]) as i32,
+			point[0].floor() as i32 % self.chunk_dimensions[0] as i32,
+			point[1].floor() as i32 % self.chunk_dimensions[1] as i32,
+			point[2].floor() as i32 % self.chunk_dimensions[2] as i32,
 		];
 		(chunk_pos, chunk_voxel_pos)
 	}
 
 	// Gets the coordinates of the voxel in the world in which the point resides
-	pub fn point_world_voxel(&self, point: Vector3<f32>) -> [i32; 3] {
+	pub fn point_world_voxel(&self, point: &Vector3<f32>) -> [i32; 3] {
 		let world_voxel_pos = [
 			point[0].floor() as i32,
 			point[1].floor() as i32,
 			point[2].floor() as i32,
 		];
 		world_voxel_pos
+	}
+
+	// Todo: return the normal as well
+	// Todo: turn it into an iterator
+	pub fn voxel_ray(
+		&self, 
+		origin: &Vector3<f32>, 
+		direction: &Vector3<f32>,
+		_t_min: f32,
+		t_max: f32,
+	) -> Vec<[i32; 3]> {
+
+		// https://stackoverflow.com/questions/12367071/how-do-i-initialize-the-t-variables-in-a-fast-voxel-traversal-algorithm-for-ray
+		fn frac(f: f32) -> f32 {
+			if f > 0.0 { 
+				f.fract()
+			} else {
+				f - f.floor()
+			}
+		}
+
+		/// Find the smallest positive t such that s+t*ds is an integer.
+		fn intbound(s: f32, ds: f32) -> f32 {
+			if ds < 0.0 {
+				intbound(-s, -ds)
+			} else {
+				(1.0 - (s % 1.0)) / ds
+			}
+		}
+
+		// Origin voxel (should be int)
+		let mut vx = origin[0].floor() as i32;
+		let mut vy = origin[1].floor() as i32; 
+		let mut vz = origin[2].floor() as i32;
+
+		// Direction of cast
+		let direction = direction.normalize();
+		let dx = direction[0]; 
+		let dy = direction[1]; 
+		let dz = direction[2];
+		
+		// Direction to increment when stepping (should be int)
+		let v_step_x = dx.signum() as i32;
+		let v_step_y = dy.signum() as i32;
+		let v_step_z = dz.signum() as i32;
+
+		// The change in t when taking a step (always positive)
+		// How far in terms of t we can travel before reaching another voxel in (direction)
+		let t_delta_x = 1.0 / dx.abs();
+		let t_delta_y = 1.0 / dy.abs();
+		let t_delta_z = 1.0 / dz.abs();
+
+		// Distance along line to next voxel border of (direction)
+		// let mut t_max_x = intbound(origin[0], dx);
+		// let mut t_max_y = intbound(origin[1], dy);
+		// let mut t_max_z = intbound(origin[2], dz);
+		let mut t_max_x = t_delta_x * (1.0 - frac(origin[0]));
+		let mut t_max_y = t_delta_y * (1.0 - frac(origin[1]));
+		let mut t_max_z = t_delta_z * (1.0 - frac(origin[2]));
+
+		if t_delta_x == 0.0 && t_delta_y == 0.0 && t_delta_z == 0.0 {
+			panic!()
+		}
+
+		let mut results = Vec::new();
+		while t_max_x < t_max && t_max_y < t_max && t_max_z < t_max {
+			results.push([vx, vy, vz]);
+
+			if t_max_x < t_max_y {
+				// Closer to x boundary than y
+				if t_max_x < t_max_z {
+					// Closer to x boundary than z, closest to x boundary
+					vx += v_step_x;
+					t_max_x += t_delta_x;
+				} else {
+					// Closer to z than x, closest to z
+					vz += v_step_z;
+					t_max_z += t_delta_z;
+				}
+			} else {
+				// Closer to y boundary than x
+				if t_max_y < t_max_z {
+					// Closer to y boundary than z, closest to y boundary
+					vy += v_step_y;
+					t_max_y += t_delta_y;
+				} else {
+					// Closer to z than y, closest to z
+					vz += v_step_z;
+					t_max_z += t_delta_z;
+				}
+			}
+		}
+
+		results
 	}
 }
 
@@ -469,64 +580,54 @@ impl Direction {
 	}
 }
 
-pub const XP_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	
-	Vector3::new( 0.5, -0.5, -0.5),
-	Vector3::new( 0.5, -0.5,  0.5),
-	Vector3::new( 0.5,  0.5,  0.5),
-
-	Vector3::new( 0.5,  0.5, -0.5),
+const XP_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new(1.0, 0.0, 0.0),
+	Vector3::new(1.0, 0.0, 1.0),
+	Vector3::new(1.0, 1.0, 1.0),
+	Vector3::new(1.0, 1.0, 0.0),
 ];
-// pub const XP_QUAD_VERTICES: [Vector3<f32>; 4] = [
-// 	Vector3::new( 0.5,  0.5, -0.5),
-// 	Vector3::new( 0.5, -0.5, -0.5),
-// 	Vector3::new( 0.5, -0.5,  0.5),
-// 	Vector3::new( 0.5,  0.5,  0.5),
-// ];
-pub const YP_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new( 0.5,  0.5, -0.5),
-	Vector3::new(-0.5,  0.5, -0.5),
-	Vector3::new(-0.5,  0.5,  0.5),
-	Vector3::new( 0.5,  0.5,  0.5),
+const YP_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new(1.0, 1.0, 0.0),
+	Vector3::new(0.0, 1.0, 0.0),
+	Vector3::new(0.0, 1.0, 1.0),
+	Vector3::new(1.0, 1.0, 1.0),
 ];
-pub const ZP_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new( 0.5, -0.5,  0.5),
-	Vector3::new(-0.5, -0.5,  0.5),
-	Vector3::new(-0.5,  0.5,  0.5),
-	Vector3::new( 0.5,  0.5,  0.5),
+const ZP_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new(1.0, 0.0, 1.0),
+	Vector3::new(0.0, 0.0, 1.0),
+	Vector3::new(0.0, 1.0, 1.0),
+	Vector3::new(1.0, 1.0, 1.0),
 ];
-pub const XN_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	
-	Vector3::new(-0.5, -0.5, -0.5),
-	Vector3::new(-0.5, -0.5,  0.5),
-	Vector3::new(-0.5,  0.5,  0.5),
-
-	Vector3::new(-0.5,  0.5, -0.5),
+const XN_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new(0.0, 0.0, 0.0),
+	Vector3::new(0.0, 0.0, 1.0),
+	Vector3::new(0.0, 1.0, 1.0),
+	Vector3::new(0.0, 1.0, 0.0),
 ];
-pub const YN_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new( 0.5, -0.5, -0.5),
-	Vector3::new(-0.5, -0.5, -0.5),
-	Vector3::new(-0.5, -0.5,  0.5),
-	Vector3::new( 0.5, -0.5,  0.5),
+const YN_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new(1.0, 0.0, 0.0),
+	Vector3::new(0.0, 0.0, 0.0),
+	Vector3::new(0.0, 0.0, 1.0),
+	Vector3::new(1.0, 0.0, 1.0),
 ];
-pub const ZN_QUAD_VERTICES: [Vector3<f32>; 4] = [
-	Vector3::new( 0.5, -0.5, -0.5),
-	Vector3::new(-0.5, -0.5, -0.5),
-	Vector3::new(-0.5,  0.5, -0.5),
-	Vector3::new( 0.5,  0.5, -0.5),
+const ZN_QUAD_VERTICES: [Vector3<f32>; 4] = [
+	Vector3::new(1.0, 0.0, 0.0),
+	Vector3::new(0.0, 0.0, 0.0),
+	Vector3::new(0.0, 1.0, 0.0),
+	Vector3::new(1.0, 1.0, 0.0),
 ];
 
-pub const QUAD_UVS: [[f32; 2]; 4] = [
+const QUAD_UVS: [[f32; 2]; 4] = [
 	[1.0, 1.0],
 	[0.0, 1.0],
 	[0.0, 0.0],
 	[1.0, 0.0],
 ];
-pub const QUAD_INDICES: [u16; 6] = [
+const QUAD_INDICES: [u16; 6] = [
 	0, 1, 2,
 	2, 3, 0, 
 ];
-pub const REVERSE_QUAD_INDICES: [u16; 6] = [
+const REVERSE_QUAD_INDICES: [u16; 6] = [
 	2, 1, 0,
 	0, 3, 2, 
 ];

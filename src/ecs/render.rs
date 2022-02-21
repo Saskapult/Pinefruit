@@ -156,6 +156,7 @@ impl RenderSystem {
 		step_resource: &StepResource,
 		window: &mut GameWindow,
 		destination_view: &wgpu::TextureView,
+		tc: &TransformComponent,
 	) {
 		let egui_start = Instant::now();
 		window.platform.begin_frame();
@@ -166,6 +167,35 @@ impl RenderSystem {
 				// Some of these values are not from the same step so percentages will be inaccurate
 
 				ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
+
+				let pos = [
+					tc.position[0],
+					tc.position[1],
+					tc.position[2],
+				];
+				ui.label(format!("pos: [{:.1}, {:.1}, {:.1}]", pos[0], pos[1], pos[2]));
+				let world = [
+					pos[0].floor() as i32,
+					pos[1].floor() as i32,
+					pos[2].floor() as i32,
+				];
+				ui.label(format!("world: {:?}", world));
+				let cpos = [
+					world[0].abs() / 16 - if world[0] < 0 { 1 } else { 0 },
+					world[1].abs() / 16 - if world[1] < 0 { 1 } else { 0 },
+					world[2].abs() / 16 - if world[2] < 0 { 1 } else { 0 },
+				];
+				let mut vpos = [
+					world[0] % 16,
+					world[1] % 16,
+					world[2] % 16,
+				];
+				vpos.iter_mut().zip([16;3].iter()).for_each(|(v, cs)| {
+					if *v < 0 {
+						*v = *cs as i32 + *v;
+					}
+				});
+				ui.label(format!("chunk: {:?} - {:?}", cpos, vpos));
 
 				let steptime = step_resource.step_durations.latest().unwrap_or(Duration::ZERO);
 				ui.label(format!("step time: {}ms", steptime.as_millis()));
@@ -178,7 +208,7 @@ impl RenderSystem {
 				let submit_p = submit_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
 				ui.label(format!("submit time: {:>2}ms (~{:.2}%)", submit_time.as_millis(), submit_p));
 
-				let physics_time = physics_resource.physics_tick_durations.latest().unwrap_or(Duration::ZERO);
+				let physics_time = physics_resource.tick_durations.latest().unwrap_or(Duration::ZERO);
 				let physics_p = physics_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
 				ui.label(format!("physics time: {:>2}ms (~{:.2}%)", physics_time.as_millis(), physics_p));
 
@@ -407,6 +437,7 @@ impl<'a> System<'a> for RenderSystem {
 							&step_resource,
 							&mut window,
 							&frame_view,
+							camera_transform
 						);
 					}
 					

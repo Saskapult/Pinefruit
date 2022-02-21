@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use crate::world::*;
 use crate::ecs::*;
+use rapier3d::prelude::*;
 
 
 
@@ -20,12 +20,13 @@ pub enum ChunkModelEntry {
 
 
 
-#[derive(Component, Debug)]
+#[derive(Component, )]
 #[storage(VecStorage)]
 pub struct MapComponent {
 	pub map: crate::world::Map,
 	// A field for storing generated mesh index collections (or a lack thereof)
 	pub chunk_models: HashMap<[i32; 3], ChunkModelEntry>,
+	pub chunk_collider_handles: HashMap<[i32; 3], ColliderHandle>,
 }
 impl MapComponent {
 	pub fn new(blockmanager: &Arc<RwLock<crate::world::BlockManager>>) -> Self {
@@ -34,11 +35,12 @@ impl MapComponent {
 		Self {
 			map,
 			chunk_models: HashMap::new(),
+			chunk_collider_handles: HashMap::new(),
 		}		
 	}
 
 	/// Sets a voxel in the map, regenerating chunks as necessary
-	fn set_voxel(&mut self, pos: [i32; 3], voxel: Voxel) {
+	pub fn set_voxel(&mut self, pos: [i32; 3], voxel: Voxel) {
 		self.map.set_voxel_world(pos, voxel);
 		let (c, v) = self.map.world_chunk_voxel(pos);
 		let [cdx, cdy, cdz] = self.map.chunk_dimensions;
@@ -118,11 +120,29 @@ impl MapSystem {
 			ChunkModelEntry::Unloaded
 		}
 	}
+
+	fn generate_chunk_collider(
+		render_resource: &RenderResource,
+		entry: &ChunkModelEntry,
+	) -> Option<Collider> {
+		match entry {
+			ChunkModelEntry::Complete(meshmats) => {
+				let mm = render_resource.meshes_manager.read().unwrap();
+				let meshes = meshmats.iter().map(|(mesh_idx, _)| mm.index(*mesh_idx)).collect::<Vec<_>>();
+				let chunk_shape = crate::mesh::meshes_trimesh(meshes).unwrap();
+				let chunk_collider = ColliderBuilder::new(chunk_shape).build();
+				Some(chunk_collider)
+			},
+			_ => None,
+		}
+	}
 }
 impl<'a> System<'a> for MapSystem {
 	type SystemData = (
 		WriteExpect<'a, RenderResource>,
+		WriteExpect<'a, PhysicsResource>,
 		WriteStorage<'a, MapComponent>,
+		WriteStorage<'a, StaticPhysicsComponent>,
 		ReadStorage<'a, CameraComponent>,
 		ReadStorage<'a, TransformComponent>,
 	);
@@ -130,21 +150,23 @@ impl<'a> System<'a> for MapSystem {
 		&mut self, 
 		(
 			mut render_resource,
-			mut map,
-			camera,
-			transform,
+			mut physics_resource,
+			mut maps,
+			mut static_objects,
+			cameras,
+			transforms,
 		): Self::SystemData,
 	) { 
-		for map_c in (&mut map).join() {
+		// Model loading
+		for map_c in (&mut maps).join() {
 			
 			// Find all chunks which should be displayed
 			let mut chunks_to_show = Vec::new();
-			for (_, transform_c) in (&camera, &transform).join() {
-				let camera_chunk = map_c.map.point_chunk(transform_c.position);
-				let mut cposs = map_c.map.chunks_sphere(camera_chunk, 5);
+			for (_, transform_c) in (&cameras, &transforms).join() {
+				let camera_chunk = map_c.map.point_chunk(&transform_c.position);
+				let mut cposs = map_c.map.chunks_sphere(camera_chunk, 3);
 				chunks_to_show.append(&mut cposs);				
 			}
-			info!("Need to show {} chunks!", chunks_to_show.len());
 
 			// // Unload some chunks
 			// let mut chunks_to_remove = Vec::new();
@@ -173,8 +195,8 @@ impl<'a> System<'a> for MapSystem {
 					match map_c.chunk_models[&chunk_position] {
 						ChunkModelEntry::UnModeled => {
 							// Model it
-							let res = MapSystem::model_chunk(&mut render_resource, &map_c.map, chunk_position);
-							map_c.chunk_models.insert(chunk_position, res);
+							let entry = MapSystem::model_chunk(&mut render_resource, &map_c.map, chunk_position);
+							map_c.chunk_models.insert(chunk_position, entry);
 						}
 						_ => {},
 					}
@@ -184,15 +206,27 @@ impl<'a> System<'a> for MapSystem {
 				}
 			}
 		}
+
+		// Collider loading
+		for (map, spc) in (&mut maps, &mut static_objects).join() {
+			// Find all chunks which should have colliders
+			let mut chunks_to_collide = Vec::new();
+			for (_, transform_c) in (&cameras, &transforms).join() {
+				let camera_chunk = map.map.point_chunk(&transform_c.position);
+				let mut cposs = map.map.chunks_sphere(camera_chunk, 3);
+				chunks_to_collide.append(&mut cposs);				
+			}
+
+			for chunk_position in chunks_to_collide {
+				if map.chunk_models.contains_key(&chunk_position) && !map.chunk_collider_handles.contains_key(&chunk_position) {
+					let entry = &map.chunk_models[&chunk_position];
+					if let Some(collider) = MapSystem::generate_chunk_collider(&render_resource, entry) {
+						let ch = spc.add_collider(&mut physics_resource, collider);
+						map.chunk_collider_handles.insert(chunk_position, ch);
+					}
+				}
+			}
+		}
+		
 	}
 }
-
-
-// pub trait InitializeMap {
-// 	fn init_map(&mut self);
-// }
-// impl InitializeMap for World {
-// 	fn init_map(&mut self) {
-// 		self.register::<MapComponent>();
-// 	}
-// }

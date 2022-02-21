@@ -74,3 +74,28 @@ impl DurationHolder {
 		
 	}
 }
+
+
+// pub trait RapierConvertable<T> {
+// 	fn to(input: T) -> T;
+// 	fn from(input: T) -> T;
+// }
+
+// impl<V> RapierConvertable<V> for [V; 3] {
+// 	fn to(mut input: [V; 3]) -> [V; 3] {
+// 		input
+// 	}
+// 	fn from(mut input: [V; 3]) -> [V; 3] {
+// 		input
+// 	}
+// }
+
+// Rapier uses a y-up coordinate system
+/// Switches y for z
+pub fn k_tofrom_rapier(mut input: nalgebra::Vector3<f32>) -> nalgebra::Vector3<f32> {
+	let y = input[1];
+	input[1] = input[2];
+	input[2] = y;
+	input
+}
+

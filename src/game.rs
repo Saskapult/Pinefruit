@@ -22,6 +22,9 @@ pub struct Game {
 	tick_dispatcher: Dispatcher<'static, 'static>,
 	last_tick: Instant,
 	entity_names_map: HashMap<Entity, String>,
+
+	marker_entity: Option<Entity>,
+	can_place_block: bool,
 }
 impl Game {
 	pub fn new(
@@ -83,8 +86,7 @@ impl Game {
 		let tick_dispatcher = DispatcherBuilder::new()
 			.with(InputSystem, "input_system", &[])
 			.with(MapSystem, "map_system", &["input_system"])
-			.with(PhysicsInitializationSystem, "physics_init", &["input_system"])
-			.with(DynamicPhysicsSystem, "dynamic_physics_system", &["input_system", "physics_init"])
+			.with(DynamicPhysicsSystem, "dynamic_physics_system", &["input_system"])
 			.with(RenderSystem, "render_system", &["input_system", "map_system", "dynamic_physics_system"])
 			.build();
 
@@ -95,90 +97,9 @@ impl Game {
 			tick_dispatcher,
 			last_tick: Instant::now(),
 			entity_names_map: HashMap::new(),
+			marker_entity: None,
+			can_place_block: true,
 		}
-	}
-
-	fn make_testing_faces(&mut self) {
-		use crate::world::*;
-		let rr = self.world.write_resource::<RenderResource>();
-
-		let xp_idx = {
-			let xp = Mesh::new(&"xp_quad".to_string())
-				.with_positions(XP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
-				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
-				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
-				.with_indices(QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
-			rr.meshes_manager.write().unwrap().insert(xp)
-		};
-		let yp_idx = {
-			let xp = Mesh::new(&"yp_quad".to_string())
-				.with_positions(YP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
-				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
-				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
-				.with_indices(REVERSE_QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
-			rr.meshes_manager.write().unwrap().insert(xp)
-		};
-		let zp_idx = {
-			let xp = Mesh::new(&"zp_quad".to_string())
-				.with_positions(ZP_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
-				.with_normals((0..4).map(|_| [1.0, 0.0, 0.0]).collect::<Vec<_>>())
-				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
-				.with_indices(QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
-			rr.meshes_manager.write().unwrap().insert(xp)
-		};
-
-		let xn_idx = {
-			let xp = Mesh::new(&"xn_quad".to_string())
-				.with_positions(XN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
-				.with_normals((0..4).map(|_| [-1.0, 0.0, 0.0]).collect::<Vec<_>>())
-				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
-				.with_indices(REVERSE_QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
-			rr.meshes_manager.write().unwrap().insert(xp)
-		};
-		let yn_idx = {
-			let xp = Mesh::new(&"yn_quad".to_string())
-				.with_positions(YN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
-				.with_normals((0..4).map(|_| [0.0, -1.0, 0.0]).collect::<Vec<_>>())
-				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
-				.with_indices(QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
-			rr.meshes_manager.write().unwrap().insert(xp)
-		};
-		let zn_idx = {
-			let xp = Mesh::new(&"zn_quad".to_string())
-				.with_positions(ZN_QUAD_VERTICES.iter().map(|v| [v[0], v[1], v[2]]).collect::<Vec<_>>())
-				.with_normals((0..4).map(|_| [0.0, 0.0, -1.0]).collect::<Vec<_>>())
-				.with_uvs(QUAD_UVS.iter().cloned().collect::<Vec<_>>())
-				.with_indices(REVERSE_QUAD_INDICES.iter().cloned().collect::<Vec<_>>());
-			rr.meshes_manager.write().unwrap().insert(xp)
-		};
-
-		drop(rr);
-
-		self.world.create_entity()
-			.with(TransformComponent::new().with_position([0.1, 0.0, 0.0].into()))
-			.with(ModelComponent::new(xp_idx, 0))
-			.build();
-		self.world.create_entity()
-			.with(TransformComponent::new().with_position([0.0, 0.1, 0.0].into()))
-			.with(ModelComponent::new(yp_idx, 0))
-			.build();
-		self.world.create_entity()
-			.with(TransformComponent::new().with_position([0.0, 0.0, 0.1].into()))
-			.with(ModelComponent::new(zp_idx, 0))
-			.build();
-
-		self.world.create_entity()
-			.with(TransformComponent::new().with_position([-0.1, 0.0, 0.0].into()))
-			.with(ModelComponent::new(xn_idx, 0))
-			.build();
-		self.world.create_entity()
-			.with(TransformComponent::new().with_position([0.0, -0.1, 0.0].into()))
-			.with(ModelComponent::new(yn_idx, 0))
-			.build();
-		self.world.create_entity()
-			.with(TransformComponent::new().with_position([0.0, 0.0, -0.1].into()))
-			.with(ModelComponent::new(zn_idx, 0))
-			.build();
 	}
 
 	pub fn setup(&mut self) {
@@ -220,7 +141,7 @@ impl Game {
 			let mut meshm = rr.meshes_manager.write().unwrap();
 
 			let (obj_models, _) = tobj::load_obj(
-				"resources/not_for_git/teapot.obj", 
+				"resources/not_for_git/bunny.obj", 
 				&tobj::LoadOptions {
 					triangulate: true,
 					single_index: true,
@@ -231,23 +152,59 @@ impl Game {
 			meshm.insert(test_mesh.clone())
 		};
 
-		{
-			let mut pr = self.world.write_resource::<PhysicsResource>();
-			pr.add_ground()
-		}
+		// {
+		// 	let mut pr = self.world.write_resource::<PhysicsResource>();
+		// 	pr.add_ground()
+		// }
 
 		// Static and dynamic teapots
 		{
-			self.world.create_entity()
-				.with(TransformComponent::new().with_position([0.0, 3.0, 0.0].into()))
-				.with(ModelComponent::new(teapot_mesh_idx, 0))
-				.with(StaticPhysicsComponent::new())
-				.build();
-			
+			let collider_shape = {
+				let rr = self.world.write_resource::<RenderResource>();
+				let mm = rr.meshes_manager.read().unwrap();
+				mm.index(teapot_mesh_idx).make_trimesh().unwrap()
+			};
+
+			// let tc = TransformComponent::new().with_position([0.0, 3.0, 0.0].into());
+			// let spc = {
+			// 	let mut pr = self.world.write_resource::<PhysicsResource>();
+			// 	let mut spc = StaticPhysicsComponent::new(
+			// 		&mut pr,
+			// 	).with_transform(
+			// 		&mut pr,
+			// 		&tc,
+			// 	);
+			// 	spc.add_collider(
+			// 		&mut pr, 
+			// 		ColliderBuilder::new(collider_shape.clone()).density(100.0).build(),
+			// 	);
+			// 	spc
+			// };
 			// self.world.create_entity()
-			// 	.with(TransformComponent::new().with_position([1.0, 10.0, 0.0].into()))
+			// 	.with(tc)
 			// 	.with(ModelComponent::new(teapot_mesh_idx, 0))
-			// 	.with(DynamicPhysicsComponent::new())
+			// 	.with(spc)
+			// 	.build();
+
+			// let tc = TransformComponent::new().with_position([5.0, 10.0, 0.0].into());
+			// let dpc = {
+			// 	let mut pr = self.world.write_resource::<PhysicsResource>();
+			// 	let mut dpc = DynamicPhysicsComponent::new(
+			// 		&mut pr,
+			// 	).with_transform(
+			// 		&mut pr,
+			// 		&tc,
+			// 	);
+			// 	dpc.add_collider(
+			// 		&mut pr, 
+			// 		ColliderBuilder::new(collider_shape.clone()).density(100.0).build(),
+			// 	);
+			// 	dpc
+			// };
+			// self.world.create_entity()
+			// 	.with(tc)
+			// 	.with(ModelComponent::new(teapot_mesh_idx, 0))
+			// 	.with(dpc)
 			// 	.build();
 		}
 
@@ -257,14 +214,18 @@ impl Game {
 				.with(CameraComponent::new())
 				.with(
 					TransformComponent::new()
-					.with_position(Vector3::new(0.0, 5.0, -5.0))
+					.with_position(Vector3::new(0.5, 5.5, 0.5))
 				)
 				.with(MovementComponent{speed: 4.0})
 				.build();
 			// Map
+			let spc = StaticPhysicsComponent::new(
+				&mut self.world.write_resource::<PhysicsResource>(),
+			);
 			self.world.create_entity()
 				.with(TransformComponent::new())
 				.with(MapComponent::new(&self.blocks_manager))
+				.with(spc)
 				.build();
 		}
 		
@@ -292,10 +253,148 @@ impl Game {
 
 			self.tick_dispatcher.dispatch(&mut self.world);
 
+			if let Some(marker_entity) = self.marker_entity {
+				let mut marker_pos = None;
+
+				let pr = self.world.write_resource::<PhysicsResource>();
+				let cameras =  self.world.read_component::<CameraComponent>();
+				let mut transforms =  self.world.write_component::<TransformComponent>();
+
+				// for (_camera, transform) in (&cameras, &transforms).join() {
+				// 	if let Some((_, hp)) = pr.ray(transform.position.into(), transform.rotation * vector![0.0, 0.0, 1.0]) {
+						
+				// 		let hp_vec = Vector3::new(hp[0], hp[1], hp[2]);// + transform.rotation * vector![0.0, 0.0, 1.0] * 0.1;
+				// 		marker_pos = Some(hp_vec);
+
+				// 		// Block placement
+				// 		let g = self.world.write_resource::<InputResource>();
+				// 		if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
+				// 			let mut maps =  self.world.write_component::<MapComponent>();
+							
+				// 			for map in (&mut maps).join() {
+				// 				let map_w_vpos = map.map.point_world_voxel(hp_vec);
+				// 				map.set_voxel(map_w_vpos, crate::world::Voxel::Block(0))
+				// 			}
+				// 		}
+						
+				// 	}
+				// }
+
+				let mut maps =  self.world.write_component::<MapComponent>();
+
+				for (_camera, transform) in (&cameras, &transforms).join() {
+					
+					for map in (&mut maps).join() {
+						let map_raypositions = map.map.voxel_ray(
+							&transform.position,
+							&(transform.rotation * vector![0.0, 0.0, 1.0]),
+							0.0,
+							25.0,
+						);
+
+						let first_block_index = map_raypositions.iter().position(|&pos| {
+							if let Some(v) = map.map.get_voxel_world(pos) {
+								match v {
+									crate::world::Voxel::Block(_) => true,
+									_ => false,
+								}
+							} else {
+								false
+							}
+						});
+						let back_block_index = match first_block_index {
+							Some(idx) => {
+								if idx > 0 {
+									Some(idx-1)
+								} else {
+									None
+								}
+							},
+							None => None,
+						};
+
+						let first_block_pos = match first_block_index {
+							Some(idx) => Some(map_raypositions[idx]),
+							None => None,
+						};
+						let back_block_pos = match back_block_index {
+							Some(idx) => Some(map_raypositions[idx]),
+							None => None,
+						};
+
+						// Block placement
+						let g = self.world.write_resource::<InputResource>();
+						// if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
+						if g.mouse_keys.contains_key(&winit::event::MouseButton::Left) {
+							if !self.can_place_block {	
+								break;
+							}
+							self.can_place_block = false;
+							
+							
+							// println!("{:#?}", &map_raypositions);
+							
+							// println!("cp: {:?}", &transform.position);
+							// let distances = map_raypositions.as_slice().chunks_exact(2).map(|v| {
+							// 	let v1 = v[0];
+							// 	let v2 = v[1];
+							// 	let dist = v1.iter().zip(v2.iter())
+							// 		.map(|(p1, p2)| p1 - p2)
+							// 		.map(|g| g.pow(2) as f32)
+							// 		.sum::<f32>();
+							// 	dist.powf(0.5)
+							// }).collect::<Vec<f32>>();
+							// println!("{:?}", distances);
+							// panic!();
+
+							if let Some(pos) = back_block_pos {
+								map.set_voxel(pos, crate::world::Voxel::Block(0))
+							}
+						} else {
+							self.can_place_block = true;
+						}
+
+						// Another block placement
+						if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
+							// The voxel the camera is in
+							let pos = map.map.point_world_voxel(&transform.position);
+							// Set it to dirt
+							map.set_voxel(pos, crate::world::Voxel::Block(0));
+						}
+
+						if let Some(pos) = back_block_pos {
+							marker_pos = Some(Vector3::new(
+								pos[0] as f32 + 0.5, 
+								pos[1] as f32 + 0.5, 
+								pos[2] as f32 + 0.5,
+							));
+						} else {
+							marker_pos = Some(Vector3::new(
+								0.5, 
+								0.5, 
+								0.5,
+							));
+						}
+
+					}
+				}
+
+				if let Some(pos) = marker_pos {
+					let marker_transform = transforms.entry(marker_entity).unwrap().or_insert(TransformComponent::new());
+					marker_transform.position = pos;
+				}
+				
+			} else {
+				self.marker_entity = Some(
+					self.world.create_entity()
+					.with(TransformComponent::new())
+					.with(ModelComponent::new(0, 0))
+					.build()
+				);
+			}			
+
 			let dur = Instant::now() - tick_st;
-
 			self.world.write_resource::<StepResource>().step_durations.record(dur);
-
 			let tps = 1.0 / dur.as_secs_f32();
 			info!("Tock! (duration {}ms, theoretical frequency: {:.2}tps)", dur.as_millis(), tps);
 		}

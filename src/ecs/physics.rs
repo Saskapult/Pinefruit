@@ -24,8 +24,7 @@ pub struct PhysicsResource {
 	pub joint_set: JointSet,
 	pub ccd_solver: CCDSolver,
 
-	pub rigid_body_handle_map: HashMap<RigidBodyHandle, Entity>,
-	pub physics_tick_durations: DurationHolder,
+	pub tick_durations: DurationHolder,
 }
 impl PhysicsResource {
 	pub fn new(
@@ -43,8 +42,7 @@ impl PhysicsResource {
 			joint_set: JointSet::new(),
 			ccd_solver: CCDSolver::new(),
 			
-			rigid_body_handle_map: HashMap::new(),
-			physics_tick_durations: DurationHolder::new(5),
+			tick_durations: DurationHolder::new(5),
 		}
 	}
 
@@ -99,7 +97,7 @@ impl PhysicsResource {
 		
 		self.query_pipeline.update(&self.island_manager, &self.rigid_body_set, &self.collider_set);
 
-		self.physics_tick_durations.record(Instant::now() - tick_st);
+		self.tick_durations.record(Instant::now() - tick_st);
 	}
 
 	pub fn add_rigid_body_with_mesh(
@@ -124,13 +122,10 @@ impl PhysicsResource {
 	}
 
 	/// Creates a new rigid body with a trimesh collider
-	pub fn add_mesh_trimesh<'a>(
+	pub fn rb_mesh_trimesh<'a>(
 		&mut self, 
-		entity: &Entity,
 		transform: &TransformComponent,
 		mesh: &mut Mesh, 
-		static_physics: &mut WriteStorage<'a, StaticPhysicsComponent>,
-		dynamic_physics: &mut WriteStorage<'a, DynamicPhysicsComponent>,
 		dynamic: bool,
 	) -> RigidBodyHandle {
 
@@ -161,10 +156,54 @@ impl PhysicsResource {
 #[storage(VecStorage)]
 pub struct StaticPhysicsComponent {
 	pub rigid_body_handle: RigidBodyHandle,
+	pub collider_handles: Vec<ColliderHandle>,
 }
 impl StaticPhysicsComponent {
-	pub fn new(rigid_body_handle: RigidBodyHandle) -> Self {
-		Self { rigid_body_handle }
+	/// Creates a new ridgid body handle
+	pub fn new(physics_resource: &mut PhysicsResource) -> Self {
+		let rigid_body = RigidBodyBuilder::new_static()
+			.build();
+		let rigid_body_handle = physics_resource.rigid_body_set.insert(rigid_body);
+		Self { 
+			rigid_body_handle,
+			collider_handles: Vec::new(),
+		}
+	}
+
+	pub fn with_transform(
+		self, 
+		physics_resource: &mut PhysicsResource, 
+		transform: &TransformComponent,
+	) -> Self {
+		let rb = &mut physics_resource.rigid_body_set[self.rigid_body_handle];
+		let axis_angle = match transform.rotation.axis_angle() {
+			Some((axis, angle)) => axis.into_inner() * angle,
+			None => Vector3::zeros(),
+		};
+		rb.set_position(Isometry3::new(transform.position, axis_angle), true);
+		self
+	}
+
+	pub fn add_collider(
+		&mut self, 
+		physics_resource: &mut PhysicsResource,
+		collider: Collider,
+	) -> ColliderHandle {
+		let collider_handle = physics_resource.collider_set.insert_with_parent(
+			collider, 
+			self.rigid_body_handle, 
+			&mut physics_resource.rigid_body_set,
+		);
+		self.collider_handles.push(collider_handle);
+		collider_handle
+	}
+}
+impl From<RigidBodyHandle> for StaticPhysicsComponent {
+	fn from(item: RigidBodyHandle) -> Self {
+		Self { 
+			rigid_body_handle: item,
+			collider_handles: Vec::new(),
+		}
 	}
 }
 
@@ -175,115 +214,54 @@ impl StaticPhysicsComponent {
 #[storage(VecStorage)]
 pub struct DynamicPhysicsComponent {
 	pub rigid_body_handle: RigidBodyHandle,
+	pub collider_handles: Vec<ColliderHandle>,
 }
 impl DynamicPhysicsComponent {
-	pub fn new(rigid_body_handle: RigidBodyHandle) -> Self {
-		Self { rigid_body_handle }
+	/// Creates a new rigid body handle
+	pub fn new(physics_resource: &mut PhysicsResource) -> Self {
+		let rigid_body = RigidBodyBuilder::new_dynamic()
+			.additional_mass(1.0)
+			.build();
+		let rigid_body_handle = physics_resource.rigid_body_set.insert(rigid_body);
+		Self { 
+			rigid_body_handle,
+			collider_handles: Vec::new(),
+		}
 	}
-}
 
-
-/// Marks an entity as needing to be physically initialized
-#[derive(Component, Debug)]
-#[storage(VecStorage)]
-pub struct PhysicsInitializationComponent {
-	dynamic: bool,
-}
-impl PhysicsInitializationComponent {
-	pub fn new(dynamic: bool) -> Self {
-		Self { dynamic }
-	}
-}
-
-
-
-/// Creates colliders for new physics objects
-pub struct PhysicsInitializationSystem;
-impl PhysicsInitializationSystem {
-	fn add_model_with_trimesh(
-		physics_resource: &mut PhysicsResource,
-		render_resource: &RenderResource,
+	pub fn with_transform(
+		self, 
+		physics_resource: &mut PhysicsResource, 
 		transform: &TransformComponent,
-		model: &ModelComponent,
-		dynamic: bool,
-	) -> RigidBodyHandle {
-		// Rigid body
+	) -> Self {
+		let rb = &mut physics_resource.rigid_body_set[self.rigid_body_handle];
 		let axis_angle = match transform.rotation.axis_angle() {
 			Some((axis, angle)) => axis.into_inner() * angle,
 			None => Vector3::zeros(),
 		};
-		let rigid_body = match dynamic {
-			true => RigidBodyBuilder::new_dynamic().additional_mass(1.0),
-			false => RigidBodyBuilder::new_static(),
-		}.position(Isometry3::new(transform.position, axis_angle)).build();
-		let rigid_body_handle = physics_resource.rigid_body_set.insert(rigid_body);
+		rb.set_position(Isometry3::new(transform.position, axis_angle), true);
+		self
+	}
 
-		// Collider
-		let mm = render_resource.meshes_manager.read().unwrap();
-		let mesh = mm.index(model.mesh_idx);
-		let collider_shape = mesh.make_convexhull().unwrap();
-		let collider = ColliderBuilder::new(collider_shape)
-			.density(100.0)
-			.build();
-		let _collider_handle = physics_resource.collider_set.insert_with_parent(
+	pub fn add_collider(
+		&mut self, 
+		physics_resource: &mut PhysicsResource,
+		collider: Collider,
+	) -> ColliderHandle {
+		let collider_handle = physics_resource.collider_set.insert_with_parent(
 			collider, 
-			rigid_body_handle, 
+			self.rigid_body_handle, 
 			&mut physics_resource.rigid_body_set,
 		);
-
-		rigid_body_handle
+		self.collider_handles.push(collider_handle);
+		collider_handle
 	}
 }
-impl<'a> System<'a> for PhysicsInitializationSystem {
-	type SystemData = (
-		Entities<'a>,
-		WriteStorage<'a, DynamicPhysicsComponent>,
-		WriteStorage<'a, StaticPhysicsComponent>,
-		WriteStorage<'a, PhysicsInitializationComponent>,
-		ReadStorage<'a, TransformComponent>,
-		ReadStorage<'a, ModelComponent>,
-		WriteExpect<'a, PhysicsResource>,
-		ReadExpect<'a, RenderResource>,
-	);
-
-	fn run(
-		&mut self, 
-		(
-			entities,
-			mut dynamic_objects,
-			mut static_objects,
-			mut init_objects,
-			transforms,
-			models,
-			mut physics_resource,
-			render_resource,
-		): Self::SystemData,
-	) { 
-		// Init for entity with transform and model
-		for (entity, init_tag, transform, model) in (&entities, &mut init_objects, &transforms, &models).join() {
-			info!("Initializing physics component for entity {:?} (dynamic: {})", entity, init_tag.dynamic);
-			init_objects.remove(entity);
-			let rbh = PhysicsInitializationSystem::add_model_with_trimesh(
-				&mut physics_resource,
-				&render_resource,
-				transform,
-				model,
-				init_tag.dynamic,
-			);
-			physics_resource.rigid_body_handle_map.insert(rbh, entity);
-			if init_tag.dynamic {
-				dynamic_objects.insert(entity, DynamicPhysicsComponent::new(rbh));
-				let prev = physics_resource.rigid_body_handle_map.insert(rbh, entity);
-				if prev.is_some() {
-					warn!("Overwrote dynamic physics component for entity {entity:?}");
-				}
-			} else {
-				static_objects.insert(entity, StaticPhysicsComponent::new(rbh));
-				let prev = physics_resource.rigid_body_handle_map.insert(rbh, entity);
-				if prev.is_some() {
-					warn!("Overwrote static physics component for entity {entity:?}");
-				}
-			}
+impl From<RigidBodyHandle> for DynamicPhysicsComponent {
+	fn from(item: RigidBodyHandle) -> Self {
+		Self { 
+			rigid_body_handle: item,
+			collider_handles: Vec::new(),
 		}
 	}
 }

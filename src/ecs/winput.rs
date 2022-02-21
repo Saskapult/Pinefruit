@@ -131,14 +131,14 @@ pub struct InputResource {
 	// The press percentages for all keys pressed during a timestep
 	// It is possible for a percentage to be greater than 100%
 	// This happends if startt is after the earliest queue value
-	board_keys: HashMap<VirtualKeyCode, f32>,
-	board_presscache: Vec<VirtualKeyCode>,
-	mouse_keys: HashMap<MouseButton, f32>,
-	mouse_presscache: Vec<MouseButton>,
-	mx: f64,
-	my: f64,
-	mdx: f64,
-	mdy: f64,
+	pub board_keys: HashMap<VirtualKeyCode, f32>,
+	pub board_presscache: Vec<VirtualKeyCode>,
+	pub mouse_keys: HashMap<MouseButton, f32>,
+	pub mouse_presscache: Vec<MouseButton>,
+	pub mx: f64,
+	pub my: f64,
+	pub mdx: f64,
+	pub mdy: f64,
 	// controlmap: HashMap<VirtualKeyCode, (some kind of enum option?)>
 }
 impl InputResource {
