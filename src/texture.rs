@@ -9,11 +9,12 @@ pub struct Texture {
 	pub data: DynamicImage,
 }
 impl Texture {
-	pub fn new(name: &String, path: &PathBuf) -> Self {
+	pub fn new(name: &String, path: impl Into<PathBuf>) -> Self {
+		let path = path.into();
 		Self {
 			name: name.clone(),
 			path: Some(path.clone()),
-			data: image::open(path).expect("Failed to open file"),
+			data: image::open(path.clone()).expect("Failed to open file"),
 		}
 	}
 }

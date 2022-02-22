@@ -1,4 +1,4 @@
-use std::{path::PathBuf, collections::HashMap};
+use std::{path::{PathBuf, Path}, collections::HashMap};
 use serde::{Serialize, Deserialize};
 use anyhow::*;
 use crate::texture::*;
@@ -74,10 +74,11 @@ impl MaterialManager {
 
 /// Loads materials from a file along with their assets
 pub fn load_materials_file(
-	path: PathBuf,
+	path: impl AsRef<Path>,
 	tm: &mut TextureManager, 
 	mm: &mut MaterialManager, 
 ) -> Result<()> {
+	let path = path.as_ref();
 	info!("Reading materials file {:?}", &path);
 
 	let canonical_path = path.canonicalize()

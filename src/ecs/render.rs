@@ -190,7 +190,7 @@ impl RenderSystem {
 					world[1] % 16,
 					world[2] % 16,
 				];
-				vpos.iter_mut().zip([16;3].iter()).for_each(|(v, cs)| {
+				vpos.iter_mut().zip([16; 3].iter()).for_each(|(v, cs)| {
 					if *v < 0 {
 						*v = *cs as i32 + *v;
 					}
@@ -223,6 +223,12 @@ impl RenderSystem {
 				// if ui.button("Clickme").clicked() {
 				// 	panic!("Button click");
 				// }
+			});
+			// egui::Area::new("centre cursor panel").interactable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(egui_ctx, |ui| { 
+			// 	ui.label(format!("X"));
+			// });
+			egui::TopBottomPanel::bottom("selected block panel").show(egui_ctx, |ui| { 
+				ui.label(format!("Selected: "));
 			});
 		});
 

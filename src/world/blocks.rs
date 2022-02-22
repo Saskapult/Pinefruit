@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
 use anyhow::{Result, Context};
@@ -18,11 +19,12 @@ pub struct BlockSpecification {
 
 
 pub fn load_blocks_file(
-	path: &PathBuf,
+	path: impl AsRef<Path>,
 	bm: &mut BlockManager,
 	tm: &mut TextureManager, 
 	mm: &mut MaterialManager, 
 ) -> Result<()> {
+	let path  = path.as_ref();
 	info!("Reading blocks file {:?}", path);
 
 	let canonical_path = path.canonicalize()

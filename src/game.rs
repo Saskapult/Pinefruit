@@ -112,7 +112,7 @@ impl Game {
 
 			// Load some materials
 			load_materials_file(
-				PathBuf::from("resources/materials/kmaterials.ron"),
+				"resources/materials/kmaterials.ron",
 				&mut texm,
 				&mut matm,
 			).unwrap();
@@ -127,7 +127,7 @@ impl Game {
 			let mut tm = rr.textures_manager.write().unwrap();
 
 			crate::world::blocks::load_blocks_file(
-				&PathBuf::from("resources/kblocks.ron"),
+				"resources/kblocks.ron",
 				&mut bm,
 				&mut tm,
 				&mut mm,
@@ -322,7 +322,7 @@ impl Game {
 							None => None,
 						};
 
-						// Block placement
+						// Casted block placement
 						let g = self.world.write_resource::<InputResource>();
 						// if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
 						if g.mouse_keys.contains_key(&winit::event::MouseButton::Left) {
@@ -331,21 +331,19 @@ impl Game {
 							}
 							self.can_place_block = false;
 							
+							// println!("{:?}", &map_raypositions);
 							
-							// println!("{:#?}", &map_raypositions);
-							
-							// println!("cp: {:?}", &transform.position);
-							// let distances = map_raypositions.as_slice().chunks_exact(2).map(|v| {
-							// 	let v1 = v[0];
-							// 	let v2 = v[1];
-							// 	let dist = v1.iter().zip(v2.iter())
-							// 		.map(|(p1, p2)| p1 - p2)
-							// 		.map(|g| g.pow(2) as f32)
-							// 		.sum::<f32>();
-							// 	dist.powf(0.5)
-							// }).collect::<Vec<f32>>();
-							// println!("{:?}", distances);
-							// panic!();
+							// Make sure the line has no missing segments (in case I did it wrong)
+							let distances = map_raypositions.as_slice().chunks_exact(2).map(|v| {
+								let v1 = v[0];
+								let v2 = v[1];
+								let dist = v1.iter().zip(v2.iter())
+									.map(|(p1, p2)| p1 - p2)
+									.map(|g| g.pow(2) as f32)
+									.sum::<f32>();
+								dist.powf(0.5)
+							}).collect::<Vec<f32>>();
+							assert!(distances.iter().all(|&v| v == 1.0));
 
 							if let Some(pos) = back_block_pos {
 								map.set_voxel(pos, crate::world::Voxel::Block(0))
@@ -354,7 +352,7 @@ impl Game {
 							self.can_place_block = true;
 						}
 
-						// Another block placement
+						// Positional block placement
 						if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
 							// The voxel the camera is in
 							let pos = map.map.point_world_voxel(&transform.position);
@@ -362,6 +360,7 @@ impl Game {
 							map.set_voxel(pos, crate::world::Voxel::Block(0));
 						}
 
+						// Update marker position
 						if let Some(pos) = back_block_pos {
 							marker_pos = Some(Vector3::new(
 								pos[0] as f32 + 0.5, 
