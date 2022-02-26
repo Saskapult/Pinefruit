@@ -24,7 +24,7 @@ pub struct Game {
 	entity_names_map: HashMap<Entity, String>,
 
 	marker_entity: Option<Entity>,
-	can_place_block: bool,
+	can_modify_block: bool,
 }
 impl Game {
 	pub fn new(
@@ -98,7 +98,7 @@ impl Game {
 			last_tick: Instant::now(),
 			entity_names_map: HashMap::new(),
 			marker_entity: None,
-			can_place_block: true,
+			can_modify_block: true,
 		}
 	}
 
@@ -322,35 +322,42 @@ impl Game {
 							None => None,
 						};
 
-						// Casted block placement
 						let g = self.world.write_resource::<InputResource>();
-						// if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
-						if g.mouse_keys.contains_key(&winit::event::MouseButton::Left) {
-							if !self.can_place_block {	
-								break;
-							}
-							self.can_place_block = false;
-							
-							// println!("{:?}", &map_raypositions);
-							
-							// Make sure the line has no missing segments (in case I did it wrong)
-							let distances = map_raypositions.as_slice().chunks_exact(2).map(|v| {
-								let v1 = v[0];
-								let v2 = v[1];
-								let dist = v1.iter().zip(v2.iter())
-									.map(|(p1, p2)| p1 - p2)
-									.map(|g| g.pow(2) as f32)
-									.sum::<f32>();
-								dist.powf(0.5)
-							}).collect::<Vec<f32>>();
-							assert!(distances.iter().all(|&v| v == 1.0));
 
-							if let Some(pos) = back_block_pos {
-								map.set_voxel(pos, crate::world::Voxel::Block(0))
+						// Make sure the line has no missing segments (in case I did it wrong)
+						let distances = map_raypositions.as_slice().chunks_exact(2).map(|v| {
+							let v1 = v[0];
+							let v2 = v[1];
+							let dist = v1.iter().zip(v2.iter())
+								.map(|(p1, p2)| p1 - p2)
+								.map(|g| g.pow(2) as f32)
+								.sum::<f32>();
+							dist.powf(0.5)
+						}).collect::<Vec<f32>>();
+						assert!(distances.iter().all(|&v| v == 1.0));
+						
+						if self.can_modify_block {	
+							// Casted block placement
+							if g.mouse_keys.contains_key(&winit::event::MouseButton::Right) {
+								self.can_modify_block = false;
+
+								if let Some(pos) = back_block_pos {
+									map.set_voxel(pos, crate::world::Voxel::Block(0))
+								}
 							}
-						} else {
-							self.can_place_block = true;
+
+							// Casted block removal
+							if g.mouse_keys.contains_key(&winit::event::MouseButton::Left) {
+								self.can_modify_block = false;
+
+								if let Some(pos) = first_block_pos {
+									map.set_voxel(pos, crate::world::Voxel::Empty)
+								}
+							}
+						} else if !(g.mouse_keys.contains_key(&winit::event::MouseButton::Left) || g.mouse_keys.contains_key(&winit::event::MouseButton::Right)) {
+							self.can_modify_block = true;
 						}
+						
 
 						// Positional block placement
 						if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {

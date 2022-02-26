@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use serde::{Serialize, Deserialize};
-use anyhow::{Result, Context};
+use anyhow::*;
 use crate::material::*;
 use crate::texture::*;
+use crate::world::*;
 
 
 
@@ -148,7 +149,72 @@ impl BlockManager {
 			None
 		}
 	}
+
+	/// Creates an encoding map for a run-length encoding
+	pub fn map_encoding(&self, rle: &Vec<(usize, u32)>) -> Vec<String> {
+		let mut uniques = rle.iter().map(|&(v, _)| v).collect::<Vec<_>>();
+		uniques.sort();
+		uniques.dedup();
+
+		uniques.iter().map(|&bid| self.blocks[bid].name.clone()).collect::<Vec<_>>()
+	}
+
+	/// Creates a decoding map
+	// Todo: let it make errors
+	pub fn map_decoding(&self, string_mapping: &Vec<String>) -> Result<Vec<usize>> {
+		Ok(
+			string_mapping.iter()
+				.map(|s| self.index_name(s).unwrap())
+				.collect::<Vec<_>>()
+		)
+	}
 }
 
 
 
+#[derive(Debug)]
+pub enum BlockModReason {
+	WorldGenSet(Voxel),
+	Explosion(f32),
+}
+
+
+
+#[derive(Debug)]
+pub struct ChunkBlockMod {
+	pub voxel_chunk_position: [i32; 3],
+	pub reason: BlockModReason,
+}
+pub type BlockMods = HashMap<[i32; 3], Vec<ChunkBlockMod>>;
+
+
+
+/// Appends a to b, leaving b empty
+pub fn merge_blockmods(
+	a: &mut BlockMods, 
+	b: BlockMods,
+) {
+	for (p, mut q) in b {
+		if a.contains_key(&p) {
+			let a_q = a.get_mut(&p).unwrap();
+			a_q.append(&mut q);
+		} else {
+			a.insert(p, q);
+		}
+	}
+}
+
+
+
+pub fn blockmods_insert(
+	a: &mut BlockMods, 
+	chunk_position: [i32; 3],
+	bm: ChunkBlockMod,
+) {
+	if a.contains_key(&chunk_position) {
+		let q = a.get_mut(&chunk_position).unwrap();
+		q.push(bm);
+	} else {
+		a.insert(chunk_position, vec![bm]);
+	}
+}

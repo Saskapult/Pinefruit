@@ -15,6 +15,13 @@
 		sounds: {},
 	), 
 	(
+		name: "cobblestone",
+		faces: {
+			"every": "materials/kmaterials.ron::cobblestone",
+		},
+		sounds: {},
+	), 
+	(
 		name: "sand",
 		faces: {
 			"every": "materials/kmaterials.ron::sand",
@@ -30,6 +37,25 @@
 			"front": "materials/kmaterials.ron::grass_side",
 			"back": "materials/kmaterials.ron::grass_side",
 			"down": "materials/kmaterials.ron::dirt",
+		},
+		sounds: {},
+	), 
+	(
+		name: "leaves",
+		faces: {
+			"every": "materials/kmaterials.ron::leaves",
+		},
+		sounds: {},
+	), 
+	(
+		name: "log",
+		faces: {
+			"up": "materials/kmaterials.ron::log_top",
+			"left": "materials/kmaterials.ron::log_side",
+			"right": "materials/kmaterials.ron::log_side",
+			"front": "materials/kmaterials.ron::log_side",
+			"back": "materials/kmaterials.ron::log_side",
+			"down": "materials/kmaterials.ron::log_top",
 		},
 		sounds: {},
 	), 

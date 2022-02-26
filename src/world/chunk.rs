@@ -1,15 +1,25 @@
+use crate::world::*;
 
 
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Voxel {
 	Empty,
 	Block(usize),
 }
+impl Voxel {
+	pub fn is_empty(&self) -> bool {
+		match self {
+			Voxel::Empty => true,
+			_ => false,
+		}
+	}
+}
 
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chunk {
 	pub size: [u32; 3],
 	pub contents: Vec<Voxel>,
@@ -55,30 +65,97 @@ impl Chunk {
 		todo!()
 	}
 
-	fn rle(&self) -> String {
+	/// Creates a run-length encoding of the chunk.
+	/// Does NOT create a mapping for this, uses raw block ids.
+	fn rle(&self) -> Vec<(usize, u32)> {
 		let mut runs = Vec::new(); // (id, length)
-		let mut vox = self.contents[0];
+		let mut last_voxel = self.contents[0];
 		let mut len = 1;
-		for voxel in &self.contents[1..] {
-			if *voxel != vox {
-				let vid = match *voxel {
+		self.contents[1..].iter().for_each(|&voxel| {
+			if voxel == last_voxel {
+				len += 1;
+			} else {
+				let vid = match last_voxel {
 					Voxel::Empty => 0,
 					Voxel::Block(bid) => bid+1,
 				};
 				runs.push((vid, len));
-				vox = *voxel;
+				last_voxel = voxel;
 				len = 1;
-			} else {
-				len += 1;
 			}
-		}
-		todo!()
+		});
+		// Add the last bit
+		let vid = match last_voxel {
+			Voxel::Empty => 0,
+			Voxel::Block(bid) => bid+1,
+		};
+		runs.push((vid, len));
+
+		runs
 	}
 	
-	fn rld(&mut self, _rle: String) {
-		todo!()
+	/// Decodes self from a run-length encoding.
+	/// Like rle, it does NOT use mappings, instead using raw ids.
+	fn rld(mut self, rle: &Vec<(usize, u32)>) -> Self {
+		let mut voxel_position = 0;
+		rle.iter().for_each(|&(id, length)| {
+			let voxel = match id == 0 {
+				true => Voxel::Empty,
+				false => Voxel::Block(id - 1),
+			};
+			(0..length).for_each(|_| {
+				self.contents[voxel_position] = voxel;
+				voxel_position += 1;
+			});
+		});
+		self
+	}
+
+	pub fn carve(self, self_position: [i32; 3], carver: &impl Carver) -> Self {
+		carver.carve_chunk(self_position, self)
+	}
+
+	pub fn base(self, self_position: [i32; 3], base_generator: &impl BaseGenerator, bm: &BlockManager) -> Self {
+		base_generator.chunk_base(self_position, self, bm)
 	}
 }
 
 
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+	use rand::prelude::*;
+
+	fn randomize_chunk(mut chunk: Chunk) -> Chunk {
+		let mut rng = thread_rng();
+		for i in 0..chunk.size[0] {
+			for j in 0..chunk.size[1] {
+				for k in 0..chunk.size[2] {
+					let rn = (rng.gen::<f32>() * 8.0) as usize;
+					let voxel = match rn == 0 {
+						true => Voxel::Empty,
+						false => Voxel::Block(rn -1),
+					};
+					chunk.set_voxel([i as i32, j as i32, k as i32], voxel)
+				}
+			}
+		}
+		chunk
+	}
+
+    #[test]
+    fn test_encode_decode() {
+		const CHUNKSIZE: [u32; 3] = [16, 16, 16];
+
+        let chunk1 = randomize_chunk(Chunk::new(CHUNKSIZE));
+		let rle = chunk1.rle();
+		let chunk2 = Chunk::new(CHUNKSIZE).rld(&rle);
+
+		// println!("{:?}", &chunk1.contents[chunk1.contents.len()-5..]);
+		// println!("[(id, len)] = {:?}", &rle[rle.len()-5..]);
+		// println!("{:?}",  &chunk2.contents[chunk2.contents.len()-5..]);
+
+        assert_eq!(chunk1, chunk2);
+    }
+}

@@ -147,6 +147,17 @@ impl PhysicsResource {
 
 		rigid_body_handle
 	}
+
+	// Borrow checker hates if self if physics_resource
+	// I don't understand why
+	pub fn remove_collider(&mut self, ch: ColliderHandle) {
+		self.collider_set.remove(
+			ch, 
+			&mut self.island_manager, 
+			&mut self.rigid_body_set, 
+			false,
+		);
+	}
 }
 
 

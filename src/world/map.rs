@@ -11,7 +11,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum MapError {
-	#[error("hey this chunk isnt loaded")]
+	#[error("hey this chunk isn't loaded")]
 	ChunkUnloaded,
 }
 
@@ -22,6 +22,7 @@ pub struct Map {
 	chunks: HashMap<[i32; 3], Chunk>,
 	pub chunk_dimensions: [u32; 3],
 	blocks: Arc<RwLock<BlockManager>>,
+	blockmods: BlockMods,
 }
 impl Map {
 	pub fn new(chunk_dimensions: [u32; 3], blockmanager: &Arc<RwLock<BlockManager>>) -> Self {
@@ -29,26 +30,51 @@ impl Map {
 			chunks: HashMap::new(), 
 			chunk_dimensions, 
 			blocks: blockmanager.clone(),
+			blockmods: HashMap::new(), 
+		}
+	}
+
+	pub fn apply_chunkblockmods(&mut self, block_mods: BlockMods) {
+		for (cpos, bms) in block_mods {
+			if let Some(c) = self.chunk_mut(cpos) {
+				for bm in bms {
+					match bm.reason {
+						BlockModReason::WorldGenSet(v) => c.set_voxel(bm.voxel_chunk_position, v),
+						_ => todo!(),
+					}
+				}
+			}
 		}
 	}
 
 	pub fn generate(&mut self) {
-		let bm = &self.blocks.read().unwrap();
+		let bm = self.blocks.read().unwrap();
 		
 		let tgen = TerrainGenerator::new(0);
+		let carver = WorleyCarver::new(0);
 
 		for cx in -4..4 {
 			for cy in -1..2 {
 				for cz in -4..4 {
-					let chunk = tgen.generate_chunk(
-						[cx, cy, cz], 
-						Chunk::new(self.chunk_dimensions),
-						&bm,
-					);
+					let chunk = Chunk::new(self.chunk_dimensions)
+						.base([cx, cy, cz], &tgen, &bm);
+					//	.carve([cx, cy, cz], &carver);
+					
 					self.chunks.insert([cx as i32, cy as i32, cz as i32], chunk);
 				}
 			}
 		}
+
+		let mut grassify_mods = BlockMods::new();
+		for cx in -4..4 {
+			for cy in -1..2 {
+				for cz in -4..4 {
+					merge_blockmods(&mut grassify_mods, tgen.grassify_3d([cx, cy, cz], &self, &bm));
+				}
+			}
+		}
+		drop(bm);
+		self.apply_chunkblockmods(grassify_mods);
 
 	}
 
@@ -263,6 +289,7 @@ impl Map {
 		world_voxel_pos
 	}
 
+	// Todo: return the exact hit position
 	// Todo: return the normal as well
 	// Todo: turn it into an iterator
 	pub fn voxel_ray(
@@ -274,6 +301,8 @@ impl Map {
 	) -> Vec<[i32; 3]> {
 
 		// https://stackoverflow.com/questions/12367071/how-do-i-initialize-the-t-variables-in-a-fast-voxel-traversal-algorithm-for-ray
+		// 1.3 -> 0.3
+		// -1.7 -> 0.3
 		fn frac(f: f32) -> f32 {
 			if f > 0.0 { 
 				f.fract()
@@ -309,6 +338,7 @@ impl Map {
 
 		// The change in t when taking a step (always positive)
 		// How far in terms of t we can travel before reaching another voxel in (direction)
+		// Todo: account for zeros
 		let t_delta_x = 1.0 / dx.abs();
 		let t_delta_y = 1.0 / dy.abs();
 		let t_delta_z = 1.0 / dz.abs();
@@ -317,16 +347,17 @@ impl Map {
 		// let mut t_max_x = intbound(origin[0], dx);
 		// let mut t_max_y = intbound(origin[1], dy);
 		// let mut t_max_z = intbound(origin[2], dz);
-		let mut t_max_x = t_delta_x * (1.0 - frac(origin[0]));
-		let mut t_max_y = t_delta_y * (1.0 - frac(origin[1]));
-		let mut t_max_z = t_delta_z * (1.0 - frac(origin[2]));
+		let mut t_max_x = t_delta_x * frac(origin[0]);
+		let mut t_max_y = t_delta_y * frac(origin[1]);
+		let mut t_max_z = t_delta_z * frac(origin[2]);
 
 		if t_delta_x == 0.0 && t_delta_y == 0.0 && t_delta_z == 0.0 {
 			panic!()
 		}
 
+		let mut t = 0.0;
 		let mut results = Vec::new();
-		while t_max_x < t_max && t_max_y < t_max && t_max_z < t_max {
+		while t < t_max {
 			results.push([vx, vy, vz]);
 
 			if t_max_x < t_max_y {
@@ -335,10 +366,12 @@ impl Map {
 					// Closer to x boundary than z, closest to x boundary
 					vx += v_step_x;
 					t_max_x += t_delta_x;
+					t += t_delta_x;
 				} else {
 					// Closer to z than x, closest to z
 					vz += v_step_z;
 					t_max_z += t_delta_z;
+					t += t_delta_z;
 				}
 			} else {
 				// Closer to y boundary than x
@@ -346,10 +379,12 @@ impl Map {
 					// Closer to y boundary than z, closest to y boundary
 					vy += v_step_y;
 					t_max_y += t_delta_y;
+					t += t_delta_y;
 				} else {
 					// Closer to z than y, closest to z
 					vz += v_step_z;
 					t_max_z += t_delta_z;
+					t += t_delta_z;
 				}
 			}
 		}

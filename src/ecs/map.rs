@@ -158,38 +158,36 @@ impl<'a> System<'a> for MapSystem {
 		): Self::SystemData,
 	) { 
 		// Model loading
+		let model_radius = 3;
 		for map_c in (&mut maps).join() {
 			
 			// Find all chunks which should be displayed
 			let mut chunks_to_show = Vec::new();
 			for (_, transform_c) in (&cameras, &transforms).join() {
 				let camera_chunk = map_c.map.point_chunk(&transform_c.position);
-				let mut cposs = map_c.map.chunks_sphere(camera_chunk, 3);
+				let mut cposs = map_c.map.chunks_sphere(camera_chunk, model_radius);
 				chunks_to_show.append(&mut cposs);				
 			}
 
-			// // Unload some chunks
-			// let mut chunks_to_remove = Vec::new();
-			// for chunk_position in map_c.chunk_models.keys() {
-			// 	let mut should_remove = true;
-			// 	for (_, transform_c) in (&camera, &transform).join() {
-			// 		let camera_chunk = map_c.map.point_chunk(transform_c.position);
-			// 		should_remove &= Map::within_chunks_sphere(*chunk_position, camera_chunk, 5+1);
-			// 		if !should_remove {
-			// 			break
-			// 		}
-			// 	}
-			// 	if should_remove {
-			// 		chunks_to_remove.push(*chunk_position)
-			// 	}
-			// }
-			// for chunk_position in chunks_to_remove {
-			// 	if let Some(_cme) = map_c.chunk_models.remove(&chunk_position) {
-			// 		// Todo: unload mesh and all that
-			// 	}
-			// }
+			// Unload some models
+			let mut chunks_to_remove = Vec::new();
+			for chunk_position in map_c.chunk_models.keys() {
+				// If the chunk is not used for any camera
+				let should_remove = (&cameras, &transforms).join().any(|(_, transform)| {
+					let camera_chunk = map_c.map.point_chunk(&transform.position);
+					!Map::within_chunks_sphere(*chunk_position, camera_chunk, model_radius+1)
+				});
+				if should_remove {
+					chunks_to_remove.push(*chunk_position)
+				}
+			}
+			for chunk_position in chunks_to_remove {
+				if let Some(_cme) = map_c.chunk_models.remove(&chunk_position) {
+					// Todo: unload mesh and all that
+				}
+			}
 
-			// Load some chunks
+			// Load some models
 			for chunk_position in chunks_to_show {
 				if map_c.chunk_models.contains_key(&chunk_position) {
 					match map_c.chunk_models[&chunk_position] {
@@ -208,13 +206,32 @@ impl<'a> System<'a> for MapSystem {
 		}
 
 		// Collider loading
+		let collider_radius = 3;
 		for (map, spc) in (&mut maps, &mut static_objects).join() {
 			// Find all chunks which should have colliders
 			let mut chunks_to_collide = Vec::new();
 			for (_, transform_c) in (&cameras, &transforms).join() {
 				let camera_chunk = map.map.point_chunk(&transform_c.position);
-				let mut cposs = map.map.chunks_sphere(camera_chunk, 3);
+				let mut cposs = map.map.chunks_sphere(camera_chunk, collider_radius);
 				chunks_to_collide.append(&mut cposs);				
+			}
+
+			// Unload some colliders
+			let mut chunks_to_remove = Vec::new();
+			for chunk_position in map.chunk_models.keys() {
+				// If the chunk is not used for any camera
+				let should_remove = (&cameras, &transforms).join().any(|(_, transform)| {
+					let camera_chunk = map.map.point_chunk(&transform.position);
+					!Map::within_chunks_sphere(*chunk_position, camera_chunk, collider_radius+1)
+				});
+				if should_remove {
+					chunks_to_remove.push(*chunk_position)
+				}
+			}
+			for chunk_position in chunks_to_remove {
+				if let Some(ch) = map.chunk_collider_handles.remove(&chunk_position) {
+					physics_resource.remove_collider(ch);
+				}
 			}
 
 			for chunk_position in chunks_to_collide {
