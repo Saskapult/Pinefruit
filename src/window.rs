@@ -558,12 +558,6 @@ impl WindowManager {
 					// My input stuff
 					match window_event {
 						WindowEvent::KeyboardInput {input, ..} => {
-							// If the cursor is not inside of this window don't register the input
-							// Todo: Still register key releases and esc
-							if !window.cursor_inside {
-								continue
-							}
-
 							if let Some(key) = input.virtual_keycode {
 								
 								// Make sure we are always able to free the cursor
@@ -579,6 +573,10 @@ impl WindowManager {
 
 								match input.state {
 									ElementState::Pressed => {
+										// If the cursor is not inside of this window don't register the input
+										if !window.cursor_inside {
+											continue
+										}
 										// If this button was not already pressed, record the pressing
 										if !board_pressedmap.contains_key(&key) {
 											board_pressedmap.insert(key, ts);

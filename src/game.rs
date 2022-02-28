@@ -247,8 +247,6 @@ impl Game {
 
 			let tick_st = Instant::now();
 
-			self.tick_dispatcher.dispatch(&mut self.world);
-
 			// Ray casting and marker entity pseudo-system
 			{
 				// Set up/retrieve marker entity
@@ -378,6 +376,8 @@ impl Game {
 					marker_transform.position = pos;
 				}
 			}
+
+			self.tick_dispatcher.dispatch(&mut self.world);
 			
 			self.render_cameras();
 

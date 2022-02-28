@@ -67,7 +67,7 @@ impl Chunk {
 
 	/// Creates a run-length encoding of the chunk.
 	/// Does NOT create a mapping for this, uses raw block ids.
-	fn rle(&self) -> Vec<(usize, u32)> {
+	pub fn rle(&self) -> Vec<(usize, u32)> {
 		let mut runs = Vec::new(); // (id, length)
 		let mut last_voxel = self.contents[0];
 		let mut len = 1;
@@ -96,7 +96,7 @@ impl Chunk {
 	
 	/// Decodes self from a run-length encoding.
 	/// Like rle, it does NOT use mappings, instead using raw ids.
-	fn rld(mut self, rle: &Vec<(usize, u32)>) -> Self {
+	pub fn rld(mut self, rle: &Vec<(usize, u32)>) -> Self {
 		let mut voxel_position = 0;
 		rle.iter().for_each(|&(id, length)| {
 			let voxel = match id == 0 {
@@ -118,44 +118,4 @@ impl Chunk {
 	pub fn base(self, self_position: [i32; 3], base_generator: &impl BaseGenerator, bm: &BlockManager) -> Self {
 		base_generator.chunk_base(self_position, self, bm)
 	}
-}
-
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-	use rand::prelude::*;
-
-	fn randomize_chunk(mut chunk: Chunk) -> Chunk {
-		let mut rng = thread_rng();
-		for i in 0..chunk.size[0] {
-			for j in 0..chunk.size[1] {
-				for k in 0..chunk.size[2] {
-					let rn = (rng.gen::<f32>() * 8.0) as usize;
-					let voxel = match rn == 0 {
-						true => Voxel::Empty,
-						false => Voxel::Block(rn -1),
-					};
-					chunk.set_voxel([i as i32, j as i32, k as i32], voxel)
-				}
-			}
-		}
-		chunk
-	}
-
-    #[test]
-    fn test_encode_decode() {
-		const CHUNKSIZE: [u32; 3] = [16, 16, 16];
-
-        let chunk1 = randomize_chunk(Chunk::new(CHUNKSIZE));
-		let rle = chunk1.rle();
-		let chunk2 = Chunk::new(CHUNKSIZE).rld(&rle);
-
-		// println!("{:?}", &chunk1.contents[chunk1.contents.len()-5..]);
-		// println!("[(id, len)] = {:?}", &rle[rle.len()-5..]);
-		// println!("{:?}",  &chunk2.contents[chunk2.contents.len()-5..]);
-
-        assert_eq!(chunk1, chunk2);
-    }
 }

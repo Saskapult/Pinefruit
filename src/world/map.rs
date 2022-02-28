@@ -215,7 +215,7 @@ impl Map {
 
 	pub fn get_voxel_world(&mut self, world_coords: [i32; 3]) -> Option<Voxel> {
 		let (cpos, cvpos) = self.world_chunk_voxel(world_coords);
-		debug!("world {:?} -> chunk {:?} voxel {:?}", &world_coords, &cpos, &cvpos);
+		// debug!("world {:?} -> chunk {:?} voxel {:?}", &world_coords, &cpos, &cvpos);
 		if let Some(chunk) = self.chunk(cpos) {
 			Some(chunk.get_voxel(cvpos))
 		} else {

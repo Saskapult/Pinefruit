@@ -150,23 +150,38 @@ impl BlockManager {
 		}
 	}
 
-	/// Creates an encoding map for a run-length encoding
-	pub fn map_encoding(&self, rle: &Vec<(usize, u32)>) -> Vec<String> {
-		let mut uniques = rle.iter().map(|&(v, _)| v).collect::<Vec<_>>();
+	/// Creates an encoding map for a run-length encoding.
+	/// 
+	/// encoding id -> unique index (for encoding).
+	/// Empty is not included
+	/// 
+	/// unique index -> block name (for decoding)
+	pub fn encoding_maps(&self, rle: &Vec<(usize, u32)>) -> (HashMap<usize, usize>, Vec<String>) {
+		
+		// Find unique encoding ids which are not zero
+		let mut uniques = rle.iter().filter_map(|&(e_id, _)| {
+			if e_id > 0 {
+				Some(e_id)
+			} else {
+				None
+			}
+		}).collect::<Vec<_>>();
 		uniques.sort();
 		uniques.dedup();
 
-		uniques.iter().map(|&bid| self.blocks[bid].name.clone()).collect::<Vec<_>>()
-	}
+		// Create a mapping to find their index in this sorted list
+		// encoding id -> unique index
+		let uidx_map = uniques.iter().enumerate().map(|(uidx, &e_id)| {
+			(e_id, uidx)
+		}).collect::<HashMap<_,_>>();
 
-	/// Creates a decoding map
-	// Todo: let it make errors
-	pub fn map_decoding(&self, string_mapping: &Vec<String>) -> Result<Vec<usize>> {
-		Ok(
-			string_mapping.iter()
-				.map(|s| self.index_name(s).unwrap())
-				.collect::<Vec<_>>()
-		)
+		// Map each unique non-zero encoding id to its block name
+		// unique index -> block name
+		let name_map = uniques.iter().map(|&e_id| {
+			self.blocks[e_id-1].name.clone()
+		}).collect::<Vec<_>>();
+
+		(uidx_map, name_map)
 	}
 }
 
