@@ -9,7 +9,7 @@ use wgpu::util::DeviceExt;
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ModelInstance {
 	// Indices to the UNBOUND mesh and material
 	pub material_idx: usize,

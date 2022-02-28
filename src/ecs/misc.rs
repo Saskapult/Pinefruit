@@ -30,7 +30,7 @@ impl StepResource {
 
 
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Clone)]
 #[storage(VecStorage)]
 pub struct TransformComponent {
 	pub position: Vector3<f32>,

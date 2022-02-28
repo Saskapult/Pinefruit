@@ -3,12 +3,17 @@ use noise::Perlin;
 use noise::Seedable;
 use noise::Worley;
 use noise::NoiseFn;
+use std::path::Path;
+use anyhow::*;
+use splines::*;
+
 
 
 
 pub trait BaseGenerator {
 	fn chunk_base(&self, chunk_position: [i32; 3], chunk: Chunk, bm: &BlockManager) -> Chunk;
 }
+
 
 
 pub struct TerrainGenerator {
@@ -21,6 +26,7 @@ impl TerrainGenerator {
 		}
 	}
 
+	/// Creates a chunk base based on a heightmap
 	fn chunk_base_hm(
 		&self, 
 		chunk_position: [i32; 3], 
@@ -67,6 +73,7 @@ impl TerrainGenerator {
 		chunk
 	}
 
+	/// Creates a chunk base based on 3d noise
 	fn chunk_base_3d(
 		&self, 
 		chunk_position: [i32; 3], 
@@ -120,6 +127,7 @@ impl TerrainGenerator {
 		chunk
 	}
 
+	/// Creates blcokmods which add grass and dirt layers to a map based on a chunk
 	// This code is a little bad
 	// Try caching the above/below chunk
 	pub fn grassify_3d(
@@ -282,3 +290,55 @@ impl Carver for WorleyCarver {
 	}
 }
 
+
+pub fn save_spline(
+	spline: &Spline<f64, f64>, 
+	path: impl AsRef<Path>,
+) -> Result<()> {
+	let path = path.as_ref();
+	// let canonical_path = path.canonicalize()
+	// 	.with_context(|| format!("Failed to canonicalize path '{:?}'", &path))?;
+	let canonical_path = path;
+
+	let f = std::fs::File::create(&path)
+		.with_context(|| format!("Failed to write file path '{:?}'", &canonical_path))?;
+	ron::ser::to_writer(f, spline)
+		.with_context(|| format!("Failed to parse spline ron file '{:?}'", &canonical_path))?;
+	
+	Ok(())
+}
+pub fn load_spline(path: impl AsRef<Path>) -> Result<Spline<f64, f64>> {
+	let path = path.as_ref();
+	let canonical_path = path.canonicalize()
+		.with_context(|| format!("Failed to canonicalize path '{:?}'", &path))?;
+	let f = std::fs::File::open(&path)
+		.with_context(|| format!("Failed to read from file path '{:?}'", &canonical_path))?;
+	let spline: Spline<f64, f64> = ron::de::from_reader(f)
+		.with_context(|| format!("Failed to parse spline ron file '{:?}'", &canonical_path))?;
+	Ok(spline)
+}
+
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn make_test_spline() -> Spline<f64, f64> {
+		let k1 = Key::new(0.0, 0.0, Interpolation::Linear);
+		let k2 = Key::new(1.0, 1.0, Interpolation::Linear);
+		let spline = Spline::from_vec(vec![k1, k2]);
+		spline
+	}
+
+    #[test]
+    fn test_spline_serde() {
+		let spline1 = make_test_spline();
+
+		let spline_path = "/tmp/splinetime.ron";
+		save_spline(&spline1, spline_path).unwrap();
+		let spline2 = load_spline(spline_path).unwrap();
+
+        assert_eq!(spline1.keys(), spline2.keys());
+    }
+}

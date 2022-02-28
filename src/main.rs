@@ -11,6 +11,7 @@ mod material;
 mod texture;
 mod ecs;
 mod noise;
+mod lua;
 
 
 use window::*;

@@ -182,6 +182,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d8c1fef690941d3e7788d328517591fecc684c084084702d6ff1641e993699a"
 
 [[package]]
+name = "bstr"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba3569f383e8f1598449f1a423e72e99569137b47740b1da11ef19af3d5c3223"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1011,6 +1020,7 @@ dependencies = [
  "glob",
  "image",
  "log",
+ "mlua",
  "nalgebra",
  "noise",
  "poisson",
@@ -1180,6 +1190,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9f1c5b025cda876f66ef43a113f91ebc9f4ccef34843000e0adf6ebbab84e21"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "mlua"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d4c93ad12064932ae8f0667ecd09ca714ff44813fa1d1965ae4279108b67f21"
+dependencies = [
+ "bstr",
+ "cc",
+ "num-traits 0.2.14",
+ "once_cell",
+ "pkg-config",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -2168,6 +2192,9 @@ name = "splines"
 version = "4.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c94307351d02448532cdf65ea95bfdd529183d360a60fb8c8bdca6c90af55542"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "strsim"

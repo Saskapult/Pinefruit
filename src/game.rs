@@ -16,9 +16,12 @@ use crate::window::*;
 
 
 pub struct Game {
-	world: World,
+	pub world: World,
+	
 	blocks_manager: Arc<RwLock<crate::world::BlockManager>>,
-	window_dispatcher: Dispatcher<'static, 'static>,
+	
+	window_manager: WindowManager,
+
 	tick_dispatcher: Dispatcher<'static, 'static>,
 	last_tick: Instant,
 	entity_names_map: HashMap<Entity, String>,
@@ -65,35 +68,31 @@ impl Game {
 		let render_resource = RenderResource::new(&adapter);
 		world.insert(render_resource);
 
-		let window_resource = WindowResource::new(
-			event_loop_proxy,
-			instance,
-			adapter,
-			event_queue,
-		);
-		world.insert(window_resource);
-
 		let input_resource = InputResource::new();
 		world.insert(input_resource);
 
 		let physics_resource = PhysicsResource::new();
 		world.insert(physics_resource);
 
-		// Dispatchers
-		let window_dispatcher = DispatcherBuilder::new()
-			.with(WindowEventSystem, "window_system", &[])
-			.build();
+		// Dispatcher(s?)
 		let tick_dispatcher = DispatcherBuilder::new()
 			.with(InputSystem, "input_system", &[])
 			.with(MapSystem, "map_system", &["input_system"])
 			.with(DynamicPhysicsSystem, "dynamic_physics_system", &["input_system"])
-			.with(RenderSystem, "render_system", &["input_system", "map_system", "dynamic_physics_system"])
+			.with(RenderDataSystem, "render_system", &["input_system", "map_system", "dynamic_physics_system"])
 			.build();
+
+		let window_manager = WindowManager::new(
+			event_loop_proxy,
+			instance,
+			adapter,
+			event_queue,
+		);
 
 		Self {
 			world,
 			blocks_manager,
-			window_dispatcher,
+			window_manager,
 			tick_dispatcher,
 			last_tick: Instant::now(),
 			entity_names_map: HashMap::new(),
@@ -235,51 +234,41 @@ impl Game {
 	}
 
 	pub fn tick(&mut self) {
-		self.window_dispatcher.dispatch(&mut self.world);
+		// Run window update
+		{
+			let mut input_resource = self.world.write_resource::<InputResource>();
+			self.window_manager.update(&mut input_resource);
+		}
 
+		// If should re-render then tick and re-render
 		let now = Instant::now();
 		if now - self.last_tick >= Duration::from_millis(20) { // 16.7 to 33.3
 			self.last_tick = now;
 
 			let tick_st = Instant::now();
-			
-			{ // Prepare step info
-				let mut step_resource = self.world.write_resource::<StepResource>();
-				
-				step_resource.last_step = step_resource.this_step;
-				step_resource.this_step = std::time::Instant::now();
-				step_resource.step_diff = step_resource.this_step - step_resource.last_step;
-			}
 
 			self.tick_dispatcher.dispatch(&mut self.world);
 
-			if let Some(marker_entity) = self.marker_entity {
-				let mut marker_pos = None;
+			// Ray casting and marker entity pseudo-system
+			{
+				// Set up/retrieve marker entity
+				let marker_entity = match self.marker_entity {
+					Some(e) => e,
+					None => {
+						self.marker_entity = Some(
+							self.world.create_entity()
+							.with(TransformComponent::new())
+							.with(ModelComponent::new(0, 0))
+							.build()
+						);
+						self.marker_entity.unwrap()
+					},
+				};
 
-				let pr = self.world.write_resource::<PhysicsResource>();
+				let mut new_marker_pos = None;
+
 				let cameras =  self.world.read_component::<CameraComponent>();
 				let mut transforms =  self.world.write_component::<TransformComponent>();
-
-				// for (_camera, transform) in (&cameras, &transforms).join() {
-				// 	if let Some((_, hp)) = pr.ray(transform.position.into(), transform.rotation * vector![0.0, 0.0, 1.0]) {
-						
-				// 		let hp_vec = Vector3::new(hp[0], hp[1], hp[2]);// + transform.rotation * vector![0.0, 0.0, 1.0] * 0.1;
-				// 		marker_pos = Some(hp_vec);
-
-				// 		// Block placement
-				// 		let g = self.world.write_resource::<InputResource>();
-				// 		if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
-				// 			let mut maps =  self.world.write_component::<MapComponent>();
-							
-				// 			for map in (&mut maps).join() {
-				// 				let map_w_vpos = map.map.point_world_voxel(hp_vec);
-				// 				map.set_voxel(map_w_vpos, crate::world::Voxel::Block(0))
-				// 			}
-				// 		}
-						
-				// 	}
-				// }
-
 				let mut maps =  self.world.write_component::<MapComponent>();
 
 				for (_camera, transform) in (&cameras, &transforms).join() {
@@ -357,7 +346,6 @@ impl Game {
 						} else if !(g.mouse_keys.contains_key(&winit::event::MouseButton::Left) || g.mouse_keys.contains_key(&winit::event::MouseButton::Right)) {
 							self.can_modify_block = true;
 						}
-						
 
 						// Positional block placement
 						if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
@@ -369,13 +357,13 @@ impl Game {
 
 						// Update marker position
 						if let Some(pos) = back_block_pos {
-							marker_pos = Some(Vector3::new(
+							new_marker_pos = Some(Vector3::new(
 								pos[0] as f32 + 0.5, 
 								pos[1] as f32 + 0.5, 
 								pos[2] as f32 + 0.5,
 							));
 						} else {
-							marker_pos = Some(Vector3::new(
+							new_marker_pos = Some(Vector3::new(
 								0.5, 
 								0.5, 
 								0.5,
@@ -385,19 +373,13 @@ impl Game {
 					}
 				}
 
-				if let Some(pos) = marker_pos {
+				if let Some(pos) = new_marker_pos {
 					let marker_transform = transforms.entry(marker_entity).unwrap().or_insert(TransformComponent::new());
 					marker_transform.position = pos;
 				}
-				
-			} else {
-				self.marker_entity = Some(
-					self.world.create_entity()
-					.with(TransformComponent::new())
-					.with(ModelComponent::new(0, 0))
-					.build()
-				);
-			}			
+			}
+			
+			self.render_cameras();
 
 			let dur = Instant::now() - tick_st;
 			self.world.write_resource::<StepResource>().step_durations.record(dur);
@@ -406,13 +388,48 @@ impl Game {
 		}
 	}
 
+	fn render_cameras(&mut self) {
+
+		let mut windows_to_redraw = Vec::new();
+		
+		{
+			let cameras = self.world.read_component::<CameraComponent>();
+			let transforms = self.world.read_component::<TransformComponent>();
+			for (camera, camera_transform) in (&cameras, &transforms).join() {
+				match camera.target {
+					// Find destination
+					RenderTarget::Window(id) => {
+						if id >= self.window_manager.windows.len() {
+							error!("Tried to render to nonexistent window! idx: {}", id);
+							continue
+						}
+						windows_to_redraw.push((id, camera.clone(), camera_transform.clone()));
+					},
+					RenderTarget::Texture(_) => {
+						todo!("Todo: Implement rendering to a texture");
+					},
+				}
+			}
+		}
+
+		for (window_id, camera, camera_transform) in windows_to_redraw {
+			let window = self.window_manager.windows.get_mut(window_id).unwrap();
+			window.draw(
+				&mut self.world, 
+				&camera, 
+				&camera_transform,
+			);
+		}
+		
+	}
+
 	pub fn new_window(&mut self) {
 		info!("Requesting new game window");
 
-		let mut window_resource = self.world.write_resource::<WindowResource>();
-		window_resource.request_window();
+		self.window_manager.request_window();
 	}
 }
+
 
 
 
