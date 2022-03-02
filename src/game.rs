@@ -248,6 +248,7 @@ impl Game {
 			let tick_st = Instant::now();
 
 			// Ray casting and marker entity pseudo-system
+			// Needs to run before everything else because it requeires direct access to the pressed keys
 			{
 				// Set up/retrieve marker entity
 				let marker_entity = match self.marker_entity {
@@ -403,6 +404,7 @@ impl Game {
 							error!("Tried to render to nonexistent window! idx: {}", id);
 							continue
 						}
+						// This is bad because it clones the camera's model queue
 						windows_to_redraw.push((id, camera.clone(), camera_transform.clone()));
 					},
 					RenderTarget::Texture(_) => {

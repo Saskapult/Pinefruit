@@ -135,8 +135,8 @@ impl TerrainGenerator {
 		chunk_position: [i32; 3], 
 		map: &Map,
 		bm: &BlockManager,	// Assumed to be the same as the world's bm
-	) -> BlockMods {
-		let mut block_mods = BlockMods::new();
+	) -> ChunkBlockMods {
+		let mut block_mods = ChunkBlockMods::new();
 
 		let chunk = map.chunk(chunk_position).unwrap();
 
@@ -169,13 +169,13 @@ impl TerrainGenerator {
 					};	
 
 					if set_to_grass {
-						blockmods_insert(
+						insert_chunkblockmods(
 							&mut block_mods,
-							chunk_position,
-							ChunkBlockMod {
-								voxel_chunk_position: [x, y, z],
+							BlockMod {
+								position: VoxelPosition::from_chunk_voxel(chunk_position, [x,y,z]),
 								reason: BlockModReason::WorldGenSet(Voxel::Block(grass_idx)),
 							},
+							chunk.size,
 						);
 
 						// Set below it to dirt
@@ -188,13 +188,13 @@ impl TerrainGenerator {
 								let set_to_dirt= !chunk.get_voxel([x, y-i, z]).is_empty();
 
 								if set_to_dirt {
-									blockmods_insert(
+									insert_chunkblockmods(
 										&mut block_mods,
-										chunk_position,
-										ChunkBlockMod {
-											voxel_chunk_position: [x, y-i, z],
+										BlockMod {
+											position: VoxelPosition::from_chunk_voxel(chunk_position, [x, y-i, z]),
 											reason: BlockModReason::WorldGenSet(Voxel::Block(dirt_idx)),
 										},
+										chunk.size,
 									);
 								}
 							} else {
@@ -208,14 +208,17 @@ impl TerrainGenerator {
 								};
 
 								if set_to_dirt {
-									assert!(chunk.is_in_bounds(x, chunk.size[1] as i32 + y-i, z), "{}", y-i);
-									blockmods_insert(
+									assert!(chunk.is_in_bounds(x, chunk.size[1] as i32 + y-i, z), "y out of bounds {}", y-i);
+									insert_chunkblockmods(
 										&mut block_mods,
-										[chunk_position[0], chunk_position[1]-1, chunk_position[2]],
-										ChunkBlockMod {
-											voxel_chunk_position: [x, chunk.size[1] as i32 + y-i, z],
+										BlockMod {
+											position: VoxelPosition::from_chunk_voxel(
+												[chunk_position[0], chunk_position[1]-1, chunk_position[2]], 
+												[x, chunk.size[1] as i32 + y-i, z],
+											),
 											reason: BlockModReason::WorldGenSet(Voxel::Block(dirt_idx)),
 										},
+										chunk.size,
 									);
 								}
 							}
@@ -227,6 +230,34 @@ impl TerrainGenerator {
 				}
 			}
 		}
+
+		block_mods
+	}
+
+	pub fn place_tree(
+		&self,
+		world_pos: [i32; 3],
+		chunk_size: [u32; 3],
+		bm: &BlockManager,
+	) -> ChunkBlockMods {
+		let log_idx = bm.index_name(&"log".to_string()).unwrap();
+		let leaves_idx = bm.index_name(&"leaves".to_string()).unwrap();
+
+		let mut block_mods = ChunkBlockMods::new();
+		let [x, y, z] = world_pos;
+
+		// Trunk
+		for i in 0..5 {
+			insert_chunkblockmods(
+				&mut block_mods,
+				BlockMod {
+					position: VoxelPosition::WorldPosition([x, y+i, z]),
+					reason: BlockModReason::WorldGenSet(Voxel::Block(log_idx)),
+				},
+				chunk_size,
+			);
+		}
+		// Todo: leaves
 
 		block_mods
 	}
@@ -289,6 +320,7 @@ impl Carver for WorleyCarver {
 		chunk
 	}
 }
+
 
 
 pub fn save_spline(

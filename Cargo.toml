@@ -48,6 +48,7 @@ egui-winit = "0.16.0"
 egui_winit_platform = "0.13.0"
 egui_demo_lib = "0.16.0"
 splines = {version = "4.0.3", features = ["serde"] }
+rayon = "1.5.1"
 
 [build-dependencies]
 anyhow = "1.0"

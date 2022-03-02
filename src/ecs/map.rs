@@ -5,6 +5,7 @@ use specs::{Component, VecStorage};
 use crate::world::*;
 use crate::ecs::*;
 use rapier3d::prelude::*;
+use std::sync::mpsc::Receiver;
 
 
 
@@ -15,6 +16,7 @@ pub enum ChunkModelEntry {
 	Empty,
 	Unloaded,
 	UnModeled,
+	// Modeling(Receiver<Vec<(usize, usize)>>),
 	Complete(Vec<(usize, usize)>),
 }
 

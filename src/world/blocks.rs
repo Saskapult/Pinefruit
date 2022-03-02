@@ -195,19 +195,84 @@ pub enum BlockModReason {
 
 
 
+#[derive(Debug, Copy, Clone)]
+pub enum VoxelPosition {
+	WorldPosition([i32; 3]),
+	ChunkPosition {
+		chunk_position: [i32; 3], 
+		voxel_position: [i32; 3],
+	},
+}
+impl VoxelPosition {
+	pub fn from_chunk_voxel(chunk_position: [i32; 3], voxel_position: [i32; 3]) -> Self {
+		Self::ChunkPosition {
+			chunk_position, 
+			voxel_position,
+		}
+	}
+
+	pub fn from_world(world_position: [i32; 3]) -> Self {
+		Self::WorldPosition(world_position)
+	}
+
+	pub fn chunk_voxel_position(&self, chunk_size: [u32; 3]) -> ([i32; 3], [i32; 3]) {
+		match *self {
+			VoxelPosition::WorldPosition(world_position) => {
+				let chunk_position = [
+					world_position[0] / (chunk_size[0] as i32) - if world_position[0] < 0 { 1 } else { 0 },
+					world_position[1] / (chunk_size[1] as i32) - if world_position[1] < 0 { 1 } else { 0 },
+					world_position[2] / (chunk_size[2] as i32) - if world_position[2] < 0 { 1 } else { 0 },
+				];
+				let mut voxel_position = [
+					world_position[0] % (chunk_size[0] as i32),
+					world_position[1] % (chunk_size[1] as i32),
+					world_position[2] % (chunk_size[2] as i32),
+				];
+				voxel_position.iter_mut().zip(chunk_size.iter()).for_each(|(v, &cs)| {
+					if *v < 0 {
+						*v = cs as i32 + *v;
+					}
+				});
+				(chunk_position, voxel_position)
+			}
+			VoxelPosition::ChunkPosition { chunk_position, voxel_position } => {
+				(chunk_position, voxel_position)
+			}
+		}
+	}
+	
+	pub fn world_position(&self, chunk_size: [u32; 3]) -> [i32; 3] {
+		match *self {
+			VoxelPosition::WorldPosition(world_position) => {
+				world_position
+			}
+			VoxelPosition::ChunkPosition { chunk_position, voxel_position } => {
+				let world_position = [
+					chunk_position[0] * chunk_size[0] as i32 + voxel_position[0],
+					chunk_position[1] * chunk_size[1] as i32 + voxel_position[1],
+					chunk_position[2] * chunk_size[2] as i32 + voxel_position[2],
+				];
+				world_position
+			}
+		}
+	}
+}
+
+
+
 #[derive(Debug)]
-pub struct ChunkBlockMod {
-	pub voxel_chunk_position: [i32; 3],
+pub struct BlockMod {
+	pub position: VoxelPosition,
 	pub reason: BlockModReason,
 }
-pub type BlockMods = HashMap<[i32; 3], Vec<ChunkBlockMod>>;
+pub type ChunkBlockMods = HashMap<[i32; 3], Vec<BlockMod>>;
 
 
 
 /// Appends a to b, leaving b empty
-pub fn merge_blockmods(
-	a: &mut BlockMods, 
-	b: BlockMods,
+pub fn append_chunkblockmods(
+	a: &mut ChunkBlockMods, 
+	b: ChunkBlockMods,
 ) {
 	for (p, mut q) in b {
 		if a.contains_key(&p) {
@@ -221,11 +286,16 @@ pub fn merge_blockmods(
 
 
 
-pub fn blockmods_insert(
-	a: &mut BlockMods, 
-	chunk_position: [i32; 3],
-	bm: ChunkBlockMod,
+pub fn insert_chunkblockmods(
+	a: &mut ChunkBlockMods, 
+	bm: BlockMod,
+	chunk_size: [u32; 3],
 ) {
+	let (chunk_position, voxel_position) = bm.position.chunk_voxel_position(chunk_size);
+	let bm = BlockMod {
+		position: VoxelPosition::from_chunk_voxel(chunk_position, voxel_position),
+		..bm
+	};
 	if a.contains_key(&chunk_position) {
 		let q = a.get_mut(&chunk_position).unwrap();
 		q.push(bm);

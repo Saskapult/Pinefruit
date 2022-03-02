@@ -1027,6 +1027,7 @@ dependencies = [
  "pollster",
  "rand 0.8.4",
  "rapier3d",
+ "rayon",
  "ron",
  "serde",
  "specs",

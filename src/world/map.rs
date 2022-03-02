@@ -5,6 +5,8 @@ use crate::world::*;
 use crate::render::*;
 use crate::mesh::*;
 use thiserror::Error;
+use rayon::prelude::*;
+use std::sync::mpsc::{channel, Receiver};
 
 
 
@@ -22,7 +24,7 @@ pub struct Map {
 	chunks: HashMap<[i32; 3], Chunk>,
 	pub chunk_dimensions: [u32; 3],
 	blocks: Arc<RwLock<BlockManager>>,
-	blockmods: BlockMods,
+	blockmods: ChunkBlockMods,
 }
 impl Map {
 	pub fn new(chunk_dimensions: [u32; 3], blockmanager: &Arc<RwLock<BlockManager>>) -> Self {
@@ -34,12 +36,16 @@ impl Map {
 		}
 	}
 
-	pub fn apply_chunkblockmods(&mut self, block_mods: BlockMods) {
+	pub fn apply_chunkblockmods(&mut self, block_mods: ChunkBlockMods) {
+		let chunk_size = self.chunk_dimensions;
 		for (cpos, bms) in block_mods {
 			if let Some(c) = self.chunk_mut(cpos) {
 				for bm in bms {
 					match bm.reason {
-						BlockModReason::WorldGenSet(v) => c.set_voxel(bm.voxel_chunk_position, v),
+						BlockModReason::WorldGenSet(v) => {
+							let (_, voxel_chunk_position) = bm.position.chunk_voxel_position(chunk_size);
+							c.set_voxel(voxel_chunk_position, v)
+						},
 						_ => todo!(),
 					}
 				}
@@ -53,23 +59,31 @@ impl Map {
 		let tgen = TerrainGenerator::new(0);
 		let carver = WorleyCarver::new(0);
 
+		// Parallel chunk base generation saves about 9 seconds
+		let mut chunks_to_generate = Vec::new();
 		for cx in -4..4 {
 			for cy in -1..2 {
 				for cz in -4..4 {
-					let chunk = Chunk::new(self.chunk_dimensions)
-						.base([cx, cy, cz], &tgen, &bm);
-					//	.carve([cx, cy, cz], &carver);
-					
-					self.chunks.insert([cx as i32, cy as i32, cz as i32], chunk);
+					chunks_to_generate.push([cx, cy, cz]);
 				}
 			}
 		}
+		let mut generated_chunks = chunks_to_generate.par_iter().map(|&cp| {
+			let chunk = Chunk::new(self.chunk_dimensions)
+				.base(cp, &tgen, &bm);
+			//	.carve([cx, cy, cz], &carver);
+			(cp, chunk)
+		}).collect::<Vec<_>>();
+		generated_chunks.drain(..).for_each(|([cx, cy, cz], chunk)| {
+			self.chunks.insert([cx as i32, cy as i32, cz as i32], chunk);
+		});		
 
-		let mut grassify_mods = BlockMods::new();
+		// Seems to take around two seconds
+		let mut grassify_mods = ChunkBlockMods::new();
 		for cx in -4..4 {
 			for cy in -1..2 {
 				for cz in -4..4 {
-					merge_blockmods(&mut grassify_mods, tgen.grassify_3d([cx, cy, cz], &self, &bm));
+					append_chunkblockmods(&mut grassify_mods, tgen.grassify_3d([cx, cy, cz], &self, &bm));
 				}
 			}
 		}
@@ -139,7 +153,7 @@ impl Map {
 			&main_chunk.contents, 
 			self.chunk_dimensions.map(|x| x as usize),
 			&slices,
-			&self.blocks.read().unwrap(),
+			self.blocks.clone(),
 			true,
 		);
 
@@ -151,6 +165,89 @@ impl Map {
 				.with_indices(segment.indices);
 			(material_idx, mesh)
 		}).collect::<Vec<_>>()
+	}
+
+	// The same as mesh_chunk but it does the bulk of computation on a rayon thread
+	pub fn mesh_chunk_rayon(&self, position: [i32; 3]) -> Receiver<Vec<(usize, Mesh)>> {
+		let [px, py, pz] = position;
+		
+		let main_chunk = self.chunk(position).expect("Tried to mesh unloaded chunk!");
+		
+		// Copy slices of neighbours
+		// If the neighbour is not loaded, pretend there is nothing there (this is bad)
+		debug!("Extracting xp slice");
+		let xp_slice = match self.chunk([px+1, py, pz]) {
+			Some(chunk) => {
+				let mut xp = vec![Voxel::Empty; (self.chunk_dimensions[1] * self.chunk_dimensions[2]) as usize];
+				for y in 0..self.chunk_dimensions[1] {
+					let y_offset = y * self.chunk_dimensions[1];
+					for z in 0..self.chunk_dimensions[2] {
+						xp[(y_offset + z) as usize] = chunk.get_voxel([0, y as i32, z as i32]);
+					}
+				}
+				xp
+			},
+			None => vec![Voxel::Empty; (self.chunk_dimensions[1] * self.chunk_dimensions[2]) as usize],
+		};
+		debug!("Extracting yp slice");
+		let yp_slice = match self.chunk([px, py+1, pz]) {
+			Some(chunk) => {
+				let mut yp = vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[2]) as usize];
+				for x in 0..self.chunk_dimensions[0] {
+					let x_offset = x * self.chunk_dimensions[0];
+					for z in 0..self.chunk_dimensions[2] {
+						yp[(x_offset + z) as usize] = chunk.get_voxel([x as i32, 0, z as i32]);
+					}
+				}
+				yp
+			},
+			None => vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[2]) as usize],
+		};
+		debug!("Extracting zp slice");
+		let zp_slice = match self.chunk([px, py, pz+1]) {
+			Some(chunk) => {
+				let mut zp = vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[1]) as usize];
+				for x in 0..self.chunk_dimensions[0] {
+					let x_offset = x * self.chunk_dimensions[0];
+					for y in 0..self.chunk_dimensions[1] {
+						zp[(x_offset + y) as usize] = chunk.get_voxel([x as i32, y as i32, 0]);
+					}
+				}
+				zp
+			},
+			None => vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[1]) as usize],
+		};
+		let slices = [xp_slice, yp_slice, zp_slice];
+
+		let (tx, rx) = channel();
+
+		let chunk_contents = main_chunk.contents.clone();
+		let blockmap = self.blocks.clone();
+		let chunk_size = self.chunk_dimensions.map(|x| x as usize);
+		rayon::spawn(move || {
+			let chunk_contents = chunk_contents;			
+
+			let (mut segments, _) = map_mesh(
+				&chunk_contents, 
+				chunk_size,
+				&slices,
+				blockmap,
+				true,
+			);
+	
+			let output = segments.drain(..).map(|(material_idx, segment)| {
+				let mesh = Mesh::new(&format!("mesh of chunk {:?} material {}", position, material_idx))
+					.with_positions(segment.positions)
+					.with_uvs(segment.uvs)
+					.with_normals(segment.normals)
+					.with_indices(segment.indices);
+				(material_idx, mesh)
+			}).collect::<Vec<_>>();
+
+			tx.send(output).unwrap();
+		});
+
+		rx
 	}
 
 	pub fn chunks_sphere(&self, centre: [i32; 3], radius: i32) -> Vec<[i32; 3]> {
@@ -417,7 +514,7 @@ fn map_mesh(
 	chunk_contents: &Vec<Voxel>,
 	chunk_size: [usize; 3],
 	neighbour_slices: &[Vec<Voxel>; 3], // xp, yp, zp
-	blockmap: &BlockManager,
+	blockmap: Arc<RwLock<BlockManager>>,
 	_collect_transparent: bool,
 ) -> (
 	Vec<(usize, ChunkMeshSegment)>, 	// Vec<(material idx, mesh data)>
@@ -469,6 +566,8 @@ fn map_mesh(
 			segment.positions.push(vertex_position.into());
 		});
 	}
+
+	let blockmap = blockmap.read().unwrap();
 
 	let mut mesh_parts = HashMap::new();
 	let models = Vec::new();
@@ -666,3 +765,83 @@ const REVERSE_QUAD_INDICES: [u16; 6] = [
 	2, 1, 0,
 	0, 3, 2, 
 ];
+
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use std::time::{Instant, Duration};
+
+	// Tests that parallel chunk meshing is faster than non-parallel chunk meshing
+    #[test]
+    fn test_mesh_rayon() {
+		const CHUNKSIZE: [u32; 3] = [32; 3];
+
+		let bm = Arc::new(RwLock::new({
+			let mut bm = BlockManager::new();
+
+			bm.insert(Block::new(
+				&format!("stone")
+			));
+			bm.insert(Block::new(
+				&format!("grass")
+			));
+			bm.insert(Block::new(
+				&format!("dirt")
+			));
+
+			bm
+		}));
+
+		println!("Generating world");
+		let mapgen_st = Instant::now();
+		let mut map = Map::new(CHUNKSIZE, &bm);
+		map.generate();
+		println!("Generated map in {}ms", (Instant::now() - mapgen_st).as_millis());
+
+		println!("Begin meshing");
+		let start_t = Instant::now();
+
+		let mut recvs = Vec::new();
+		for cx in -4..4 {
+			for cy in -1..2 {
+				for cz in -4..4 {
+					recvs.push((
+						[cx,cy,cz], 
+						Instant::now(), 
+						map.mesh_chunk_rayon([cx, cy, cz]),
+					));
+				}
+			}
+		}
+
+		// Busy loop while checking for completion
+		let mut mesh_times = Vec::new();
+		while recvs.len() > 0 {
+			let mut to_remove = Vec::new();
+			for (i, (cpos, st, recv)) in recvs.iter().enumerate() {
+				if let Ok(_v) = recv.try_recv() {
+					mesh_times.push((*cpos, Instant::now() - *st));
+					to_remove.push(i);
+				}
+			}
+			to_remove.drain(..).rev().for_each(|i| {
+				recvs.remove(i);
+			});
+		}
+
+		let total_duration = Instant::now() - start_t;
+
+		// Display results
+		for (cpos, cdur) in &mesh_times {
+			println!("chunk {:?} meshed in {}ms", cpos, cdur.as_millis());
+		}
+		println!("{} chunks meshed in {}ms", mesh_times.len(), total_duration.as_millis());
+
+		let duration_sum: Duration = mesh_times.drain(..).map(|(_, d)| d).sum();
+		println!("Duration sum is {}ms", duration_sum.as_millis());
+
+        assert!(duration_sum > total_duration);
+    }
+}
