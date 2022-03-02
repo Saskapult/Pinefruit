@@ -77,7 +77,7 @@ impl Game {
 		// Dispatcher(s?)
 		let tick_dispatcher = DispatcherBuilder::new()
 			.with(InputSystem, "input_system", &[])
-			.with(MapSystem, "map_system", &["input_system"])
+			.with(ParallelMapSystem, "map_system", &["input_system"])
 			.with(DynamicPhysicsSystem, "dynamic_physics_system", &["input_system"])
 			.with(RenderDataSystem, "render_system", &["input_system", "map_system", "dynamic_physics_system"])
 			.build();

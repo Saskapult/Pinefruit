@@ -1,6 +1,6 @@
 use nalgebra::*;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, Mutex};
 use crate::world::*;
 use crate::render::*;
 use crate::mesh::*;
@@ -168,7 +168,7 @@ impl Map {
 	}
 
 	// The same as mesh_chunk but it does the bulk of computation on a rayon thread
-	pub fn mesh_chunk_rayon(&self, position: [i32; 3]) -> Receiver<Vec<(usize, Mesh)>> {
+	pub fn mesh_chunk_rayon(&self, position: [i32; 3]) -> Arc<Mutex<Option<Vec<(usize, Mesh)>>>> {
 		let [px, py, pz] = position;
 		
 		let main_chunk = self.chunk(position).expect("Tried to mesh unloaded chunk!");
@@ -219,13 +219,13 @@ impl Map {
 		};
 		let slices = [xp_slice, yp_slice, zp_slice];
 
-		let (tx, rx) = channel();
+		let result = Arc::new(Mutex::new(None));
 
+		let result_clone = result.clone();
 		let chunk_contents = main_chunk.contents.clone();
 		let blockmap = self.blocks.clone();
 		let chunk_size = self.chunk_dimensions.map(|x| x as usize);
-		rayon::spawn(move || {
-			let chunk_contents = chunk_contents;			
+		rayon::spawn(move || {			
 
 			let (mut segments, _) = map_mesh(
 				&chunk_contents, 
@@ -244,10 +244,11 @@ impl Map {
 				(material_idx, mesh)
 			}).collect::<Vec<_>>();
 
-			tx.send(output).unwrap();
+			let mut g = result_clone.lock().unwrap();
+			*g = Some(output);
 		});
 
-		rx
+		result
 	}
 
 	pub fn chunks_sphere(&self, centre: [i32; 3], radius: i32) -> Vec<[i32; 3]> {
@@ -803,11 +804,11 @@ mod tests {
 		println!("Begin meshing");
 		let start_t = Instant::now();
 
-		let mut recvs = Vec::new();
+		let mut queue = Vec::new();
 		for cx in -4..4 {
 			for cy in -1..2 {
 				for cz in -4..4 {
-					recvs.push((
+					queue.push((
 						[cx,cy,cz], 
 						Instant::now(), 
 						map.mesh_chunk_rayon([cx, cy, cz]),
@@ -816,19 +817,19 @@ mod tests {
 			}
 		}
 
-		// Busy loop while checking for completion
 		let mut mesh_times = Vec::new();
-		while recvs.len() > 0 {
-			let mut to_remove = Vec::new();
-			for (i, (cpos, st, recv)) in recvs.iter().enumerate() {
-				if let Ok(_v) = recv.try_recv() {
+		while queue.len() > 0 {
+			queue.drain_filter(|(cpos, st, result)| {
+				let content = result.lock().unwrap();
+				if content.is_some() {
 					mesh_times.push((*cpos, Instant::now() - *st));
-					to_remove.push(i);
+					true
+				} else {
+					false
 				}
-			}
-			to_remove.drain(..).rev().for_each(|i| {
-				recvs.remove(i);
 			});
+			// Don't lock all the time
+			std::thread::sleep(Duration::from_millis(2));
 		}
 
 		let total_duration = Instant::now() - start_t;
