@@ -185,23 +185,24 @@ impl<'a> System<'a> for RenderDataSystem {
 			}
 			// Map chunks
 			for (map_c, transform_c) in (&maps, &transforms).join() {
-				// Renders ALL meshed chunks
+				// Renders ALL available chunks
 				for (cp, entry) in &map_c.chunk_models {
-					match entry {
-						ChunkModelEntry::Complete(mesh_mats) => {
-							
-							let position = transform_c.position + map_c.map.chunk_point(*cp);
-							let instance = Instance::new().with_position(position);
-							for (mesh_idx, material_idx) in mesh_mats.iter().cloned() {
-								let model_instance = ModelInstance {
-									material_idx,
-									mesh_idx,
-									instance,
-								};
-								render_data.push(model_instance);
-							}
-						},
-						_ => {},
+					let mesh_mats = match entry {
+						ChunkModelEntry::Complete(mesh_mats) => Some(mesh_mats),
+						ChunkModelEntry::ReModeling(mesh_mats, _) => Some(mesh_mats),
+						_ => None,
+					};
+					if let Some(mesh_mats) = mesh_mats {
+						let position = transform_c.position + map_c.map.chunk_point(*cp);
+						let instance = Instance::new().with_position(position);
+						for (mesh_idx, material_idx) in mesh_mats.iter().cloned() {
+							let model_instance = ModelInstance {
+								material_idx,
+								mesh_idx,
+								instance,
+							};
+							render_data.push(model_instance);
+						}
 					}
 				}
 			}

@@ -24,7 +24,7 @@ pub struct InputResource {
 	pub my: f64,
 	pub mdx: f64,
 	pub mdy: f64,
-	pub last_applied: Instant,
+	pub last_read: Instant,
 	pub last_updated: Instant,
 	// controlmap: HashMap<VirtualKeyCode, (some kind of enum option?)>
 }
@@ -39,7 +39,7 @@ impl InputResource {
 			my: 0.0,
 			mdx: 0.0, 
 			mdy: 0.0,
-			last_applied: Instant::now(),
+			last_read: Instant::now(),
 			last_updated: Instant::now(),
 		}
 	}
@@ -64,7 +64,7 @@ impl<'a> System<'a> for InputSystem {
 			movement
 		): Self::SystemData
 	) { 
-		let apply_duration_secs = (input_resource.last_updated - input_resource.last_applied).as_secs_f32();
+		let apply_duration_secs = (input_resource.last_updated - input_resource.last_read).as_secs_f32();
 
 		let rx = input_resource.mdx as f32 * apply_duration_secs * 0.04;
 		let ry = input_resource.mdy as f32 * apply_duration_secs * 0.04;
@@ -103,10 +103,6 @@ impl<'a> System<'a> for InputSystem {
 			transform_c.position += transform_c.rotation * displacement * movement_c.speed * apply_duration_secs;
 		}
 
-		input_resource.mdx = 0.0;
-		input_resource.mdy = 0.0;
-		input_resource.board_keys.clear();
-		input_resource.mouse_keys.clear();
-		input_resource.last_applied = Instant::now();
+		input_resource.last_read = Instant::now();
 	}
 }

@@ -490,10 +490,17 @@ impl WindowManager {
 		// Find duration since last update
 		let startt = self.last_update;
 		let endt = Instant::now();
-		let duration = endt - startt;
-		if duration < Duration::from_millis(5) {
-			// Only update every 5ms
+		let since_last_update = endt - startt;
+		// Only update every 5ms
+		if since_last_update < Duration::from_millis(5) {
 			return
+		}
+		// If the previous input was used, remove it
+		if input_resource.last_read > input_resource.last_updated {
+			input_resource.mdx = 0.0;
+			input_resource.mdy = 0.0;
+			input_resource.board_keys.clear();
+			input_resource.mouse_keys.clear();
 		}
 
 		// Keyboard buttons

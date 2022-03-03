@@ -6,7 +6,6 @@ use crate::render::*;
 use crate::mesh::*;
 use thiserror::Error;
 use rayon::prelude::*;
-use std::sync::mpsc::{channel, Receiver};
 
 
 

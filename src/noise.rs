@@ -82,3 +82,31 @@ fn linear_spline() -> Spline<f64, f64> {
 	let spline = Spline::from_vec(vec![st, en]);
 	spline
 }
+
+
+
+const BLUE_FREQUENCY: f64 = 50.0;
+pub fn blue_noise_picker_2d(
+	perlin: &Perlin, 
+	pos: [i32; 2],
+	scale: [f64; 2],
+	r: u32,
+) -> bool {
+	let r = r as i32;
+	let here = perlin.get([
+		pos[0] as f64 / scale[0] * BLUE_FREQUENCY + 0.5, 
+		pos[1] as f64 / scale[1] * BLUE_FREQUENCY + 0.5,
+	]);
+	for x in (pos[0] - r)..(pos[0] + r) {
+		for y in (pos[1] - r)..(pos[1] + r) {
+			let sample = perlin.get([
+				x as f64 / scale[0] * BLUE_FREQUENCY + 0.5, 
+				y as f64 / scale[1] * BLUE_FREQUENCY + 0.5,
+			]);
+			if sample > here {
+				return false
+			}
+		}
+	}
+	true
+}

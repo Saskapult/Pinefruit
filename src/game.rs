@@ -76,10 +76,11 @@ impl Game {
 
 		// Dispatcher(s?)
 		let tick_dispatcher = DispatcherBuilder::new()
-			.with(InputSystem, "input_system", &[])
-			.with(ParallelMapSystem, "map_system", &["input_system"])
-			.with(DynamicPhysicsSystem, "dynamic_physics_system", &["input_system"])
-			.with(RenderDataSystem, "render_system", &["input_system", "map_system", "dynamic_physics_system"])
+			.with(InputSystem, "input", &[])
+			.with(MarkerSystem::new(), "marker", &["input"])
+			.with(MapSystem, "map", &["input"])
+			.with(DynamicPhysicsSystem, "dynamic_physics", &["input"])
+			.with(RenderDataSystem, "render_system", &["input", "map", "dynamic_physics", "marker"])
 			.build();
 
 		let window_manager = WindowManager::new(
@@ -246,137 +247,6 @@ impl Game {
 			self.last_tick = now;
 
 			let tick_st = Instant::now();
-
-			// Ray casting and marker entity pseudo-system
-			// Needs to run before everything else because it requeires direct access to the pressed keys
-			{
-				// Set up/retrieve marker entity
-				let marker_entity = match self.marker_entity {
-					Some(e) => e,
-					None => {
-						self.marker_entity = Some(
-							self.world.create_entity()
-							.with(TransformComponent::new())
-							.with(ModelComponent::new(0, 0))
-							.build()
-						);
-						self.marker_entity.unwrap()
-					},
-				};
-
-				let mut new_marker_pos = None;
-
-				let cameras =  self.world.read_component::<CameraComponent>();
-				let mut transforms =  self.world.write_component::<TransformComponent>();
-				let mut maps =  self.world.write_component::<MapComponent>();
-
-				for (_camera, transform) in (&cameras, &transforms).join() {
-					
-					for map in (&mut maps).join() {
-						let map_raypositions = map.map.voxel_ray(
-							&transform.position,
-							&(transform.rotation * vector![0.0, 0.0, 1.0]),
-							0.0,
-							25.0,
-						);
-
-						let first_block_index = map_raypositions.iter().position(|&pos| {
-							if let Some(v) = map.map.get_voxel_world(pos) {
-								match v {
-									crate::world::Voxel::Block(_) => true,
-									_ => false,
-								}
-							} else {
-								false
-							}
-						});
-						let back_block_index = match first_block_index {
-							Some(idx) => {
-								if idx > 0 {
-									Some(idx-1)
-								} else {
-									None
-								}
-							},
-							None => None,
-						};
-
-						let first_block_pos = match first_block_index {
-							Some(idx) => Some(map_raypositions[idx]),
-							None => None,
-						};
-						let back_block_pos = match back_block_index {
-							Some(idx) => Some(map_raypositions[idx]),
-							None => None,
-						};
-
-						let g = self.world.write_resource::<InputResource>();
-
-						// Make sure the line has no missing segments (in case I did it wrong)
-						let distances = map_raypositions.as_slice().chunks_exact(2).map(|v| {
-							let v1 = v[0];
-							let v2 = v[1];
-							let dist = v1.iter().zip(v2.iter())
-								.map(|(p1, p2)| p1 - p2)
-								.map(|g| g.pow(2) as f32)
-								.sum::<f32>();
-							dist.powf(0.5)
-						}).collect::<Vec<f32>>();
-						assert!(distances.iter().all(|&v| v == 1.0));
-						
-						if self.can_modify_block {	
-							// Casted block placement
-							if g.mouse_keys.contains_key(&winit::event::MouseButton::Right) {
-								self.can_modify_block = false;
-
-								if let Some(pos) = back_block_pos {
-									map.set_voxel(pos, crate::world::Voxel::Block(0))
-								}
-							}
-
-							// Casted block removal
-							if g.mouse_keys.contains_key(&winit::event::MouseButton::Left) {
-								self.can_modify_block = false;
-
-								if let Some(pos) = first_block_pos {
-									map.set_voxel(pos, crate::world::Voxel::Empty)
-								}
-							}
-						} else if !(g.mouse_keys.contains_key(&winit::event::MouseButton::Left) || g.mouse_keys.contains_key(&winit::event::MouseButton::Right)) {
-							self.can_modify_block = true;
-						}
-
-						// Positional block placement
-						if g.board_keys.contains_key(&winit::event::VirtualKeyCode::H) {
-							// The voxel the camera is in
-							let pos = map.map.point_world_voxel(&transform.position);
-							// Set it to dirt
-							map.set_voxel(pos, crate::world::Voxel::Block(0));
-						}
-
-						// Update marker position
-						if let Some(pos) = back_block_pos {
-							new_marker_pos = Some(Vector3::new(
-								pos[0] as f32 + 0.5, 
-								pos[1] as f32 + 0.5, 
-								pos[2] as f32 + 0.5,
-							));
-						} else {
-							new_marker_pos = Some(Vector3::new(
-								0.5, 
-								0.5, 
-								0.5,
-							));
-						}
-
-					}
-				}
-
-				if let Some(pos) = new_marker_pos {
-					let marker_transform = transforms.entry(marker_entity).unwrap().or_insert(TransformComponent::new());
-					marker_transform.position = pos;
-				}
-			}
 
 			self.tick_dispatcher.dispatch(&mut self.world);
 			
