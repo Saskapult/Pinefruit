@@ -90,8 +90,6 @@ impl GameWindow {
 		world: &specs::World,
 		camera_transform: &TransformComponent,
 	) {
-		use specs::WorldExt;
-
 		let egui_start = Instant::now();
 		self.platform.begin_frame();
 
@@ -116,14 +114,14 @@ impl GameWindow {
 				];
 				ui.label(format!("world: {:?}", world_pos));
 				let cpos = [
-					world_pos[0].abs() / 16 - if world_pos[0] < 0 { 1 } else { 0 },
-					world_pos[1].abs() / 16 - if world_pos[1] < 0 { 1 } else { 0 },
-					world_pos[2].abs() / 16 - if world_pos[2] < 0 { 1 } else { 0 },
+					world_pos[0].div_euclid(16),
+					world_pos[1].div_euclid(16),
+					world_pos[2].div_euclid(16),
 				];
 				let mut vpos = [
-					world_pos[0] % 16,
-					world_pos[1] % 16,
-					world_pos[2] % 16,
+					(world_pos[0] % 16 + 16) % 16,
+					(world_pos[1] % 16 + 16) % 16,
+					(world_pos[2] % 16 + 16) % 16,
 				];
 				vpos.iter_mut().zip([16; 3].iter()).for_each(|(v, cs)| {
 					if *v < 0 {
@@ -536,7 +534,7 @@ impl WindowManager {
 				Event::RedrawRequested(window_id) => {
 					let window_idx = self.id_idx[&window_id];
 					self.window_redraw_queue.insert(window_idx);
-				}
+				},
 				Event::UserEvent(event) => {
 					match event {
 						EventLoopEvent::RegisterWindow(window) => {
@@ -679,11 +677,7 @@ impl WindowManager {
 						},
 						_ => {},
 					}
-				}
-				Event::RedrawRequested(window_id) => {
-					let idx = self.id_idx[&window_id];
-					self.window_redraw_queue.insert(idx);
-				}
+				},
 				_ => {},
 			}
 		}

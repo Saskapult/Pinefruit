@@ -219,9 +219,9 @@ impl VoxelPosition {
 		match *self {
 			VoxelPosition::WorldPosition(world_position) => {
 				let chunk_position = [
-					world_position[0] / (chunk_size[0] as i32) - if world_position[0] < 0 { 1 } else { 0 },
-					world_position[1] / (chunk_size[1] as i32) - if world_position[1] < 0 { 1 } else { 0 },
-					world_position[2] / (chunk_size[2] as i32) - if world_position[2] < 0 { 1 } else { 0 },
+					world_position[0].div_euclid(chunk_size[0] as i32),
+					world_position[1].div_euclid(chunk_size[1] as i32),
+					world_position[2].div_euclid(chunk_size[2] as i32),
 				];
 				let mut voxel_position = [
 					world_position[0] % (chunk_size[0] as i32),

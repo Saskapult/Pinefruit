@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::time::{Instant, Duration};
+use std::time::Instant;
 use crate::render::*;
 use crate::mesh::*;
 use crate::material::*;
@@ -9,7 +9,6 @@ use specs::prelude::*;
 use specs::{Component, VecStorage};
 use crate::ecs::*;
 use nalgebra::*;
-use crate::window::*;
 
 
 

@@ -21,6 +21,9 @@ pub enum MapError {
 #[derive(Debug)]
 pub struct Map {
 	chunks: HashMap<[i32; 3], Chunk>,
+	// Records the height of the map's highest block for every xz in a chunk
+	// Could be used for lighting or feature placement
+	// max_heightmap: HashMap<[i32; 3], Vec<i32>>, 
 	pub chunk_dimensions: [u32; 3],
 	blocks: Arc<RwLock<BlockManager>>,
 	blockmods: ChunkBlockMods,
@@ -29,6 +32,7 @@ impl Map {
 	pub fn new(chunk_dimensions: [u32; 3], blockmanager: &Arc<RwLock<BlockManager>>) -> Self {
 		Self { 
 			chunks: HashMap::new(), 
+			// max_heightmap: HashMap::new(),
 			chunk_dimensions, 
 			blocks: blockmanager.clone(),
 			blockmods: HashMap::new(), 
@@ -59,6 +63,7 @@ impl Map {
 		let carver = WorleyCarver::new(0);
 
 		// Parallel chunk base generation saves about 9 seconds
+		debug!("Generating rocks");
 		let mut chunks_to_generate = Vec::new();
 		for cx in -4..4 {
 			for cy in -1..2 {
@@ -78,6 +83,7 @@ impl Map {
 		});		
 
 		// Seems to take around two seconds
+		debug!("Sowing grass");
 		let mut grassify_mods = ChunkBlockMods::new();
 		for cx in -4..4 {
 			for cy in -1..2 {
@@ -88,6 +94,28 @@ impl Map {
 		}
 		drop(bm);
 		self.apply_chunkblockmods(grassify_mods);
+
+		// Trees!
+		debug!("Placing trees");
+		let bm = self.blocks.read().unwrap();
+		let mut tree_mods = ChunkBlockMods::new();
+		// append_chunkblockmods(&mut tree_mods, tgen.place_tree([0, 8, 0], self.chunk_dimensions, &bm));
+		let chunks_to_treeify = (-4..4).flat_map(|x| {
+			(-1..2).flat_map(move |y| {
+				(-4..4).map(move |z| {
+					[x, y, z]
+				})
+			})
+		}).collect::<Vec<_>>();
+		let cbms: ChunkBlockMods = chunks_to_treeify.par_iter()
+			.map(|&c| tgen.treeify_3d(c, &self, &bm))
+			.reduce(|| ChunkBlockMods::new(), |mut accum, elem| {
+				append_chunkblockmods(&mut accum, elem);
+				accum
+			});
+		append_chunkblockmods(&mut tree_mods, cbms);
+		drop(bm);
+		self.apply_chunkblockmods(tree_mods);
 
 	}
 
@@ -310,7 +338,7 @@ impl Map {
 		}
 	}
 
-	pub fn get_voxel_world(&mut self, world_coords: [i32; 3]) -> Option<Voxel> {
+	pub fn get_voxel_world(&self, world_coords: [i32; 3]) -> Option<Voxel> {
 		let (cpos, cvpos) = self.world_chunk_voxel(world_coords);
 		// debug!("world {:?} -> chunk {:?} voxel {:?}", &world_coords, &cpos, &cvpos);
 		if let Some(chunk) = self.chunk(cpos) {
@@ -320,73 +348,31 @@ impl Map {
 		}
 	}
 
-	// Gets the coordinates of the chunk in which the wold position resides 
+	// Wrappers! (I think they make things easier)
 	pub fn world_chunk(&self, world_coords: [i32; 3]) -> [i32; 3] {
-		let chunk_pos = [
-			world_coords[0] / (self.chunk_dimensions[0] as i32) - if world_coords[0] < 0 { 1 } else { 0 },
-			world_coords[1] / (self.chunk_dimensions[1] as i32) - if world_coords[1] < 0 { 1 } else { 0 },
-			world_coords[2] / (self.chunk_dimensions[2] as i32) - if world_coords[2] < 0 { 1 } else { 0 },
-		];
-		chunk_pos
+		world_chunk(world_coords, self.chunk_dimensions)
 	}
-
-	// Gets the coordinates of the chunk and the coordinates of the voxel within the chunk in which the wold position resides 
 	pub fn world_chunk_voxel(&self, world_coords: [i32; 3]) -> ([i32; 3], [i32; 3]) {
-		let chunk_pos = self.world_chunk(world_coords);
-		let mut chunk_voxel_pos = [
-			world_coords[0] % (self.chunk_dimensions[0] as i32),
-			world_coords[1] % (self.chunk_dimensions[1] as i32),
-			world_coords[2] % (self.chunk_dimensions[2] as i32),
-		];
-		chunk_voxel_pos.iter_mut().zip(self.chunk_dimensions.iter()).for_each(|(v, cs)| {
-			if *v < 0 {
-				*v = *cs as i32 + *v;
-			}
-		});
-		(chunk_pos, chunk_voxel_pos)
+		world_chunk_voxel(world_coords, self.chunk_dimensions)
 	}
-
-	// Gets the point the chunk should be rendered at relative to the world
+	pub fn chunk_voxel_world(&self, chunk_position: [i32; 3], voxel_position: [i32; 3]) -> [i32; 3] {
+		chunk_voxel_world(chunk_position, voxel_position, self.chunk_dimensions)
+	}
 	pub fn chunk_point(&self, chunk: [i32; 3]) -> Vector3<f32> {
-		Vector3::new(
-			(chunk[0] * self.chunk_dimensions[0] as i32) as f32,
-			(chunk[1] * self.chunk_dimensions[1] as i32) as f32,
-			(chunk[2] * self.chunk_dimensions[2] as i32) as f32,
-		)
+		chunk_point(chunk, self.chunk_dimensions)
 	}
-
-	// Gets the coordinates of the chunk in which this point resides
 	pub fn point_chunk(&self, point: &Vector3<f32>) -> [i32; 3] {
-		let chunk_pos = [
-			point[0].floor() as i32 / self.chunk_dimensions[0] as i32,
-			point[1].floor() as i32 / self.chunk_dimensions[1] as i32,
-			point[2].floor() as i32 / self.chunk_dimensions[2] as i32,
-		];
-		chunk_pos
+		point_chunk(point, self.chunk_dimensions)
 	}
-
-	// Gets the coordinates of the chunk and the coordinates of the voxel within the chunk in which the point resides 
 	pub fn point_chunk_voxel(&self, point: &Vector3<f32>) -> ([i32; 3], [i32; 3]) {
-		let chunk_pos = self.point_chunk(point);
-		let chunk_voxel_pos = [
-			point[0].floor() as i32 % self.chunk_dimensions[0] as i32,
-			point[1].floor() as i32 % self.chunk_dimensions[1] as i32,
-			point[2].floor() as i32 % self.chunk_dimensions[2] as i32,
-		];
-		(chunk_pos, chunk_voxel_pos)
+		point_chunk_voxel(point, self.chunk_dimensions)
 	}
-
-	// Gets the coordinates of the voxel in the world in which the point resides
 	pub fn point_world_voxel(&self, point: &Vector3<f32>) -> [i32; 3] {
-		let world_voxel_pos = [
-			point[0].floor() as i32,
-			point[1].floor() as i32,
-			point[2].floor() as i32,
-		];
-		world_voxel_pos
+		point_world_voxel(point)
 	}
 
 	// Todo: return the exact hit position
+	// Todo: return the hit in face coordinates
 	// Todo: return the normal as well
 	// Todo: turn it into an iterator
 	pub fn voxel_ray(
@@ -488,6 +474,84 @@ impl Map {
 
 		results
 	}
+}
+
+
+
+/// Gets the coordinates of the chunk in which the wold position resides 
+pub fn world_chunk(world_pos: [i32; 3], chunk_size: [u32; 3]) -> [i32; 3] {
+	let chunk_pos = [
+		world_pos[0].div_euclid(chunk_size[0] as i32),
+		world_pos[1].div_euclid(chunk_size[1] as i32),
+		world_pos[2].div_euclid(chunk_size[2] as i32),
+	];
+	chunk_pos
+}
+
+
+
+/// Gets the coordinates of the chunk and the coordinates of the voxel within the chunk in which the wold position resides 
+pub fn world_chunk_voxel(world_pos: [i32; 3], chunk_size: [u32; 3]) -> ([i32; 3], [i32; 3]) {
+	let mut chunk_voxel_pos = [
+		(world_pos[0] % (chunk_size[0] as i32) + chunk_size[0] as i32) % chunk_size[0] as i32,
+		(world_pos[1] % (chunk_size[1] as i32) + chunk_size[1] as i32) % chunk_size[1] as i32,
+		(world_pos[2] % (chunk_size[2] as i32) + chunk_size[2] as i32) % chunk_size[2] as i32,
+	];
+	let chunk_pos = world_chunk(world_pos, chunk_size);
+
+	(0..3).for_each(|i| {
+		if chunk_voxel_pos[i] < 0 {
+			chunk_voxel_pos[i] += chunk_size[i] as i32;
+		}
+	});	
+
+	(chunk_pos, chunk_voxel_pos)
+}
+
+
+
+pub fn chunk_voxel_world(chunk_position: [i32; 3], voxel_position: [i32; 3], chunk_size: [u32; 3]) -> [i32; 3] {
+	[
+		chunk_position[0] * chunk_size[0] as i32 + voxel_position[0],
+		chunk_position[1] * chunk_size[1] as i32 + voxel_position[1],
+		chunk_position[2] * chunk_size[2] as i32 + voxel_position[2],
+	]
+}
+
+
+
+// Gets the point the chunk should be rendered at relative to the world
+pub fn chunk_point(chunk: [i32; 3], chunk_size: [u32; 3]) -> Vector3<f32> {
+	Vector3::new(
+		(chunk[0] * chunk_size[0] as i32) as f32,
+		(chunk[1] * chunk_size[1] as i32) as f32,
+		(chunk[2] * chunk_size[2] as i32) as f32,
+	)
+}
+
+
+
+// Gets the coordinates of the chunk in which this point resides
+pub fn point_chunk(point: &Vector3<f32>, chunk_size: [u32; 3]) -> [i32; 3] {
+	world_chunk_voxel(point_world_voxel(point), chunk_size).0
+}
+
+
+
+// Gets the coordinates of the chunk and the coordinates of the voxel within the chunk in which the point resides 
+pub fn point_chunk_voxel(point: &Vector3<f32>, chunk_size: [u32; 3]) -> ([i32; 3], [i32; 3]) {
+	world_chunk_voxel(point_world_voxel(point), chunk_size)
+}
+
+
+
+// Gets the coordinates of the voxel in the world in which the point resides
+pub fn point_world_voxel(point: &Vector3<f32>) -> [i32; 3] {
+	[
+		point[0].floor() as i32,
+		point[1].floor() as i32,
+		point[2].floor() as i32,
+	]
 }
 
 

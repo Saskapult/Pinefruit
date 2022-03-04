@@ -15,6 +15,12 @@ impl Voxel {
 			_ => false,
 		}
 	}
+	pub fn unwrap_id(&self) -> usize {
+		match self {
+			Voxel::Block(id) => *id,
+			_ => panic!("Tried to unwrap an empty voxel!"),
+		}
+	}
 }
 
 

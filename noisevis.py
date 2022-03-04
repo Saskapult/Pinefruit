@@ -5,28 +5,52 @@ import numpy as np
 from PIL import Image
 
 
-shape = (1024, 1024)
+shape = (256, 256)
 
 
 def main():
 	result = np.zeros(shape)
 	for x in range(shape[0]):
 		for y in range(shape[1]):
-			sample = octave_perlin_2d(
-				x / 100, y / 100,
-				4,
-				0.5,
-				2,
-			)
-			felloff = sample * linear_falloff(y, 500, 250)
-			density = max(min(felloff, 1), 0)
-			result[y][x] = threshme(density, 0.5)
+			# sample = octave_perlin_2d(
+			# 	x / 100, y / 100,
+			# 	4,
+			# 	0.5,
+			# 	2,
+			# )
+			# felloff = sample * linear_falloff(y, 500, 250)
+			# density = max(min(felloff, 1), 0)
+			# result[y][x] = threshme(density, 0.5)
+			result[y][x] = 1 if bue_noise_picker_2d(
+				x, y, 
+				1, 1, 
+				10,
+			) else 0
 	result = np.floor(result * 255).astype(np.uint8)
 	# print(result.max())
 	# print(result.min())
 
 	img = Image.fromarray(result, mode='L')
 	img.show()
+
+
+def bue_noise_picker_2d(
+	x,y,
+	sx, sy,
+	r,
+) -> bool:
+	freq = 50
+	here = noise.pnoise2(
+		x/sx*freq+0.5, y/sy*freq+0.5,
+	)
+	for x in range(x-r, x+r):
+		for y in range(y-r, y+r):
+			sample = noise.pnoise2(
+				x/sx*freq+0.5, y/sy*freq+0.5,
+			)
+			if sample > here:
+				return False
+	return True
 
 
 def octave_perlin_2d(

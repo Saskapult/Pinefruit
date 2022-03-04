@@ -99,11 +99,13 @@ impl MapComponent {
 	// trait RenderableComponent?
 	pub fn get_render_data(&self) -> Vec<(usize, usize)> {
 
-		self.chunk_models.iter().filter_map(|(_cpos, cme)| {
-			match cme {
-				_ => None,
-			}
-		}).collect::<Vec<_>>()
+		// self.chunk_models.iter().filter_map(|(_cpos, cme)| {
+		// 	match cme {
+		// 		_ => None,
+		// 	}
+		// }).collect::<Vec<_>>();
+
+		todo!()
 	}
 }
 
@@ -169,7 +171,7 @@ impl<'a> System<'a> for MapSystem {
 	fn run(
 		&mut self, 
 		(
-			mut render_resource,
+			render_resource,
 			mut physics_resource,
 			mut maps,
 			mut static_objects,

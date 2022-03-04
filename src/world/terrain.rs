@@ -127,7 +127,7 @@ impl TerrainGenerator {
 		chunk
 	}
 
-	/// Creates blcokmods which add grass and dirt layers to a map based on a chunk
+	/// Creates blockmods which add grass and dirt layers to a map based on a chunk
 	// This code is a little bad
 	// Try caching the above/below chunk
 	pub fn grassify_3d(
@@ -234,6 +234,68 @@ impl TerrainGenerator {
 		block_mods
 	}
 
+	pub fn treeify_3d(
+		&self,
+		chunk_position: [i32; 3], 
+		map: &Map,
+		bm: &BlockManager,	// Assumed to be the same as the world's bm
+	) -> ChunkBlockMods {
+		let mut block_mods = ChunkBlockMods::new();
+
+		let chunk = map.chunk(chunk_position).unwrap();
+		
+		let [bx, by, bz] = [
+			chunk_position[0] * map.chunk_dimensions[0] as i32,
+			chunk_position[1] * map.chunk_dimensions[1] as i32,
+			chunk_position[2] * map.chunk_dimensions[2] as i32,
+		];
+
+		for x in 0..chunk.size[0] as i32 {
+			for z in 0..chunk.size[2] as i32 {
+				for y in 0..chunk.size[1] as i32 {
+					if self.should_treeme([bx + x, by + y, bz + z], map, bm) {
+						let bms = self.place_tree([bx + x, by + y, bz + z], map.chunk_dimensions, bm);
+						append_chunkblockmods(&mut block_mods, bms);
+					}
+				}
+			}
+		}
+
+		block_mods
+	}
+
+	// Todo: offset on z so that trees are not always directly above each other
+	fn should_treeme(
+		&self,
+		world_position: [i32; 3], 
+		map: &Map,
+		bm: &BlockManager,
+	) -> bool {
+		let [x, y, z] = world_position;
+
+		let is_placement_candidate = crate::noise::blue_noise_picker_2d(
+			&self.perlin,
+			[x, z],
+			[1.0, 1.0],
+			20,
+		);
+
+		if is_placement_candidate {
+			// Must have grass below
+			if let Some(base_voxel) = map.get_voxel_world([x, y-1, z]) {
+				if !base_voxel.is_empty() && bm.index(base_voxel.unwrap_id()).name == "grass" {
+					// Test if we have space
+					let has_space = (0..10).map(|i| 
+						map.get_voxel_world([x, y+i, z]).unwrap_or(Voxel::Empty)
+					).all(|v| v.is_empty());
+	
+					return has_space
+				}
+			}
+		}
+		false
+	}
+
 	pub fn place_tree(
 		&self,
 		world_pos: [i32; 3],
@@ -247,7 +309,7 @@ impl TerrainGenerator {
 		let [x, y, z] = world_pos;
 
 		// Trunk
-		for i in 0..5 {
+		for i in 0..=5 {
 			insert_chunkblockmods(
 				&mut block_mods,
 				BlockMod {
@@ -257,7 +319,61 @@ impl TerrainGenerator {
 				chunk_size,
 			);
 		}
-		// Todo: leaves
+		
+		let leaflayers = [
+			[0; 25],
+			[0; 25],
+			[0; 25],
+			[
+				1, 1, 1, 1, 1,
+				1, 1, 1, 1, 1,
+				1, 1, 0, 1, 1,
+				1, 1, 1, 1, 1,
+				1, 1, 1, 1, 1,
+			],
+			[
+				1, 1, 1, 1, 1,
+				1, 1, 1, 1, 1,
+				1, 1, 0, 1, 1,
+				1, 1, 1, 1, 1,
+				1, 1, 1, 1, 1,
+			],
+			[
+				0, 0, 0, 0, 0, 
+				0, 1, 1, 1, 0, 
+				0, 1, 1, 1, 0, 
+				0, 1, 1, 1, 0, 
+				0, 0, 0, 0, 0, 
+			],
+			[
+				0, 0, 0, 0, 0, 
+				0, 0, 1, 0, 0, 
+				0, 1, 1, 1, 0, 
+				0, 0, 1, 0, 0, 
+				0, 0, 0, 0, 0, 
+			],
+		].map(|i| i.map(|i| i == 1));
+
+		for (ly, y_slice) in leaflayers.iter().enumerate() {
+			let ly = ly as i32;
+			for (lx, z_slice) in y_slice.chunks_exact(5).enumerate() {
+				let lx = lx as i32 - 2;
+				for (lz, &bleaves) in z_slice.iter().enumerate() {
+					let lz = lz as i32 - 2;
+					if bleaves {
+						insert_chunkblockmods(
+							&mut block_mods,
+							BlockMod {
+								position: VoxelPosition::WorldPosition([x+lx, y+ly, z+lz]),
+								reason: BlockModReason::WorldGenSet(Voxel::Block(leaves_idx)),
+							},
+							chunk_size,
+						);
+					
+					}
+				}
+			}
+		}
 
 		block_mods
 	}
