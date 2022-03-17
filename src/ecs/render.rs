@@ -21,6 +21,12 @@ pub enum RenderTarget {
 
 
 
+pub trait RenderableComponent {
+	fn get_render_data(&self) -> Vec<(usize, usize)>;
+}
+
+
+
 pub struct RenderResource {
 	pub instance: RenderInstance,
 	pub materials_manager: Arc<RwLock<MaterialManager>>,
@@ -174,7 +180,8 @@ impl<'a> System<'a> for RenderDataSystem {
 			// Models
 			for (model_c, transform_c) in (&models, &transforms).join() {
 				let instance = Instance::new()
-					.with_position(transform_c.position);
+					.with_position(transform_c.position)
+					.with_rotation(transform_c.rotation);
 				let model_instance = ModelInstance {
 					material_idx: model_c.material_idx,
 					mesh_idx: model_c.mesh_idx,
@@ -183,6 +190,7 @@ impl<'a> System<'a> for RenderDataSystem {
 				render_data.push(model_instance);
 			}
 			// Map chunks
+			// Todo: rotation
 			for (map_c, transform_c) in (&maps, &transforms).join() {
 				// Renders ALL available chunks
 				for (cp, entry) in &map_c.chunk_models {

@@ -5,30 +5,17 @@ import numpy as np
 from PIL import Image
 
 
-shape = (256, 256)
+shape = (512, 512)
 
 
 def main():
 	result = np.zeros(shape)
 	for x in range(shape[0]):
 		for y in range(shape[1]):
-			# sample = octave_perlin_2d(
-			# 	x / 100, y / 100,
-			# 	4,
-			# 	0.5,
-			# 	2,
-			# )
-			# felloff = sample * linear_falloff(y, 500, 250)
-			# density = max(min(felloff, 1), 0)
-			# result[y][x] = threshme(density, 0.5)
-			result[y][x] = 1 if bue_noise_picker_2d(
-				x, y, 
-				1, 1, 
-				10,
-			) else 0
+			result[y][x] = x | y
 	result = np.floor(result * 255).astype(np.uint8)
-	# print(result.max())
-	# print(result.min())
+	print(result.max())
+	print(result.min())
 
 	img = Image.fromarray(result, mode='L')
 	img.show()

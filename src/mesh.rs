@@ -145,7 +145,7 @@ impl Mesh {
 
 		let uvs = match obj_model.mesh.texcoords.len() > 0 {
 			true => {
-				Some((0..obj_model.mesh.texcoords.len() / 3).map(|i| {
+				Some((0..obj_model.mesh.texcoords.len() / 2).map(|i| {
 					[
 						obj_model.mesh.texcoords[i * 2 + 0],
 						obj_model.mesh.texcoords[i * 2 + 1],

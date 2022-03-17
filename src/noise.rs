@@ -1,8 +1,11 @@
 use noise::{NoiseFn, Perlin};
 use splines::{Interpolation, Key, Spline};
 use anyhow::*;
+use rand::prelude::*;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 
+/// Various noisy things
 
 
 pub fn octave_perlin_2d(
@@ -65,6 +68,24 @@ fn squashfactor_fn(
 
 
 
+fn squashup_linear(
+	pt: f64,
+	centre: f64, 
+	max_distance: f64,
+) -> f64 {
+	let distance = centre - pt;
+	let p = distance / max_distance;
+	if p > 1.0 {
+		p
+	} else if p < 0.0 {
+		p
+	} else {
+		pt * p
+	}
+}
+
+
+
 fn squashfactor_spline(
 	pt: f64,
 	centre: f64,
@@ -109,4 +130,89 @@ pub fn blue_noise_picker_2d(
 		}
 	}
 	true
+}
+
+
+
+// seed should be based on some variable position, maybe world seed plus chunk sum(x,y,z)
+pub fn xoshiro_2d(seed: u64, width: u32, height: u32) -> Vec<f64> {
+	let mut x = Xoshiro256PlusPlus::seed_from_u64(seed);
+	(0..(width*height)).map(|_| x.gen::<f64>()).collect::<Vec<_>>()
+}
+
+
+
+pub fn xoshiro_blue_2d(
+	seed: u64,
+	width: u32,
+	height: u32,
+	r: u32,
+) -> Vec<bool> {
+	let adjusted_width = width + r * 2;
+	let adjusted_height = height + r * 2;
+
+	// Generate values
+	let data = xoshiro_2d(seed, adjusted_width, adjusted_height);
+		// .chunks_exact(adjusted_width as usize)
+		// .map(|row| Vec::from(row))
+		// .collect::<Vec<_>>();
+
+	let tester = |x: u32, y: u32| {
+		let here = data[((x*adjusted_width) + y) as usize];
+		for sx in (x-r)..=(x+r) {
+			for sy in (y-r)..=(y+r) {
+				let sample = data[((sx*adjusted_width) + sy) as usize];
+				if sample > here {
+					return false
+				}
+			}
+		}
+		true
+	};
+
+	let st_row = r;
+	let en_row = height + r;
+	let st_col = r;
+	let en_col = width + r;
+
+	// Test stuff
+	let mut bmap = Vec::new();
+	for y in st_row..en_row {
+		for x in st_col..en_col {
+			bmap.push(tester(x, y))
+		}
+	}
+
+	bmap
+}
+
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+    #[test]
+    fn chunk_seed_test() {
+
+		const WIDTH: u32 = 30;
+		const HEIGHT: u32 = 30;
+		const R: u32 = 1;
+		
+		let output = xoshiro_blue_2d(0, WIDTH, HEIGHT, R);
+
+		let img = image::DynamicImage::ImageRgb8(
+			image::ImageBuffer::from_vec(WIDTH, HEIGHT, output.iter().flat_map(|&b| {
+				if b {
+					[u8::MAX; 3]
+				} else {
+					[u8::MIN; 3]
+				}
+			}).collect::<Vec<_>>()).unwrap()
+		);
+
+		crate::util::show_image(img).unwrap();
+
+        assert_eq!(2 + 2, 4);
+    }
 }

@@ -33,8 +33,8 @@ pub struct MapComponent {
 }
 impl MapComponent {
 	pub fn new(blockmanager: &Arc<RwLock<crate::world::BlockManager>>) -> Self {
-		let mut map = crate::world::Map::new([16; 3], blockmanager);
-		map.generate();
+		let map = crate::world::Map::new([16; 3], blockmanager);
+		// map.generate();
 		Self {
 			map,
 			chunk_models: HashMap::new(),
@@ -67,7 +67,7 @@ impl MapComponent {
 
 		self.map.set_voxel_world(pos, voxel);
 		let (c, v) = self.map.world_chunk_voxel(pos);
-		let [cdx, cdy, cdz] = self.map.chunk_dimensions;
+		let [cdx, cdy, cdz] = self.map.chunk_size;
 		// X cases
 		if v[0] as u32 == cdx-1 {
 			let cxp = [c[0]+1, c[1], c[2]];
@@ -215,7 +215,10 @@ impl<'a> System<'a> for MapSystem {
 					if map_c.map.is_chunk_loaded(chunk_position) {
 						map_c.chunk_models.insert(chunk_position, ChunkModelEntry::UnModeled);
 					} else {
-						map_c.chunk_models.insert(chunk_position, ChunkModelEntry::Unloaded);
+						debug!("Generating chunk {:?}", chunk_position);
+						map_c.map.generate_chunk(chunk_position).unwrap();
+						map_c.chunk_models.insert(chunk_position, ChunkModelEntry::UnModeled);
+						// map_c.chunk_models.insert(chunk_position, ChunkModelEntry::Unloaded);
 					}
 					
 				}

@@ -56,6 +56,13 @@ impl Instance {
 		}
 	}
 
+	pub fn with_rotation(self, rotation: impl Into<UnitQuaternion<f32>>) -> Self {
+		Self {
+			rotation: rotation.into(),
+			..self
+		}
+	}
+
 	pub fn lerp(&self, other: &Self, t: f32) -> Self {
 		let colour = {
 			if self.colour.is_some() && other.colour.is_some() {
@@ -188,7 +195,7 @@ pub struct InstanceModelMatrix {
 impl InstanceModelMatrix {
 	// Todo: add scale and all that
 	pub fn from_pr(position: &Vector3<f32>, rotation: &UnitQuaternion<f32>) -> Self {
-		let model = rotation.to_homogeneous() * Matrix4::new_translation(position);
+		let model = Matrix4::new_translation(position) * rotation.to_homogeneous();
 		Self {
 			model: model.into(),
 		}

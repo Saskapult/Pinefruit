@@ -3,85 +3,88 @@ use noise::Perlin;
 use noise::Seedable;
 use noise::Worley;
 use noise::NoiseFn;
-use std::path::Path;
-use anyhow::*;
-use splines::*;
+use thiserror::Error;
 
 
 
 
-pub trait BaseGenerator {
-	fn chunk_base(&self, chunk_position: [i32; 3], chunk: Chunk, bm: &BlockManager) -> Chunk;
+pub trait SurfaceGenerator {
+	// Only stones
+	fn chunk_surface(&self, chunk_position: [i32; 3], chunk: Chunk, bm: &BlockManager) -> Chunk;
+	// Todo: top and filler block adder (max depth, depth noise)
+}
+pub trait Carver {
+	// Makes holes
+	fn carve_chunk(&self, chunk_position: [i32; 3], chunk: Chunk) -> Chunk;
 }
 
 
 
+#[derive(Error, Debug)]
+pub enum GenerationError {
+	#[error("a chunk ({chunk_position:?}) containing data requisite for generation was not loaded to the minimum stage of {stage_min:?}")]
+	ChunkStageLtError {
+		chunk_position: [i32; 3], 
+		stage_min: GenerationStage,
+	},
+	#[error("a chunk ({chunk_position:?}) should be of stage {stage_desired:?} but is of stage {stage_current:?}")]
+	ChunkStageNeError {
+		chunk_position: [i32; 3], 
+		stage_current: GenerationStage,
+		stage_desired: GenerationStage,
+	},
+	#[error("lol idk")]
+	GenericError,
+}
+
+
+
+#[derive(Debug)]
 pub struct TerrainGenerator {
 	perlin: Perlin,
+	base_noise_threshold: f64,
 }
 impl TerrainGenerator {
 	pub fn new(seed: u32) -> Self {
 		Self {
 			perlin: Perlin::new().set_seed(seed),
+			base_noise_threshold: 0.5,
 		}
 	}
 
-	/// Creates a chunk base based on a heightmap
-	fn chunk_base_hm(
-		&self, 
-		chunk_position: [i32; 3], 
-		mut chunk: Chunk,
-		bm: &BlockManager,
-	) -> Chunk {
-		let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
-		let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();
+	/// Should this block be solid by default?
+	#[inline]
+	fn is_solid_default(&self, world_position: [i32; 3]) -> bool {
+		let density = crate::noise::octave_perlin_3d(
+			&self.perlin, 
+			world_position.map(|v| (v as f64 + 0.5) / 25.0), 
+			4, 
+			0.5,
+			2.0,
+		);
 
-		for x in 0..chunk.size[0] {
-			let x_world = chunk.size[0] as i32 * chunk_position[0] + x as i32;
-			for z in 0..chunk.size[2] {
-				let z_world = chunk.size[2] as i32 * chunk_position[2] + z as i32;
-
-				let noisy = crate::noise::octave_perlin_2d(
-					&self.perlin, 
-					[
-						x_world as f64 / 25.0, 
-						z_world as f64 / 25.0,
-					], 
-					4, 
-					0.5,
-					2.0,
-				).powf(2.28);
-
-				let y_level = (noisy * 16.0 - 8.0) as i32;
-
-				for y in 0..chunk.size[1] {
-					let y_world = chunk.size[1] as i32 * chunk_position[1] + y as i32;
-					let voxel = {
-						if y_world > y_level {
-							Voxel::Empty
-						} else if y_world == y_level {
-							Voxel::Block(grass_idx)
-						} else {
-							Voxel::Block(dirt_idx)
-						}
-					};
-					chunk.set_voxel([x as i32, y as i32, z as i32], voxel)
-				}
+		let [_, y_world, _] = world_position;
+		let squashpart = if y_world >= 0 {
+			// No blocks after y=20
+			if y_world > 20 {
+				0.0
+			} else {
+				1.0 - (y_world as f64 / 20.0)
 			}
-		}
+		} else {
+			y_world.abs() as f64 / 20.0 + 1.0
+		};
 
-		chunk
+		density * squashpart >= self.base_noise_threshold
 	}
 
 	/// Creates a chunk base based on 3d noise
-	fn chunk_base_3d(
+	pub fn chunk_base_3d(
 		&self, 
 		chunk_position: [i32; 3], 
 		mut chunk: Chunk,
-		bm: &BlockManager,
+		base_idx: usize
 	) -> Chunk {
-		let stone_idx = bm.index_name(&"stone".to_string()).unwrap();
-
 		for x in 0..chunk.size[0] {
 			let x_world = chunk.size[0] as i32 * chunk_position[0] + x as i32;
 			for z in 0..chunk.size[2] {
@@ -89,37 +92,14 @@ impl TerrainGenerator {
 				for y in 0..chunk.size[1] {
 					let y_world = chunk.size[1] as i32 * chunk_position[1] + y as i32;
 
-					let density = crate::noise::octave_perlin_3d(
-						&self.perlin, 
-						[
-							x_world as f64 / 25.0, 
-							y_world as f64 / 25.0,
-							z_world as f64 / 25.0,
-						], 
-						4, 
-						0.5,
-						2.0,
-					);
-
-					let squashpart = if y_world >= 0 {
-						// No blocks after y=20
-						if y_world > 20 {
-							0.0
-						} else {
-							1.0 - (y_world as f64 / 20.0)
-						}
-					} else {
-						y_world.abs() as f64 / 20.0 + 1.0
-					};
-
-					let voxel = {
-						if density * squashpart >= 0.5 {
-							Voxel::Block(stone_idx)
+					chunk.set_voxel(
+						[x as i32, y as i32, z as i32], 
+						if self.is_solid_default([x_world, y_world, z_world]) {
+							Voxel::Block(base_idx)
 						} else {
 							Voxel::Empty
-						}
-					};
-					chunk.set_voxel([x as i32, y as i32, z as i32], voxel)
+						},
+					)
 				}				
 			}
 		}
@@ -127,105 +107,75 @@ impl TerrainGenerator {
 		chunk
 	}
 
-	/// Creates blockmods which add grass and dirt layers to a map based on a chunk
-	// This code is a little bad
-	// Try caching the above/below chunk
-	pub fn grassify_3d(
+	/// Creates blockmods which add grass and dirt layers to a chunk.
+	/// Relies upon the bare shape with no regard to world contents.
+	// Todo: Stop outputting blockmods, just take and return chunk?
+	pub fn cover_chunk(
 		&self,
 		chunk_position: [i32; 3], 
-		map: &Map,
-		bm: &BlockManager,	// Assumed to be the same as the world's bm
+		chunk_size: [u32; 3],
+		top_idx: usize,
+		fill_idx: usize,
+		fill_depth: i32, // n following top placement
 	) -> ChunkBlockMods {
 		let mut block_mods = ChunkBlockMods::new();
 
-		let chunk = map.chunk(chunk_position).unwrap();
-
-		let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
-		let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();
-
-		for x in 0..chunk.size[0] as i32 {
-			for z in 0..chunk.size[2] as i32 {
-				for y in 0..chunk.size[1] as i32 {
-
-					let set_to_grass = 
-					if !chunk.get_voxel([x, y, z]).is_empty() {
-						// Not empty
-						if chunk.is_in_bounds(x, y+1, z) {
-							// Above is in chunk
-							chunk.get_voxel([x, y+1, z]).is_empty()
-							// Above is empty
-						} else {
-							// Above is not in chunk
-							match map.chunk([chunk_position[0], chunk_position[1]+1, chunk_position[2]]) {
-								// Above is empty
-								Some(c) => c.get_voxel([x, 0, z]).is_empty(),
-								// Above does not exist
-								None => true, 
-							}
-						}
+		for x in 0..chunk_size[0] as i32 {
+			for z in 0..chunk_size[2] as i32 {
+				let mut dirt_to_place = 0;
+				let mut last_was_empty = false;
+				// Descend y
+				for y in (0..chunk_size[1] as i32 + fill_depth+1).rev() {
+					let v_world_position = chunk_voxel_world(chunk_position, [x, y, z], chunk_size);
+					
+					// Never set an empty voxel
+					if !self.is_solid_default(v_world_position) {
+						// Reset dirt counter
+						last_was_empty = true;
+						dirt_to_place = 0;
+						continue
 					} else {
-						// Empty
-						false
-					};	
+						let v_chunk_position = world_chunk(v_world_position, chunk_size);
 
-					if set_to_grass {
-						insert_chunkblockmods(
-							&mut block_mods,
-							BlockMod {
-								position: VoxelPosition::from_chunk_voxel(chunk_position, [x,y,z]),
-								reason: BlockModReason::WorldGenSet(Voxel::Block(grass_idx)),
-							},
-							chunk.size,
-						);
+						// Set dirt if needed
+						// Know voxel is not exposed because it would be preceeded by empty,
+						//  meaning dirt_to_place would be zero
 
-						// Set below it to dirt
-						for i in 1..=2 {
+						// Set grass if exposed on top
+						if last_was_empty {
+							dirt_to_place = 3;
 							
-							if chunk.is_in_bounds(x, y-i, z) {
-								// In bounds
-
-								// Not empty
-								let set_to_dirt= !chunk.get_voxel([x, y-i, z]).is_empty();
-
-								if set_to_dirt {
+							if v_chunk_position == chunk_position {
+								insert_chunkblockmods(
+									&mut block_mods,
+									BlockMod {
+										position: VoxelPosition::from_chunk_voxel(chunk_position, [x,y,z]),
+										reason: BlockModReason::WorldGenSet(Voxel::Block(top_idx)),
+									},
+									chunk_size,
+								);
+							}
+						} else {
+							// If not exposed and more dirt to place, set dirt
+							if dirt_to_place != 0 {
+								dirt_to_place -= 1;
+								// set to dirt if within this chunk
+								if v_chunk_position == chunk_position {
 									insert_chunkblockmods(
 										&mut block_mods,
 										BlockMod {
-											position: VoxelPosition::from_chunk_voxel(chunk_position, [x, y-i, z]),
-											reason: BlockModReason::WorldGenSet(Voxel::Block(dirt_idx)),
+											position: VoxelPosition::from_chunk_voxel(chunk_position, [x,y,z]),
+											reason: BlockModReason::WorldGenSet(Voxel::Block(fill_idx)),
 										},
-										chunk.size,
-									);
-								}
-							} else {
-								// Below bounds
-								let set_to_dirt = 
-								match map.chunk([chunk_position[0], chunk_position[1]-1, chunk_position[2]]) {
-									// Not empty
-									Some(c) => !c.get_voxel([x, chunk.size[1] as i32 + y-i, z]).is_empty(),
-									// Does not exist
-									None => false,
-								};
-
-								if set_to_dirt {
-									assert!(chunk.is_in_bounds(x, chunk.size[1] as i32 + y-i, z), "y out of bounds {}", y-i);
-									insert_chunkblockmods(
-										&mut block_mods,
-										BlockMod {
-											position: VoxelPosition::from_chunk_voxel(
-												[chunk_position[0], chunk_position[1]-1, chunk_position[2]], 
-												[x, chunk.size[1] as i32 + y-i, z],
-											),
-											reason: BlockModReason::WorldGenSet(Voxel::Block(dirt_idx)),
-										},
-										chunk.size,
+										chunk_size,
 									);
 								}
 							}
-
-							
 						}
+
+						last_was_empty = false;
 					}
+
 					
 				}
 			}
@@ -234,68 +184,156 @@ impl TerrainGenerator {
 		block_mods
 	}
 
+	/// Tests if a point in a chunk is a tree generation candidate based on the chunk's noise and an r value
+	// I like this very much
+	// Todo: move to world coordinates
+	fn is_tree_candidate_2d(
+		&self,
+		position: [i32; 2], 
+		chunk_size_xz: [u32; 2],
+		chunk_noise_2d: Vec<f32>,
+		r: u32,
+	) -> bool {
+		let [x, z] = position;
+		
+		// Should be offset so that two chunks cannot generate trees beside each other
+		if x == 0 || z == 0  {
+			// Set top and left false
+			return false
+		}
+		
+		let r = r as i32;
+		let x = x + r;
+		let z = z + r;
+		let max_z = chunk_size_xz[1] as i32;		
+		
+		let here = chunk_noise_2d[((x*max_z) + z) as usize];
+		for sx in (x-r)..=(x+r) {
+			for sz in (z-r)..=(z+r) {
+				let sample = chunk_noise_2d[((sx*max_z) + sz) as usize];
+				if sample > here {
+					return false
+				}
+			}
+		}
+		true
+	}
+
+	/// Tests if it would be reasonable to put a tree here.
+	/// Affected chunks must be at least Bare.
+	// Todo: Make it generate ON TOP of the specified block
+	//  Will let only the containing chunk be grassified
+	fn could_generate_tree(
+		&self,
+		world_position: [i32; 3], 
+		map: &Map,
+		bm: &BlockManager,
+	) -> Result<bool, GenerationError> {
+		const STAGE_NEEDED: GenerationStage = GenerationStage::Covered;
+
+		let [x, y, z] = world_position;
+
+		// The chunk needs to be at least Covered
+		let this_chunk = world_chunk(world_position, map.chunk_size);
+		if map.chunk_stage(this_chunk) < STAGE_NEEDED {
+			return Err(GenerationError::ChunkStageLtError {
+				chunk_position: this_chunk, 
+				stage_min: STAGE_NEEDED,
+			});
+		}
+
+		// Must have voxel as base
+		let below_chunk = world_chunk([x, y-1, z], map.chunk_size);
+		if below_chunk != this_chunk {
+			if map.chunk_stage(below_chunk) < STAGE_NEEDED {
+				return Err(GenerationError::ChunkStageLtError {
+					chunk_position: below_chunk, 
+					stage_min: STAGE_NEEDED,
+				});
+			}
+		}
+		let base_voxel = map.get_voxel_world([x, y-1, z]).unwrap();
+		
+		// No generating on air
+		if base_voxel.is_empty() {
+			return Ok(false);
+		}
+
+		// Must have grass below
+		if !(bm.index(base_voxel.unwrap_id()).name == "grass") {
+			return Ok(false);
+		}
+
+		// Must have ten blocks above
+		for i in 0..10 {
+			let space_chunk = world_chunk([x, y+i, z], map.chunk_size);
+			if space_chunk != this_chunk {
+				if map.chunk_stage(space_chunk) < STAGE_NEEDED {
+					return Err(GenerationError::ChunkStageLtError {
+						chunk_position: space_chunk, 
+						stage_min: STAGE_NEEDED,
+					});
+				}
+			}
+
+			if !map.get_voxel_world([x, y+i, z]).unwrap().is_empty() {
+				return Ok(false)
+			}
+		}
+
+		return Ok(true)
+	}
+
+	// Todo: only let leaves replace certain voxel values
+	// Because each chunk has its won seed this won't generate trees on top of each other unless the chunk size is big enough for that
 	pub fn treeify_3d(
 		&self,
 		chunk_position: [i32; 3], 
 		map: &Map,
 		bm: &BlockManager,	// Assumed to be the same as the world's bm
-	) -> ChunkBlockMods {
+		r: u32
+	) -> Result<ChunkBlockMods, GenerationError> {
 		let mut block_mods = ChunkBlockMods::new();
 
 		let chunk = map.chunk(chunk_position).unwrap();
 		
 		let [bx, by, bz] = [
-			chunk_position[0] * map.chunk_dimensions[0] as i32,
-			chunk_position[1] * map.chunk_dimensions[1] as i32,
-			chunk_position[2] * map.chunk_dimensions[2] as i32,
+			chunk_position[0] * map.chunk_size[0] as i32,
+			chunk_position[1] * map.chunk_size[1] as i32,
+			chunk_position[2] * map.chunk_size[2] as i32,
 		];
 
 		for x in 0..chunk.size[0] as i32 {
 			for z in 0..chunk.size[2] as i32 {
 				for y in 0..chunk.size[1] as i32 {
-					if self.should_treeme([bx + x, by + y, bz + z], map, bm) {
-						let bms = self.place_tree([bx + x, by + y, bz + z], map.chunk_dimensions, bm);
-						append_chunkblockmods(&mut block_mods, bms);
+					// If it's a tree candidate
+					if self.is_tree_candidate_2d(
+						[x,z], 
+						[chunk.size[0], chunk.size[2]], 
+						crate::noise::xoshiro_2d(
+							crate::world::chunk_seed(chunk_position, 0), 
+							chunk.size[0] + r*2, 
+							chunk.size[2] + r*2,
+						).iter().map(|&f| f as f32).collect::<Vec<_>>(), 
+						r,
+					) {
+						// And we can generate a tree here
+						if self.could_generate_tree([bx + x, by + y, bz + z], map, bm)? {
+							let bms = self.place_tree([bx + x, by + y, bz + z], map.chunk_size, bm);
+							append_chunkblockmods(&mut block_mods, bms);
+							// Done with trees for this chunk column
+							break
+						}
 					}
+					
 				}
 			}
 		}
 
-		block_mods
+		Ok(block_mods)
 	}
 
-	// Todo: offset on z so that trees are not always directly above each other
-	fn should_treeme(
-		&self,
-		world_position: [i32; 3], 
-		map: &Map,
-		bm: &BlockManager,
-	) -> bool {
-		let [x, y, z] = world_position;
-
-		let is_placement_candidate = crate::noise::blue_noise_picker_2d(
-			&self.perlin,
-			[x, z],
-			[1.0, 1.0],
-			20,
-		);
-
-		if is_placement_candidate {
-			// Must have grass below
-			if let Some(base_voxel) = map.get_voxel_world([x, y-1, z]) {
-				if !base_voxel.is_empty() && bm.index(base_voxel.unwrap_id()).name == "grass" {
-					// Test if we have space
-					let has_space = (0..10).map(|i| 
-						map.get_voxel_world([x, y+i, z]).unwrap_or(Voxel::Empty)
-					).all(|v| v.is_empty());
-	
-					return has_space
-				}
-			}
-		}
-		false
-	}
-
+	/// Generates blockmods to put a tree world_pos
 	pub fn place_tree(
 		&self,
 		world_pos: [i32; 3],
@@ -313,7 +351,7 @@ impl TerrainGenerator {
 			insert_chunkblockmods(
 				&mut block_mods,
 				BlockMod {
-					position: VoxelPosition::WorldPosition([x, y+i, z]),
+					position: VoxelPosition::WorldRelative([x, y+i, z]),
 					reason: BlockModReason::WorldGenSet(Voxel::Block(log_idx)),
 				},
 				chunk_size,
@@ -364,7 +402,7 @@ impl TerrainGenerator {
 						insert_chunkblockmods(
 							&mut block_mods,
 							BlockMod {
-								position: VoxelPosition::WorldPosition([x+lx, y+ly, z+lz]),
+								position: VoxelPosition::WorldRelative([x+lx, y+ly, z+lz]),
 								reason: BlockModReason::WorldGenSet(Voxel::Block(leaves_idx)),
 							},
 							chunk_size,
@@ -378,21 +416,12 @@ impl TerrainGenerator {
 		block_mods
 	}
 }
-impl BaseGenerator for TerrainGenerator {
-	fn chunk_base(
-		&self, 
-		chunk_position: [i32; 3], 
-		chunk: Chunk,
-		bm: &BlockManager,
-	) -> Chunk {
-		self.chunk_base_3d(chunk_position, chunk, bm)
-	}
-}
 
 
 
-pub trait Carver {
-	fn carve_chunk(&self, chunk_position: [i32; 3], chunk: Chunk) -> Chunk;
+// Helper
+fn world_position_stage(world_position: [i32; 3], map: &Map) -> GenerationStage {
+	map.chunk_stage(world_chunk(world_position, map.chunk_size))
 }
 
 
@@ -435,58 +464,4 @@ impl Carver for WorleyCarver {
 
 		chunk
 	}
-}
-
-
-
-pub fn save_spline(
-	spline: &Spline<f64, f64>, 
-	path: impl AsRef<Path>,
-) -> Result<()> {
-	let path = path.as_ref();
-	// let canonical_path = path.canonicalize()
-	// 	.with_context(|| format!("Failed to canonicalize path '{:?}'", &path))?;
-	let canonical_path = path;
-
-	let f = std::fs::File::create(&path)
-		.with_context(|| format!("Failed to write file path '{:?}'", &canonical_path))?;
-	ron::ser::to_writer(f, spline)
-		.with_context(|| format!("Failed to parse spline ron file '{:?}'", &canonical_path))?;
-	
-	Ok(())
-}
-pub fn load_spline(path: impl AsRef<Path>) -> Result<Spline<f64, f64>> {
-	let path = path.as_ref();
-	let canonical_path = path.canonicalize()
-		.with_context(|| format!("Failed to canonicalize path '{:?}'", &path))?;
-	let f = std::fs::File::open(&path)
-		.with_context(|| format!("Failed to read from file path '{:?}'", &canonical_path))?;
-	let spline: Spline<f64, f64> = ron::de::from_reader(f)
-		.with_context(|| format!("Failed to parse spline ron file '{:?}'", &canonical_path))?;
-	Ok(spline)
-}
-
-
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	fn make_test_spline() -> Spline<f64, f64> {
-		let k1 = Key::new(0.0, 0.0, Interpolation::Linear);
-		let k2 = Key::new(1.0, 1.0, Interpolation::Linear);
-		let spline = Spline::from_vec(vec![k1, k2]);
-		spline
-	}
-
-    #[test]
-    fn test_spline_serde() {
-		let spline1 = make_test_spline();
-
-		let spline_path = "/tmp/splinetime.ron";
-		save_spline(&spline1, spline_path).unwrap();
-		let spline2 = load_spline(spline_path).unwrap();
-
-        assert_eq!(spline1.keys(), spline2.keys());
-    }
 }

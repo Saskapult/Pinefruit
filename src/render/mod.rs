@@ -1,6 +1,18 @@
-/*
-Please send help, I don't know what I'm doing
-*/
+//! # This module is for rendering things.
+//! 
+//! This documentation is barely documentation, make it better.
+//! 
+//! The central thing, render instance, is cool.
+//! 
+//! ## The How
+//! All shaders do not need to be known at any point in execution.
+//! In order to accomplih this multiple vertex, instance, and material formats are used.
+//! This will decrease performance if too many different formats are needed.
+//! Please try to use the same formats even when that specific shader doesn't need it.
+//! 
+//! Please send help, I don't know what I'm doing
+
+
 
 pub mod camera;
 pub mod boundmaterial;

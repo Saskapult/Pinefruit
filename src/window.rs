@@ -12,7 +12,8 @@ use std::thread;
 use std::time::{Instant, Duration};
 use egui;
 use crate::ecs::*;
-use specs::WorldExt;
+use specs::{WorldExt, Entity};
+
 
 
 
@@ -88,7 +89,7 @@ impl GameWindow {
 		render_resource: &mut RenderResource,
 		destination_view: &wgpu::TextureView,
 		world: &specs::World,
-		camera_transform: &TransformComponent,
+		entity: Entity,
 	) {
 		let egui_start = Instant::now();
 		self.platform.begin_frame();
@@ -100,35 +101,51 @@ impl GameWindow {
 
 				ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
 
-				// Find camera for this window or something idk
-				let pos = [
-					camera_transform.position[0],
-					camera_transform.position[1],
-					camera_transform.position[2],
-				];
-				ui.label(format!("pos: [{:.1}, {:.1}, {:.1}]", pos[0], pos[1], pos[2]));
-				let world_pos = [
-					pos[0].floor() as i32,
-					pos[1].floor() as i32,
-					pos[2].floor() as i32,
-				];
-				ui.label(format!("world: {:?}", world_pos));
-				let cpos = [
-					world_pos[0].div_euclid(16),
-					world_pos[1].div_euclid(16),
-					world_pos[2].div_euclid(16),
-				];
-				let mut vpos = [
-					(world_pos[0] % 16 + 16) % 16,
-					(world_pos[1] % 16 + 16) % 16,
-					(world_pos[2] % 16 + 16) % 16,
-				];
-				vpos.iter_mut().zip([16; 3].iter()).for_each(|(v, cs)| {
-					if *v < 0 {
-						*v = *cs as i32 + *v;
-					}
-				});
-				ui.label(format!("chunk: {:?} - {:?}", cpos, vpos));
+				// Transform info
+				if let Some(transform) = world.read_component::<TransformComponent>().get(entity) {
+					// Find camera for this window or something idk
+					let pos = transform.position;
+					ui.label(format!("pos: [{:.1}, {:.1}, {:.1}]", pos[0], pos[1], pos[2]));
+					let world_pos = [
+						pos[0].floor() as i32,
+						pos[1].floor() as i32,
+						pos[2].floor() as i32,
+					];
+					ui.label(format!("world: {:?}", world_pos));
+					let cpos = [
+						world_pos[0].div_euclid(16),
+						world_pos[1].div_euclid(16),
+						world_pos[2].div_euclid(16),
+					];
+					let mut vpos = [
+						(world_pos[0] % 16 + 16) % 16,
+						(world_pos[1] % 16 + 16) % 16,
+						(world_pos[2] % 16 + 16) % 16,
+					];
+					vpos.iter_mut().zip([16; 3].iter()).for_each(|(v, cs)| {
+						if *v < 0 {
+							*v = *cs as i32 + *v;
+						}
+					});
+					ui.label(format!("chunk: {:?} - {:?}", cpos, vpos));
+				}
+
+				// Lookat info
+				if let Some(marker_stuff) = world.read_component::<MarkerComponent>().get(entity) {
+					let look_pos= marker_stuff.look_pos;
+					let normal = marker_stuff.look_normal;
+					let normal_str = match normal.map(|f| f.round() as i32) {
+						[1, 0, 0] => "xp",
+						[0, 1, 0] => "yp",
+						[0, 0, 1] => "zp",
+						[-1, 0, 0] => "xn",
+						[0, -1, 0] => "yn",
+						[0, 0, -1] => "zn",
+						_ => "unaligned",
+					};
+					ui.label(format!("look at: {:?} ({:?})", look_pos, marker_stuff.look_v));
+					ui.label(format!("look normal: {:?} ({})", normal, normal_str));
+				}
 
 				let steptime = Duration::from_millis(42069);
 				ui.label(format!("step time: {}ms", steptime.as_millis()));
@@ -241,8 +258,7 @@ impl GameWindow {
 	pub fn draw(
 		&mut self,
 		world: &mut specs::World,
-		camera: &CameraComponent,
-		camera_transform: &TransformComponent,
+		entity: Entity,
 	) {
 
 		let mut render_resource = world.write_resource::<RenderResource>(); 
@@ -267,15 +283,23 @@ impl GameWindow {
 		});
 
 		// Game
-		let encode_st = Instant::now();
-		self.render_game(
-			&mut encoder,
-			camera,
-			camera_transform,
-			&frame.texture,
-			&mut render_resource,
-		);
-		render_resource.encode_durations.record(Instant::now() - encode_st);
+		{
+			let encode_st = Instant::now();
+			let ccs = world.read_component::<CameraComponent>();
+			let camera = ccs.get(entity)
+				.expect("Render point has no camera!");
+			let tcs = world.read_component::<TransformComponent>();
+			let camera_transform = tcs.get(entity)
+				.expect("Render camera has no transform!");
+			self.render_game(
+				&mut encoder,
+				camera,
+				camera_transform,
+				&frame.texture,
+				&mut render_resource,
+			);
+			render_resource.encode_durations.record(Instant::now() - encode_st);
+		}
 
 		// Ui
 		self.render_ui(
@@ -283,7 +307,7 @@ impl GameWindow {
 			&mut render_resource,
 			&frame_view,
 			world,
-			camera_transform,
+			entity,
 		);
 
 		// Submit
@@ -396,22 +420,25 @@ impl WindowManager {
 
 		let (event_loop_sender, event_loop_receiver) = mpsc::sync_channel(10);
 
-		// This needs to stay in its own thread because it cannot sync
-		let event_thread_handle = thread::spawn(move || {
-			let event_loop_proxy = event_loop_proxy.clone();
-			loop {
-				match event_loop_receiver.recv() {
-					Ok(event) => {
-						event_loop_proxy.send_event(event).expect("Could not send window creation request!");
-					},
-					Err(_) => {
-						error!("Failed to recv in event thread, sending close signal");
-						event_loop_proxy.send_event(EventLoopEvent::Close).expect("Could not send close signal!");
-						return 1
+		// Event loop proxy needs to stay in its own thread because it cannot sync
+		let event_thread_handle = thread::Builder::new()
+			.name("winit event thread".into())
+			.spawn(move || {
+				let event_loop_proxy = event_loop_proxy.clone();
+				loop {
+					match event_loop_receiver.recv() {
+						Ok(event) => {
+							event_loop_proxy.send_event(event).expect("Failed to send window creation request!");
+						},
+						Err(_) => {
+							error!("Failed to recv in event thread, sending close signal");
+							event_loop_proxy.send_event(EventLoopEvent::Close).expect("Failed to send event loop close signal!");
+							return 1
+						}
 					}
 				}
-			}
-		});
+			})
+			.expect("Failed to spawn winit event thread!");
 
 		Self {
 			windows,
@@ -437,14 +464,14 @@ impl WindowManager {
 		// A RegisterWindow event with the window should be inserted into the queue
 		// It should be processed in the next iteration
 		self.event_loop_sender.send(EventLoopEvent::CreateWindow)
-			.expect("Could not send window creation request");
+			.expect("Failed to send window creation request!");
 	}
 
 	// Get a window fastly (in this iteration)
 	pub fn request_window_immediate(&mut self) {
 		let (sender, receiver) = mpsc::channel();
 		self.event_loop_sender.send(EventLoopEvent::SupplyWindow(sender))
-			.expect("Could not send window creation request");
+			.expect("Failed to send window creation request");
 		let window = receiver.recv().unwrap();
 		self.register_window(window);
 	}
@@ -477,8 +504,8 @@ impl WindowManager {
 		}
 		// Shut down event loop
 		self.event_loop_sender.send(EventLoopEvent::Close)
-			.expect("Could not send event loop close request");
-		// Everything else *should* stop/drop when self is dropped (here)
+			.expect("Failed to send event loop close request");
+		// Everything else *should* stop/drop when self is dropped
 	}
 
 	/// Updates the windows and input resource

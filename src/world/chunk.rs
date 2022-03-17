@@ -25,6 +25,9 @@ impl Voxel {
 
 
 
+// Todo: make this better for vertical iteration
+//  (x * xs * zs) + (z * zs) + y
+//  Would it be better for x->z->y or z->x->y?
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chunk {
 	pub size: [u32; 3],
@@ -121,7 +124,45 @@ impl Chunk {
 		carver.carve_chunk(self_position, self)
 	}
 
-	pub fn base(self, self_position: [i32; 3], base_generator: &impl BaseGenerator, bm: &BlockManager) -> Self {
-		base_generator.chunk_base(self_position, self, bm)
+	pub fn base(self, self_position: [i32; 3], base_generator: &impl SurfaceGenerator, bm: &BlockManager) -> Self {
+		base_generator.chunk_surface(self_position, self, bm)
 	}
+}
+
+
+
+pub fn chunk_seed(chunk_position: [i32; 3], world_seed: u64) -> u64 {
+	use std::collections::hash_map::DefaultHasher;
+	use std::hash::{Hash, Hasher};
+
+	let mut s = DefaultHasher::new();
+	chunk_position.hash(&mut s);
+
+	s.finish() ^ world_seed
+}
+
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+    #[test]
+    fn chunk_seed_test() {
+		const G: i32 = 3;
+
+		let world_seed = rand::random::<u64>();
+		
+		let output = (-G..=G).flat_map(|x| {
+			(-G..=G).flat_map(move |y| {
+				(-G..=G).map(move |z| {
+					chunk_seed([x, y, z], world_seed)
+				})
+			})
+		}).collect::<Vec<_>>();
+
+		println!("{:?}", output);
+
+        assert_eq!(2 + 2, 4);
+    }
 }

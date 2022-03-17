@@ -37,6 +37,20 @@ fn main() {
     warn!("some warning log");
     error!("some error log");		// High priority
 
+	// let mut scm = lua::ScriptManager::new();
+	// scm.init_bindings().unwrap();
+	// scm.repl_loop().unwrap();
+
+	// let img = image::DynamicImage::ImageRgb8(
+	// 	image::ImageBuffer::from_fn(100, 100, |_, _| {
+	// 		let u = rand::random::<u8>();
+	// 		image::Rgb([u; 3])
+	// 	})
+	// );
+	// crate::util::show_image(img).unwrap();
+	
+	// return;
+
 	let event_loop = new_event_loop();
 	let event_loop_proxy = event_loop.create_proxy();
 
@@ -53,7 +67,7 @@ fn main() {
 				game.tick();
 			}
 		})
-		.expect("fugg in game thread spawn");
+		.expect("Failed to spawn game thread!");
 
 	run_event_loop(event_loop, event_queue);
 

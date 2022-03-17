@@ -23,10 +23,24 @@ impl ScriptManager {
 	pub fn init_bindings(&mut self) -> Result<()> {
 		let globals = self.lua.globals();
 
-		let testfn_caller = self.lua.create_function(|_, ()| {
+		let testfn_caller = self.lua.create_function(|_, ()| -> LuaResult<u32> {
 			Ok(testfn())
 		}).unwrap();
 		globals.set("testfn", testfn_caller)?;
+
+		let test_panic_caller = self.lua.create_function(|_, ()| -> LuaResult<()> {
+			panic!("test panic!");
+		}).unwrap();
+		globals.set("test_panic", test_panic_caller)?;
+
+		let play_sound_caller = self.lua.create_function(|_, ()| {
+			play_sound("BWAAAMMP").unwrap();
+			Ok(())
+		}).unwrap();
+		globals.set("play_sound", play_sound_caller)?;
+
+		// Get voxel
+		// Set voxel
 
 		Ok(())
 	}
@@ -62,10 +76,87 @@ impl ScriptManager {
 
 		Ok(())
 	}
+
+	pub fn repl_loop(&self) -> Result<()> {
+		println!("-- Begin REPL --");
+		loop {
+			self.repl()?;
+			// Only do one because idk
+			break;
+		}
+		println!("-- End REPL --");
+		
+		Ok(())
+	}
+
+	fn repl(&self) -> mlua::Result<()> {
+		use std::io::Write;
+
+		let mut command = String::new();
+		print!("> ");
+		std::io::stdout().flush().unwrap();
+		loop {
+			std::io::stdin().read_line(&mut command).unwrap();
+
+			match self.lua.load(&command).eval::<mlua::MultiValue>() {
+				Ok(values) => {
+					println!(
+						"{}", 
+						values
+							.iter()
+							.map(|v| format!("{:?}", v))
+							.collect::<Vec<_>>()
+							.join("\t")
+					);
+					break;
+				},
+				Err(mlua::Error::SyntaxError { incomplete_input: true, ..}) => {
+					command.push_str("\n");
+					print!(">>\t");
+					std::io::stdout().flush().unwrap();
+				}
+				Err(e) => {
+					return Err(e);
+				}
+			}
+		}
+		Ok(())
+	}
+}
+
+
+
+#[derive(Debug, Default)]
+struct UserThing {
+	a: u32,
+	b: Vec<u8>,
+}
+impl LuaUserData for UserThing {
+	fn add_fields<'lua, F: mlua::UserDataFields<'lua, Self>>(fields: &mut F) {
+        fields.add_field_method_get("a", |_, this| Ok(this.a));
+        fields.add_field_method_set("a", |_, this, val| {
+            this.a = val;
+            Ok(())
+        });
+    }
+
+    fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method("twoa", |_, this, ()| Ok(2 * this.a));
+
+        // Constructor
+        methods.add_meta_function(mlua::MetaMethod::Call, |_, ()| Ok(UserThing::default()));
+    }
 }
 
 
 
 fn testfn() -> u32 {
 	42
+}
+
+
+
+fn play_sound(sound: impl AsRef<str>) -> Result<()> {
+	println!("You hear a '{}'", sound.as_ref());
+	Ok(())
 }

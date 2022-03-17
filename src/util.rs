@@ -1,4 +1,9 @@
-use std::time::Duration;
+use std::{time::Duration, path::Path};
+use image::DynamicImage;
+use anyhow::*;
+use std::process::Command;
+use splines::*;
+
 
 
 
@@ -99,3 +104,76 @@ pub fn k_tofrom_rapier(mut input: nalgebra::Vector3<f32>) -> nalgebra::Vector3<f
 	input
 }
 
+
+
+/// Shows an image by saving it to tmp and opening it with gwenview
+// Todo: Make an iterator of prorams to try?
+const IMAGE_PATH: &str = "/tmp/kkraftimagetoshow.png";
+const IMAGE_VIEWER: &str = "gwenview";
+pub fn show_image(image: DynamicImage) -> Result<()> {
+	image.save(IMAGE_PATH)?;
+
+	Command::new(IMAGE_VIEWER)
+		.arg(IMAGE_PATH)
+		.output()?;
+	
+	Ok(())
+}
+
+
+
+/// Saves a spline to a ron file
+pub fn save_spline(
+	spline: &Spline<f64, f64>, 
+	path: impl AsRef<Path>,
+) -> Result<()> {
+	let path = path.as_ref();
+
+	let f = std::fs::File::create(&path)
+		.with_context(|| format!("Failed to write file path '{:?}'", &path))?;
+	ron::ser::to_writer(f, spline)
+		.with_context(|| format!("Failed to write spline ron file '{:?}'", &path))?;
+	
+	Ok(())
+}
+
+
+
+/// Loads a spline from a ron file
+pub fn load_spline(path: impl AsRef<Path>) -> Result<Spline<f64, f64>> {
+	let path = path.as_ref();
+	let canonical_path = path.canonicalize()
+		.with_context(|| format!("Failed to canonicalize path '{:?}'", &path))?;
+	
+	let f = std::fs::File::open(&path)
+		.with_context(|| format!("Failed to read from file path '{:?}'", &canonical_path))?;
+	let spline: Spline<f64, f64> = ron::de::from_reader(f)
+		.with_context(|| format!("Failed to parse spline ron file '{:?}'", &canonical_path))?;
+	
+	Ok(spline)
+}
+
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn make_test_spline() -> Spline<f64, f64> {
+		let k1 = Key::new(0.0, 0.0, Interpolation::Linear);
+		let k2 = Key::new(1.0, 1.0, Interpolation::Linear);
+		let spline = Spline::from_vec(vec![k1, k2]);
+		spline
+	}
+
+    #[test]
+    fn test_spline_serde() {
+		let spline1 = make_test_spline();
+
+		let spline_path = "/tmp/splinetime.ron";
+		save_spline(&spline1, spline_path).unwrap();
+		let spline2 = load_spline(spline_path).unwrap();
+
+        assert_eq!(spline1.keys(), spline2.keys());
+    }
+}

@@ -13,6 +13,7 @@ use crate::world::*;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlockSpecification {
 	pub name: String,
+	// pub script: PathBuf,
 	pub faces: HashMap<String, PathBuf>,
 	pub sounds: HashMap<String, PathBuf>,
 }
@@ -73,7 +74,7 @@ pub fn load_blocks_file(
 				"xp" | "right" 	=> block.xp_material_idx = material_idx,
 				"yp" | "up" 	=> block.yp_material_idx = material_idx,
 				"yn" | "down" 	=> block.yn_material_idx = material_idx,
-				_ => warn!("Weird block face material spec, doing nothing"),
+				_ => warn!("Weird block face material spec (what is '{face}'?), doing nothing"),
 			}
 		}
 		bm.insert(block);
@@ -106,15 +107,49 @@ impl Block {
 			zn_material_idx: 0,
 		}
 	}
+
+	// The following are here to remind you that they should exist
+	// It would be best to load these from a lua function
+	// block.lua
+	//  - on_create
+	//  - on_interact
+	//  - on_destroy
+	//  - load data (vec<u8>) (specific to things with data)
+	//  - Other stuff not called from outside
+	// Blocks could store the names of functions to use or check if it has an "on _" function
+	pub fn on_create(&self, _instance: BlockInstance) -> Result<()> {
+		// The on_create method for a chest should either:
+		//  - get an index to a generic inventory container
+		//  - create a block instance for the chunk
+		// (allows for shared contents, stored in world?)
+		Ok(())
+	}
+	// Takes interaction item?
+	// Hand interaction, stepped on, what others might there be?
+	pub fn on_interact(&self, _instance: BlockInstance) -> Result<()> {
+		Ok(())
+	}
+	// Called when interacted, item inserted, bleh
+	pub fn on_updata(&self, _instance: BlockInstance) -> Result<()> {
+		// Furnace should step across to current time, checking if there is enough fuel
+		Ok(())
+	}
+	pub fn on_destroy(&self, _instance: BlockInstance) -> Result<()> {
+		Ok(())
+	}
+	// How to do event hooks?
+	// Need to expose:
+	//  - change face material
+	//  - play sound
 }
 
 
 
-// #[derive(Debug)]
-// pub struct Block {
-// 	pub name: String,
-// 	pub material_idx: u32,	// For now block faces share the same material
-// }
+// Data for the block, to be used by the block's script
+#[derive(Debug)]
+pub struct BlockInstance {
+	data: Vec<u8>,
+}
 
 
 
@@ -197,45 +232,30 @@ pub enum BlockModReason {
 
 #[derive(Debug, Copy, Clone)]
 pub enum VoxelPosition {
-	WorldPosition([i32; 3]),
-	ChunkPosition {
+	WorldRelative([i32; 3]),
+	ChunkRelative {
 		chunk_position: [i32; 3], 
 		voxel_position: [i32; 3],
 	},
 }
 impl VoxelPosition {
 	pub fn from_chunk_voxel(chunk_position: [i32; 3], voxel_position: [i32; 3]) -> Self {
-		Self::ChunkPosition {
+		Self::ChunkRelative {
 			chunk_position, 
 			voxel_position,
 		}
 	}
 
 	pub fn from_world(world_position: [i32; 3]) -> Self {
-		Self::WorldPosition(world_position)
+		Self::WorldRelative(world_position)
 	}
 
 	pub fn chunk_voxel_position(&self, chunk_size: [u32; 3]) -> ([i32; 3], [i32; 3]) {
 		match *self {
-			VoxelPosition::WorldPosition(world_position) => {
-				let chunk_position = [
-					world_position[0].div_euclid(chunk_size[0] as i32),
-					world_position[1].div_euclid(chunk_size[1] as i32),
-					world_position[2].div_euclid(chunk_size[2] as i32),
-				];
-				let mut voxel_position = [
-					world_position[0] % (chunk_size[0] as i32),
-					world_position[1] % (chunk_size[1] as i32),
-					world_position[2] % (chunk_size[2] as i32),
-				];
-				voxel_position.iter_mut().zip(chunk_size.iter()).for_each(|(v, &cs)| {
-					if *v < 0 {
-						*v = cs as i32 + *v;
-					}
-				});
-				(chunk_position, voxel_position)
+			VoxelPosition::WorldRelative(world_position) => {
+				crate::world::map::world_chunk_voxel(world_position, chunk_size)
 			}
-			VoxelPosition::ChunkPosition { chunk_position, voxel_position } => {
+			VoxelPosition::ChunkRelative { chunk_position, voxel_position } => {
 				(chunk_position, voxel_position)
 			}
 		}
@@ -243,16 +263,11 @@ impl VoxelPosition {
 	
 	pub fn world_position(&self, chunk_size: [u32; 3]) -> [i32; 3] {
 		match *self {
-			VoxelPosition::WorldPosition(world_position) => {
+			VoxelPosition::WorldRelative(world_position) => {
 				world_position
 			}
-			VoxelPosition::ChunkPosition { chunk_position, voxel_position } => {
-				let world_position = [
-					chunk_position[0] * chunk_size[0] as i32 + voxel_position[0],
-					chunk_position[1] * chunk_size[1] as i32 + voxel_position[1],
-					chunk_position[2] * chunk_size[2] as i32 + voxel_position[2],
-				];
-				world_position
+			VoxelPosition::ChunkRelative { chunk_position, voxel_position } => {
+				crate::world::map::chunk_voxel_world(chunk_position, voxel_position, chunk_size)
 			}
 		}
 	}

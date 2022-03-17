@@ -5,7 +5,7 @@ use crate::world::*;
 use crate::render::*;
 use crate::mesh::*;
 use thiserror::Error;
-use rayon::prelude::*;
+// use rayon::prelude::*;
 
 
 
@@ -18,29 +18,44 @@ pub enum MapError {
 
 
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GenerationStage {
+	// Lowest level
+	Nothing,	// Nothing generated here, used if chunk does not exist yet
+	Bare,		// Only basic geometry
+	Covered,	// Top and filling applied
+	Decorated,	// Has trees and all that
+	// Highest level
+}
+
+
+
 #[derive(Debug)]
 pub struct Map {
-	chunks: HashMap<[i32; 3], Chunk>,
+	// Both chunk and generation stage are held here because having them separate could cause two allocations in place of one
+	chunks: HashMap<[i32; 3], (Chunk, GenerationStage)>,
 	// Records the height of the map's highest block for every xz in a chunk
 	// Could be used for lighting or feature placement
 	// max_heightmap: HashMap<[i32; 3], Vec<i32>>, 
-	pub chunk_dimensions: [u32; 3],
+	pub chunk_size: [u32; 3],
 	blocks: Arc<RwLock<BlockManager>>,
 	blockmods: ChunkBlockMods,
+	tgen: TerrainGenerator,
 }
 impl Map {
-	pub fn new(chunk_dimensions: [u32; 3], blockmanager: &Arc<RwLock<BlockManager>>) -> Self {
+	pub fn new(chunk_size: [u32; 3], blockmanager: &Arc<RwLock<BlockManager>>) -> Self {
 		Self { 
 			chunks: HashMap::new(), 
 			// max_heightmap: HashMap::new(),
-			chunk_dimensions, 
+			chunk_size, 
 			blocks: blockmanager.clone(),
 			blockmods: HashMap::new(), 
+			tgen: TerrainGenerator::new(0),
 		}
 	}
 
 	pub fn apply_chunkblockmods(&mut self, block_mods: ChunkBlockMods) {
-		let chunk_size = self.chunk_dimensions;
+		let chunk_size = self.chunk_size;
 		for (cpos, bms) in block_mods {
 			if let Some(c) = self.chunk_mut(cpos) {
 				for bm in bms {
@@ -56,68 +71,49 @@ impl Map {
 		}
 	}
 
-	pub fn generate(&mut self) {
-		let bm = self.blocks.read().unwrap();
+	pub fn generate_chunk(&mut self, chunk_position: [i32; 3]) -> Result<(), GenerationError> {
 		
-		let tgen = TerrainGenerator::new(0);
-		let carver = WorleyCarver::new(0);
+		// Generate bare
+		{
+			let bm = self.blocks.read().unwrap();
+			let stone_idx = bm.index_name(&"stone".to_string()).unwrap();
+			let chunk = self.tgen.chunk_base_3d(chunk_position, Chunk::new(self.chunk_size), stone_idx);
+			self.chunks.insert(chunk_position, (chunk, GenerationStage::Bare));
+		}
+		
+		// Covering
+		{
+			let bm = self.blocks.read().unwrap();
+			let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
+			let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();	
+			drop(bm);
+			let cover_mods =  self.tgen.cover_chunk(chunk_position, self.chunk_size, grass_idx, dirt_idx, 3);
+			self.apply_chunkblockmods(cover_mods);
+		}
+		
+		// Decoration
+		{
+			// Treeification
+			// let tree_mods = tgen.treeify_3d(chunk_position, &self, &bm, 5);
+		}
 
-		// Parallel chunk base generation saves about 9 seconds
-		debug!("Generating rocks");
-		let mut chunks_to_generate = Vec::new();
-		for cx in -4..4 {
-			for cy in -1..2 {
-				for cz in -4..4 {
-					chunks_to_generate.push([cx, cy, cz]);
+
+		// Apply outstanding blockmods for this chunk
+		if let Some(blockmods) = self.blockmods.get(&chunk_position) {
+			let chunk = &mut self.chunks.get_mut(&chunk_position).unwrap().0;
+			for blockmod in blockmods {
+				match blockmod.reason {
+					BlockModReason::WorldGenSet(v) => {
+						let (_, voxel_chunk_position) = blockmod.position.chunk_voxel_position(self.chunk_size);
+						chunk.set_voxel(voxel_chunk_position, v)
+					},
+					_ => todo!(),
 				}
 			}
 		}
-		let mut generated_chunks = chunks_to_generate.par_iter().map(|&cp| {
-			let chunk = Chunk::new(self.chunk_dimensions)
-				.base(cp, &tgen, &bm);
-			//	.carve([cx, cy, cz], &carver);
-			(cp, chunk)
-		}).collect::<Vec<_>>();
-		generated_chunks.drain(..).for_each(|([cx, cy, cz], chunk)| {
-			self.chunks.insert([cx as i32, cy as i32, cz as i32], chunk);
-		});		
-
-		// Seems to take around two seconds
-		debug!("Sowing grass");
-		let mut grassify_mods = ChunkBlockMods::new();
-		for cx in -4..4 {
-			for cy in -1..2 {
-				for cz in -4..4 {
-					append_chunkblockmods(&mut grassify_mods, tgen.grassify_3d([cx, cy, cz], &self, &bm));
-				}
-			}
-		}
-		drop(bm);
-		self.apply_chunkblockmods(grassify_mods);
-
-		// Trees!
-		debug!("Placing trees");
-		let bm = self.blocks.read().unwrap();
-		let mut tree_mods = ChunkBlockMods::new();
-		// append_chunkblockmods(&mut tree_mods, tgen.place_tree([0, 8, 0], self.chunk_dimensions, &bm));
-		let chunks_to_treeify = (-4..4).flat_map(|x| {
-			(-1..2).flat_map(move |y| {
-				(-4..4).map(move |z| {
-					[x, y, z]
-				})
-			})
-		}).collect::<Vec<_>>();
-		let cbms: ChunkBlockMods = chunks_to_treeify.par_iter()
-			.map(|&c| tgen.treeify_3d(c, &self, &bm))
-			.reduce(|| ChunkBlockMods::new(), |mut accum, elem| {
-				append_chunkblockmods(&mut accum, elem);
-				accum
-			});
-		append_chunkblockmods(&mut tree_mods, cbms);
-		drop(bm);
-		self.apply_chunkblockmods(tree_mods);
-
-	}
+		
+		Ok(())
+	}	
 
 	pub fn is_chunk_loaded(&self, position: [i32; 3]) -> bool {
 		self.chunks.contains_key(&position)
@@ -135,50 +131,50 @@ impl Map {
 		debug!("Extracting xp slice");
 		let xp_slice = match self.chunk([px+1, py, pz]) {
 			Some(chunk) => {
-				let mut xp = vec![Voxel::Empty; (self.chunk_dimensions[1] * self.chunk_dimensions[2]) as usize];
-				for y in 0..self.chunk_dimensions[1] {
-					let y_offset = y * self.chunk_dimensions[1];
-					for z in 0..self.chunk_dimensions[2] {
+				let mut xp = vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize];
+				for y in 0..self.chunk_size[1] {
+					let y_offset = y * self.chunk_size[1];
+					for z in 0..self.chunk_size[2] {
 						xp[(y_offset + z) as usize] = chunk.get_voxel([0, y as i32, z as i32]);
 					}
 				}
 				xp
 			},
-			None => vec![Voxel::Empty; (self.chunk_dimensions[1] * self.chunk_dimensions[2]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize],
 		};
 		debug!("Extracting yp slice");
 		let yp_slice = match self.chunk([px, py+1, pz]) {
 			Some(chunk) => {
-				let mut yp = vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[2]) as usize];
-				for x in 0..self.chunk_dimensions[0] {
-					let x_offset = x * self.chunk_dimensions[0];
-					for z in 0..self.chunk_dimensions[2] {
+				let mut yp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize];
+				for x in 0..self.chunk_size[0] {
+					let x_offset = x * self.chunk_size[0];
+					for z in 0..self.chunk_size[2] {
 						yp[(x_offset + z) as usize] = chunk.get_voxel([x as i32, 0, z as i32]);
 					}
 				}
 				yp
 			},
-			None => vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[2]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize],
 		};
 		debug!("Extracting zp slice");
 		let zp_slice = match self.chunk([px, py, pz+1]) {
 			Some(chunk) => {
-				let mut zp = vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[1]) as usize];
-				for x in 0..self.chunk_dimensions[0] {
-					let x_offset = x * self.chunk_dimensions[0];
-					for y in 0..self.chunk_dimensions[1] {
+				let mut zp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize];
+				for x in 0..self.chunk_size[0] {
+					let x_offset = x * self.chunk_size[0];
+					for y in 0..self.chunk_size[1] {
 						zp[(x_offset + y) as usize] = chunk.get_voxel([x as i32, y as i32, 0]);
 					}
 				}
 				zp
 			},
-			None => vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[1]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize],
 		};
 		let slices = [xp_slice, yp_slice, zp_slice];
 
 		let (mut segments, _) = map_mesh(
 			&main_chunk.contents, 
-			self.chunk_dimensions.map(|x| x as usize),
+			self.chunk_size.map(|x| x as usize),
 			&slices,
 			self.blocks.clone(),
 			true,
@@ -202,47 +198,44 @@ impl Map {
 		
 		// Copy slices of neighbours
 		// If the neighbour is not loaded, pretend there is nothing there (this is bad)
-		debug!("Extracting xp slice");
 		let xp_slice = match self.chunk([px+1, py, pz]) {
 			Some(chunk) => {
-				let mut xp = vec![Voxel::Empty; (self.chunk_dimensions[1] * self.chunk_dimensions[2]) as usize];
-				for y in 0..self.chunk_dimensions[1] {
-					let y_offset = y * self.chunk_dimensions[1];
-					for z in 0..self.chunk_dimensions[2] {
+				let mut xp = vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize];
+				for y in 0..self.chunk_size[1] {
+					let y_offset = y * self.chunk_size[1];
+					for z in 0..self.chunk_size[2] {
 						xp[(y_offset + z) as usize] = chunk.get_voxel([0, y as i32, z as i32]);
 					}
 				}
 				xp
 			},
-			None => vec![Voxel::Empty; (self.chunk_dimensions[1] * self.chunk_dimensions[2]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize],
 		};
-		debug!("Extracting yp slice");
 		let yp_slice = match self.chunk([px, py+1, pz]) {
 			Some(chunk) => {
-				let mut yp = vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[2]) as usize];
-				for x in 0..self.chunk_dimensions[0] {
-					let x_offset = x * self.chunk_dimensions[0];
-					for z in 0..self.chunk_dimensions[2] {
+				let mut yp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize];
+				for x in 0..self.chunk_size[0] {
+					let x_offset = x * self.chunk_size[0];
+					for z in 0..self.chunk_size[2] {
 						yp[(x_offset + z) as usize] = chunk.get_voxel([x as i32, 0, z as i32]);
 					}
 				}
 				yp
 			},
-			None => vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[2]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize],
 		};
-		debug!("Extracting zp slice");
 		let zp_slice = match self.chunk([px, py, pz+1]) {
 			Some(chunk) => {
-				let mut zp = vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[1]) as usize];
-				for x in 0..self.chunk_dimensions[0] {
-					let x_offset = x * self.chunk_dimensions[0];
-					for y in 0..self.chunk_dimensions[1] {
+				let mut zp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize];
+				for x in 0..self.chunk_size[0] {
+					let x_offset = x * self.chunk_size[0];
+					for y in 0..self.chunk_size[1] {
 						zp[(x_offset + y) as usize] = chunk.get_voxel([x as i32, y as i32, 0]);
 					}
 				}
 				zp
 			},
-			None => vec![Voxel::Empty; (self.chunk_dimensions[0] * self.chunk_dimensions[1]) as usize],
+			None => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize],
 		};
 		let slices = [xp_slice, yp_slice, zp_slice];
 
@@ -251,7 +244,7 @@ impl Map {
 		let result_clone = result.clone();
 		let chunk_contents = main_chunk.contents.clone();
 		let blockmap = self.blocks.clone();
-		let chunk_size = self.chunk_dimensions.map(|x| x as usize);
+		let chunk_size = self.chunk_size.map(|x| x as usize);
 		rayon::spawn(move || {			
 
 			let (mut segments, _) = map_mesh(
@@ -310,7 +303,8 @@ impl Map {
 
 	pub fn chunk(&self, chunk_position: [i32; 3]) -> Option<&Chunk> {
 		if self.chunks.contains_key(&chunk_position) {
-			Some(&self.chunks[&chunk_position])
+			let (c, _) = &self.chunks[&chunk_position];
+			Some(c)
 		} else {
 			// Make future to load the chunk?
 			None
@@ -318,8 +312,24 @@ impl Map {
 	}
 	pub fn chunk_mut(&mut self, chunk_position: [i32; 3]) -> Option<&mut Chunk> {
 		if self.chunks.contains_key(&chunk_position) {
-			let s = self.chunks.get_mut(&chunk_position).unwrap();
-			Some(s)
+			let (c, _) = self.chunks.get_mut(&chunk_position).unwrap();
+			Some(c)
+		} else {
+			None
+		}
+	}
+	pub fn chunk_stage(&self, chunk_position: [i32; 3]) -> GenerationStage {
+		if self.chunks.contains_key(&chunk_position) {
+			let (_, s) = &self.chunks[&chunk_position];
+			*s
+		} else {
+			GenerationStage::Nothing
+		}
+	}
+	pub fn chunk_and_stage(&self, chunk_position: [i32; 3]) -> Option<(&Chunk, GenerationStage)> {
+		if self.chunks.contains_key(&chunk_position) {
+			let (c, s) = &self.chunks[&chunk_position];
+			Some((c, *s))
 		} else {
 			None
 		}
@@ -350,130 +360,158 @@ impl Map {
 
 	// Wrappers! (I think they make things easier)
 	pub fn world_chunk(&self, world_coords: [i32; 3]) -> [i32; 3] {
-		world_chunk(world_coords, self.chunk_dimensions)
+		world_chunk(world_coords, self.chunk_size)
 	}
 	pub fn world_chunk_voxel(&self, world_coords: [i32; 3]) -> ([i32; 3], [i32; 3]) {
-		world_chunk_voxel(world_coords, self.chunk_dimensions)
+		world_chunk_voxel(world_coords, self.chunk_size)
 	}
 	pub fn chunk_voxel_world(&self, chunk_position: [i32; 3], voxel_position: [i32; 3]) -> [i32; 3] {
-		chunk_voxel_world(chunk_position, voxel_position, self.chunk_dimensions)
+		chunk_voxel_world(chunk_position, voxel_position, self.chunk_size)
 	}
 	pub fn chunk_point(&self, chunk: [i32; 3]) -> Vector3<f32> {
-		chunk_point(chunk, self.chunk_dimensions)
+		chunk_point(chunk, self.chunk_size)
 	}
 	pub fn point_chunk(&self, point: &Vector3<f32>) -> [i32; 3] {
-		point_chunk(point, self.chunk_dimensions)
+		point_chunk(point, self.chunk_size)
 	}
 	pub fn point_chunk_voxel(&self, point: &Vector3<f32>) -> ([i32; 3], [i32; 3]) {
-		point_chunk_voxel(point, self.chunk_dimensions)
+		point_chunk_voxel(point, self.chunk_size)
 	}
 	pub fn point_world_voxel(&self, point: &Vector3<f32>) -> [i32; 3] {
 		point_world_voxel(point)
 	}
+}
 
-	// Todo: return the exact hit position
-	// Todo: return the hit in face coordinates
-	// Todo: return the normal as well
-	// Todo: turn it into an iterator
-	pub fn voxel_ray(
-		&self, 
-		origin: &Vector3<f32>, 
-		direction: &Vector3<f32>,
-		_t_min: f32,
-		t_max: f32,
-	) -> Vec<[i32; 3]> {
 
-		// https://stackoverflow.com/questions/12367071/how-do-i-initialize-the-t-variables-in-a-fast-voxel-traversal-algorithm-for-ray
-		// 1.3 -> 0.3
-		// -1.7 -> 0.3
-		fn frac(f: f32) -> f32 {
-			if f > 0.0 { 
-				f.fract()
-			} else {
-				f - f.floor()
-			}
+
+#[derive(Debug, Clone, Copy)]
+pub struct VoxelRayHit {
+	pub coords: [i32; 3],
+	pub t: f32,
+	pub normal: Vector3<f32>,
+	pub face_coords: [f32; 2],	// [0,1], uses wgpu texture coordinates
+}
+/// This needs much testing as I am not mathy
+pub fn voxel_ray_v2(
+	origin: &Vector3<f32>,
+	direction: &Vector3<f32>,
+	t_limit: f32,
+) -> Vec<VoxelRayHit> {
+	// https://stackoverflow.com/questions/12367071/how-do-i-initialize-the-t-variables-in-a-fast-voxel-traversal-algorithm-for-ray
+	// 1.3 -> 0.3, -1.7 -> 0.3
+	// fn frac(f: f32) -> f32 {
+	// 	if f > 0.0 { 
+	// 		f.fract()
+	// 	} else {
+	// 		f - f.floor()
+	// 	}
+	// }
+	// fn frac0(x: f32) -> f32 {
+	// 	x - x.floor()
+	// }
+	// fn frac1(x: f32) -> f32 {
+	// 	1.0 - x + x.floor()
+	// }
+	
+	// Origin voxel
+	let mut vx = origin[0].floor() as i32;
+	let mut vy = origin[1].floor() as i32; 
+	let mut vz = origin[2].floor() as i32;
+
+	// Direction of cast (normalized)
+	let direction = direction.normalize();
+	let dx = direction[0]; 
+	let dy = direction[1]; 
+	let dz = direction[2];
+	
+	// Direction to increment when stepping
+	let v_step_x = dx.signum() as i32;
+	let v_step_y = dy.signum() as i32;
+	let v_step_z = dz.signum() as i32;
+
+	// The change in t when taking a step (always positive)
+	// How far in terms of t we can travel before reaching another voxel in (direction)
+	// Todo: account for zeros
+	let t_delta_x = 1.0 / dx.abs();
+	let t_delta_y = 1.0 / dy.abs();
+	let t_delta_z = 1.0 / dz.abs();
+
+	// Distance along the line to the next voxel border of (direction)
+	// https://gitlab.com/athilenius/fast-voxel-traversal-rs/-/tree/main/
+	let dist = |i: i32, p: f32, vs: i32| {
+		if vs > 0 {
+			i as f32 + 1.0 - p
+		} else {
+			p - i as f32
 		}
+	};
+	// let mut t_max_x = t_delta_x * frac(origin[0]);
+	// let mut t_max_y = t_delta_y * frac(origin[1]);
+	// let mut t_max_z = t_delta_z * frac(origin[2]);
+	let mut t_max_x = t_delta_x * dist(vx, origin[0], v_step_x);
+	let mut t_max_y = t_delta_y * dist(vy, origin[1], v_step_y);
+	let mut t_max_z = t_delta_z * dist(vz, origin[2], v_step_z);
 
-		/// Find the smallest positive t such that s+t*ds is an integer.
-		fn intbound(s: f32, ds: f32) -> f32 {
-			if ds < 0.0 {
-				intbound(-s, -ds)
-			} else {
-				(1.0 - (s % 1.0)) / ds
-			}
-		}
-
-		// Origin voxel (should be int)
-		let mut vx = origin[0].floor() as i32;
-		let mut vy = origin[1].floor() as i32; 
-		let mut vz = origin[2].floor() as i32;
-
-		// Direction of cast
-		let direction = direction.normalize();
-		let dx = direction[0]; 
-		let dy = direction[1]; 
-		let dz = direction[2];
-		
-		// Direction to increment when stepping (should be int)
-		let v_step_x = dx.signum() as i32;
-		let v_step_y = dy.signum() as i32;
-		let v_step_z = dz.signum() as i32;
-
-		// The change in t when taking a step (always positive)
-		// How far in terms of t we can travel before reaching another voxel in (direction)
-		// Todo: account for zeros
-		let t_delta_x = 1.0 / dx.abs();
-		let t_delta_y = 1.0 / dy.abs();
-		let t_delta_z = 1.0 / dz.abs();
-
-		// Distance along line to next voxel border of (direction)
-		// let mut t_max_x = intbound(origin[0], dx);
-		// let mut t_max_y = intbound(origin[1], dy);
-		// let mut t_max_z = intbound(origin[2], dz);
-		let mut t_max_x = t_delta_x * frac(origin[0]);
-		let mut t_max_y = t_delta_y * frac(origin[1]);
-		let mut t_max_z = t_delta_z * frac(origin[2]);
-
-		if t_delta_x == 0.0 && t_delta_y == 0.0 && t_delta_z == 0.0 {
-			panic!()
-		}
-
-		let mut t = 0.0;
-		let mut results = Vec::new();
-		while t < t_max {
-			results.push([vx, vy, vz]);
-
-			if t_max_x < t_max_y {
-				// Closer to x boundary than y
-				if t_max_x < t_max_z {
-					// Closer to x boundary than z, closest to x boundary
-					vx += v_step_x;
-					t_max_x += t_delta_x;
-					t += t_delta_x;
-				} else {
-					// Closer to z than x, closest to z
-					vz += v_step_z;
-					t_max_z += t_delta_z;
-					t += t_delta_z;
-				}
-			} else {
-				// Closer to y boundary than x
-				if t_max_y < t_max_z {
-					// Closer to y boundary than z, closest to y boundary
-					vy += v_step_y;
-					t_max_y += t_delta_y;
-					t += t_delta_y;
-				} else {
-					// Closer to z than y, closest to z
-					vz += v_step_z;
-					t_max_z += t_delta_z;
-					t += t_delta_z;
-				}
-			}
-		}
-
-		results
+	// Avoids infinite loop
+	if t_delta_x == 0.0 && t_delta_y == 0.0 && t_delta_z == 0.0 {
+		panic!()
 	}
+
+	let mut t = 0.0;
+	let mut hits = Vec::new();
+	let mut normal = Vector3::zeros();
+	// let mut face_coords = [0.0; 2];
+	while t < t_limit {
+		hits.push(VoxelRayHit {
+			coords: [vx, vy, vz],
+			t,
+			normal,
+			face_coords: [0.0; 2],
+		});
+
+		if t_max_x < t_max_y {
+			// Closer to x boundary than y
+			if t_max_x < t_max_z {
+				// Closer to x boundary than z, closest to x boundary
+				// face_coords = [frac(t*dy), frac(t*dz)];
+
+				normal = vector![-v_step_x as f32, 0.0, 0.0];
+				vx += v_step_x;
+				t = t_max_x;
+				t_max_x += t_delta_x;
+				
+			} else {
+				// Closer to z than x, closest to z
+				// face_coords = [frac(t*dx), frac(t*dy)];
+
+				normal = vector![0.0, 0.0, -v_step_z as f32];
+				vz += v_step_z;
+				t = t_max_z;
+				t_max_z += t_delta_z;
+			}
+		} else {
+			// Closer to y boundary than x
+			if t_max_y < t_max_z {
+				// Closer to y boundary than z, closest to y boundary
+				// face_coords = [frac(t*dx), frac(t*dz)];
+
+				normal = vector![0.0, -v_step_y as f32, 0.0];
+				vy += v_step_y;
+				t = t_max_y;
+				t_max_y += t_delta_y;
+			} else {
+				// Closer to z than y, closest to z
+				// face_coords = [frac(t*dx), frac(t*dy)];
+
+				normal = vector![0.0, 0.0, -v_step_z as f32];
+				vz += v_step_z;
+				t = t_max_z;
+				t_max_z += t_delta_z;
+			}
+		}
+	}
+
+	hits
 }
 
 

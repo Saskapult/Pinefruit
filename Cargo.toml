@@ -31,6 +31,7 @@ nalgebra = "0.29.0"
 #dashmap = "4.0.2"	# Concurrent hashmap
 specs = { version = "0.17.0", features = ["specs-derive"]}
 rand = "0.8.4"
+rand_xoshiro = "0.6.0"
 noise = "0.7.0"
 poisson = "0.10.1"
 serde = "1.0.132"
@@ -40,7 +41,7 @@ ron = "0.7.0"
 rapier3d = "0.11.1"	# Physics
 #dot_vox = "4.1.0"	# .vox files
 derivative = "2.2.0"	# Sometimes I like to exclude fields from derived traits of a struct, this helps me to do that
-mlua = { version = "0.7.1", features = ["lua54"] }
+mlua = { version = "0.7.1", features = ["lua54", "vendored"] }
 egui = "0.16.1"
 epi = "0.16.0"
 egui_wgpu_backend = "0.16.0"

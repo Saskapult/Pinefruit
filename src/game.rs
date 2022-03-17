@@ -4,7 +4,6 @@ use nalgebra::*;
 use std::collections::HashMap;
 use std::time::{Instant, Duration};
 use std::sync::{Arc, Mutex, RwLock};
-use std::path::PathBuf;
 use rapier3d::prelude::*;
 use crate::mesh::*;
 use crate::material::*;
@@ -25,6 +24,8 @@ pub struct Game {
 	tick_dispatcher: Dispatcher<'static, 'static>,
 	last_tick: Instant,
 	entity_names_map: HashMap<Entity, String>,
+
+	last_window_update: Instant,
 
 	marker_entity: Option<Entity>,
 	can_modify_block: bool,
@@ -60,6 +61,7 @@ impl Game {
 		world.register::<CameraComponent>();
 		world.register::<DynamicPhysicsComponent>();
 		world.register::<StaticPhysicsComponent>();
+		world.register::<MarkerComponent>();
 
 		// Attach resources
 		let step_resource = StepResource::new();
@@ -99,6 +101,7 @@ impl Game {
 			entity_names_map: HashMap::new(),
 			marker_entity: None,
 			can_modify_block: true,
+			last_window_update: Instant::now(),
 		}
 	}
 
@@ -141,7 +144,7 @@ impl Game {
 			let mut meshm = rr.meshes_manager.write().unwrap();
 
 			let (obj_models, _) = tobj::load_obj(
-				"resources/not_for_git/bunny.obj", 
+				"resources/not_for_git/arrow.obj", 
 				&tobj::LoadOptions {
 					triangulate: true,
 					single_index: true,
@@ -165,26 +168,26 @@ impl Game {
 				mm.index(teapot_mesh_idx).make_trimesh().unwrap()
 			};
 
-			// let tc = TransformComponent::new().with_position([0.0, 3.0, 0.0].into());
-			// let spc = {
-			// 	let mut pr = self.world.write_resource::<PhysicsResource>();
-			// 	let mut spc = StaticPhysicsComponent::new(
-			// 		&mut pr,
-			// 	).with_transform(
-			// 		&mut pr,
-			// 		&tc,
-			// 	);
-			// 	spc.add_collider(
-			// 		&mut pr, 
-			// 		ColliderBuilder::new(collider_shape.clone()).density(100.0).build(),
-			// 	);
-			// 	spc
-			// };
-			// self.world.create_entity()
-			// 	.with(tc)
-			// 	.with(ModelComponent::new(teapot_mesh_idx, 0))
-			// 	.with(spc)
-			// 	.build();
+			let tc = TransformComponent::new().with_position([0.0, 32.0, 0.0].into());
+			let spc = {
+				let mut pr = self.world.write_resource::<PhysicsResource>();
+				let mut spc = StaticPhysicsComponent::new(
+					&mut pr,
+				).with_transform(
+					&mut pr,
+					&tc,
+				);
+				spc.add_collider(
+					&mut pr, 
+					ColliderBuilder::new(collider_shape.clone()).density(100.0).build(),
+				);
+				spc
+			};
+			self.world.create_entity()
+				.with(tc)
+				.with(ModelComponent::new(teapot_mesh_idx, 0))
+				.with(spc)
+				.build();
 
 			// let tc = TransformComponent::new().with_position([5.0, 10.0, 0.0].into());
 			// let dpc = {
@@ -217,6 +220,7 @@ impl Game {
 					.with_position(Vector3::new(0.5, 5.5, 0.5))
 				)
 				.with(MovementComponent{speed: 4.0})
+				.with(MarkerComponent::new())
 				.build();
 			// Map
 			let spc = StaticPhysicsComponent::new(
@@ -235,27 +239,26 @@ impl Game {
 	}
 
 	pub fn tick(&mut self) {
+
+		let now = Instant::now();
+
 		// Run window update
-		{
+		if now - self.last_window_update >= Duration::from_millis(1) {
+			self.last_window_update = now;
+
 			let mut input_resource = self.world.write_resource::<InputResource>();
 			self.window_manager.update(&mut input_resource);
 		}
 
-		// If should re-render then tick and re-render
-		let now = Instant::now();
+		// Tick and re-render
 		if now - self.last_tick >= Duration::from_millis(20) { // 16.7 to 33.3
 			self.last_tick = now;
-
-			let tick_st = Instant::now();
 
 			self.tick_dispatcher.dispatch(&mut self.world);
 			
 			self.render_cameras();
 
-			let dur = Instant::now() - tick_st;
-			self.world.write_resource::<StepResource>().step_durations.record(dur);
-			let tps = 1.0 / dur.as_secs_f32();
-			info!("Tock! (duration {}ms, theoretical frequency: {:.2}tps)", dur.as_millis(), tps);
+			self.world.write_resource::<StepResource>().step_durations.record(Instant::now() - now);
 		}
 	}
 
@@ -264,9 +267,10 @@ impl Game {
 		let mut windows_to_redraw = Vec::new();
 		
 		{
+			let entities = self.world.entities();
 			let cameras = self.world.read_component::<CameraComponent>();
 			let transforms = self.world.read_component::<TransformComponent>();
-			for (camera, camera_transform) in (&cameras, &transforms).join() {
+			for (e, camera, _camera_transform) in (&entities, &cameras, &transforms).join() {
 				match camera.target {
 					// Find destination
 					RenderTarget::Window(id) => {
@@ -275,7 +279,7 @@ impl Game {
 							continue
 						}
 						// This is bad because it clones the camera's model queue
-						windows_to_redraw.push((id, camera.clone(), camera_transform.clone()));
+						windows_to_redraw.push((id, e));
 					},
 					RenderTarget::Texture(_) => {
 						todo!("Todo: Implement rendering to a texture");
@@ -284,12 +288,11 @@ impl Game {
 			}
 		}
 
-		for (window_id, camera, camera_transform) in windows_to_redraw {
+		for (window_id, entity) in windows_to_redraw {
 			let window = self.window_manager.windows.get_mut(window_id).unwrap();
 			window.draw(
 				&mut self.world, 
-				&camera, 
-				&camera_transform,
+				entity,
 			);
 		}
 		

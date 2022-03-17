@@ -1,6 +1,4 @@
-use std::collections::HashMap;
 use std::time::Instant;
-
 use rapier3d::prelude::*;
 use crate::mesh::*;
 use crate::util::DurationHolder;
