@@ -1,19 +1,24 @@
 use nalgebra::*;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, RwLock};
 use crate::world::*;
 use crate::render::*;
 use crate::mesh::*;
 use thiserror::Error;
 // use rayon::prelude::*;
+use crate::util::PTCT;
 
 
 
 
 #[derive(Error, Debug)]
 pub enum MapError {
-	#[error("hey this chunk isn't loaded")]
+	#[error("this chunk exists on disk but isn't loaded")]
 	ChunkUnloaded,
+	#[error("this chunk hasn't yet been generated")]
+	ChunkUngenerated,
+	#[error("this chunk's positive neighbours are not available")]
+	ChunkMeshNeighboursUnavailable,
 }
 
 
@@ -30,10 +35,29 @@ pub enum GenerationStage {
 
 
 
+// An entry in the mesh storage for a map component
+#[derive(Debug)]
+pub enum MapChunkEntry {
+	UnLoaded,	// Used if chunk does not exist yet
+	Loading,	// To be used when waiting for disk data in future
+	Generating(PTCT<(Chunk, ChunkBlockMods)>),
+	Complete(Chunk),
+}
+impl MapChunkEntry {
+	pub fn unwrap_complete(self) -> Chunk {
+		match self {
+			MapChunkEntry::Complete(c) => c,
+			_ => panic!(),
+		}
+	}
+}
+
+
+
 #[derive(Debug)]
 pub struct Map {
 	// Both chunk and generation stage are held here because having them separate could cause two allocations in place of one
-	chunks: HashMap<[i32; 3], (Chunk, GenerationStage)>,
+	chunks: HashMap<[i32; 3], MapChunkEntry>,
 	// Records the height of the map's highest block for every xz in a chunk
 	// Could be used for lighting or feature placement
 	// max_heightmap: HashMap<[i32; 3], Vec<i32>>, 
@@ -57,7 +81,7 @@ impl Map {
 	pub fn apply_chunkblockmods(&mut self, block_mods: ChunkBlockMods) {
 		let chunk_size = self.chunk_size;
 		for (cpos, bms) in block_mods {
-			if let Some(c) = self.chunk_mut(cpos) {
+			if let Ok(c) = self.chunk_mut(cpos) {
 				for bm in bms {
 					match bm.reason {
 						BlockModReason::WorldGenSet(v) => {
@@ -71,14 +95,16 @@ impl Map {
 		}
 	}
 
-	pub fn generate_chunk(&mut self, chunk_position: [i32; 3]) -> Result<(), GenerationError> {
+	pub fn generate_chunk(&self, chunk_position: [i32; 3]) -> Result<(Chunk, ChunkBlockMods), GenerationError> {
 		
+		let mut chunk = Chunk::new(self.chunk_size);
+		let cbms = ChunkBlockMods::new();
+
 		// Generate bare
 		{
 			let bm = self.blocks.read().unwrap();
 			let stone_idx = bm.index_name(&"stone".to_string()).unwrap();
-			let chunk = self.tgen.chunk_base_3d(chunk_position, Chunk::new(self.chunk_size), stone_idx);
-			self.chunks.insert(chunk_position, (chunk, GenerationStage::Bare));
+			chunk = self.tgen.chunk_base_3d(chunk_position, chunk, stone_idx);
 		}
 		
 		// Covering
@@ -87,8 +113,7 @@ impl Map {
 			let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
 			let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();	
 			drop(bm);
-			let cover_mods =  self.tgen.cover_chunk(chunk_position, self.chunk_size, grass_idx, dirt_idx, 3);
-			self.apply_chunkblockmods(cover_mods);
+			chunk =  self.tgen.cover_chunk(chunk, chunk_position, grass_idx, dirt_idx, 3);
 		}
 		
 		// Decoration
@@ -97,26 +122,36 @@ impl Map {
 			// let tree_mods = tgen.treeify_3d(chunk_position, &self, &bm, 5);
 		}
 
+		Ok((chunk, cbms))
+	}
 
-		// Apply outstanding blockmods for this chunk
-		if let Some(blockmods) = self.blockmods.get(&chunk_position) {
-			let chunk = &mut self.chunks.get_mut(&chunk_position).unwrap().0;
-			for blockmod in blockmods {
-				match blockmod.reason {
-					BlockModReason::WorldGenSet(v) => {
-						let (_, voxel_chunk_position) = blockmod.position.chunk_voxel_position(self.chunk_size);
-						chunk.set_voxel(voxel_chunk_position, v)
-					},
-					_ => todo!(),
-				}
-			}
-		}
+	fn generate_chunk_rayon(
+		&self, 
+		chunk_position: [i32; 3],
+	) -> PTCT<(Chunk, ChunkBlockMods)> {
+
+		let bm = self.blocks.read().unwrap();
+		let stone_idx = bm.index_name(&"stone".to_string()).unwrap();
+		let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
+		let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();	
+
+		let result = PTCT::new();
+		let mut result_clone = result.clone();
+
+		let chunk_size = self.chunk_size;
+		rayon::spawn(move || {			
+			let mut chunk = Chunk::new(chunk_size);
+			let cbms = ChunkBlockMods::new();
+			let tgen = TerrainGenerator::new(0);
+	
+			chunk = tgen.chunk_base_3d(chunk_position, chunk, stone_idx);
 		
-		Ok(())
-	}	
+			chunk = tgen.cover_chunk(chunk, chunk_position, grass_idx, dirt_idx, 3);
 
-	pub fn is_chunk_loaded(&self, position: [i32; 3]) -> bool {
-		self.chunks.contains_key(&position)
+			result_clone.insert((chunk, cbms));
+		});
+
+		result
 	}
 
 	// Mesh a chunk with respect to those around it
@@ -130,7 +165,7 @@ impl Map {
 		// If the neighbour is not loaded, pretend there is nothing there (this is bad)
 		debug!("Extracting xp slice");
 		let xp_slice = match self.chunk([px+1, py, pz]) {
-			Some(chunk) => {
+			Ok(chunk) => {
 				let mut xp = vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize];
 				for y in 0..self.chunk_size[1] {
 					let y_offset = y * self.chunk_size[1];
@@ -140,11 +175,11 @@ impl Map {
 				}
 				xp
 			},
-			None => vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize],
+			Err(_) => vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize],
 		};
 		debug!("Extracting yp slice");
 		let yp_slice = match self.chunk([px, py+1, pz]) {
-			Some(chunk) => {
+			Ok(chunk) => {
 				let mut yp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize];
 				for x in 0..self.chunk_size[0] {
 					let x_offset = x * self.chunk_size[0];
@@ -154,11 +189,11 @@ impl Map {
 				}
 				yp
 			},
-			None => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize],
+			Err(_) => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize],
 		};
 		debug!("Extracting zp slice");
 		let zp_slice = match self.chunk([px, py, pz+1]) {
-			Some(chunk) => {
+			Ok(chunk) => {
 				let mut zp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize];
 				for x in 0..self.chunk_size[0] {
 					let x_offset = x * self.chunk_size[0];
@@ -168,7 +203,7 @@ impl Map {
 				}
 				zp
 			},
-			None => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize],
+			Err(_) => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize],
 		};
 		let slices = [xp_slice, yp_slice, zp_slice];
 
@@ -191,7 +226,10 @@ impl Map {
 	}
 
 	// The same as mesh_chunk but it does the bulk of computation on a rayon thread
-	pub fn mesh_chunk_rayon(&self, position: [i32; 3]) -> Arc<Mutex<Option<Vec<(usize, Mesh)>>>> {
+	pub fn mesh_chunk_rayon(
+		&self, 
+		position: [i32; 3],
+	) -> Result<PTCT<Vec<(usize, Mesh)>>, MapError> {
 		let [px, py, pz] = position;
 		
 		let main_chunk = self.chunk(position).expect("Tried to mesh unloaded chunk!");
@@ -199,7 +237,7 @@ impl Map {
 		// Copy slices of neighbours
 		// If the neighbour is not loaded, pretend there is nothing there (this is bad)
 		let xp_slice = match self.chunk([px+1, py, pz]) {
-			Some(chunk) => {
+			Ok(chunk) => {
 				let mut xp = vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize];
 				for y in 0..self.chunk_size[1] {
 					let y_offset = y * self.chunk_size[1];
@@ -209,10 +247,10 @@ impl Map {
 				}
 				xp
 			},
-			None => vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize],
+			Err(_) => return Err(MapError::ChunkMeshNeighboursUnavailable),
 		};
 		let yp_slice = match self.chunk([px, py+1, pz]) {
-			Some(chunk) => {
+			Ok(chunk) => {
 				let mut yp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize];
 				for x in 0..self.chunk_size[0] {
 					let x_offset = x * self.chunk_size[0];
@@ -222,10 +260,10 @@ impl Map {
 				}
 				yp
 			},
-			None => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize],
+			Err(_) => return Err(MapError::ChunkMeshNeighboursUnavailable),
 		};
 		let zp_slice = match self.chunk([px, py, pz+1]) {
-			Some(chunk) => {
+			Ok(chunk) => {
 				let mut zp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize];
 				for x in 0..self.chunk_size[0] {
 					let x_offset = x * self.chunk_size[0];
@@ -235,13 +273,13 @@ impl Map {
 				}
 				zp
 			},
-			None => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize],
+			Err(_) => return Err(MapError::ChunkMeshNeighboursUnavailable),
 		};
 		let slices = [xp_slice, yp_slice, zp_slice];
 
-		let result = Arc::new(Mutex::new(None));
+		let result = PTCT::new();
 
-		let result_clone = result.clone();
+		let mut result_clone = result.clone();
 		let chunk_contents = main_chunk.contents.clone();
 		let blockmap = self.blocks.clone();
 		let chunk_size = self.chunk_size.map(|x| x as usize);
@@ -264,11 +302,10 @@ impl Map {
 				(material_idx, mesh)
 			}).collect::<Vec<_>>();
 
-			let mut g = result_clone.lock().unwrap();
-			*g = Some(output);
+			result_clone.insert(output);
 		});
 
-		result
+		Ok(result)
 	}
 
 	pub fn chunks_sphere(&self, centre: [i32; 3], radius: i32) -> Vec<[i32; 3]> {
@@ -301,37 +338,56 @@ impl Map {
 		todo!()
 	}
 
-	pub fn chunk(&self, chunk_position: [i32; 3]) -> Option<&Chunk> {
+	/// Begins chunk generation.
+	/// Check for completion using check_chunk_done
+	pub fn begin_chunk_generation(&mut self, chunk_position: [i32; 3]) {
+		self.chunks.insert(chunk_position, MapChunkEntry::Generating(
+			self.generate_chunk_rayon(chunk_position)
+		));
+	}
+
+	/// Checks if a chunk is done generating.
+	/// Inserts it if it is ready.
+	pub fn check_chunk_done(&mut self, chunk_position: [i32; 3]) -> bool {
 		if self.chunks.contains_key(&chunk_position) {
-			let (c, _) = &self.chunks[&chunk_position];
-			Some(c)
+			match self.chunks.get_mut(&chunk_position).unwrap() {
+				MapChunkEntry::Complete(_) => true,
+				MapChunkEntry::Generating(ptct) => {
+					if let Some((c, cbms)) = ptct.pollmebb() {
+						self.apply_chunkblockmods(cbms);
+						self.chunks.insert(chunk_position, MapChunkEntry::Complete(c));
+						true
+					} else {
+						false
+					}
+				},
+				_ => false,
+			}
 		} else {
-			// Make future to load the chunk?
-			None
+			false
 		}
 	}
-	pub fn chunk_mut(&mut self, chunk_position: [i32; 3]) -> Option<&mut Chunk> {
+
+	pub fn chunk(&self, chunk_position: [i32; 3]) -> Result<&Chunk, MapError> {
 		if self.chunks.contains_key(&chunk_position) {
-			let (c, _) = self.chunks.get_mut(&chunk_position).unwrap();
-			Some(c)
+			let c = self.chunks.get(&chunk_position).unwrap();
+			match c {
+				MapChunkEntry::Complete(c) => Ok(c),
+				_ => Err(MapError::ChunkUnloaded),
+			}
 		} else {
-			None
+			Err(MapError::ChunkUnloaded)
 		}
 	}
-	pub fn chunk_stage(&self, chunk_position: [i32; 3]) -> GenerationStage {
+	pub fn chunk_mut(&mut self, chunk_position: [i32; 3]) -> Result<&mut Chunk, MapError> {
 		if self.chunks.contains_key(&chunk_position) {
-			let (_, s) = &self.chunks[&chunk_position];
-			*s
+			let c = self.chunks.get_mut(&chunk_position).unwrap();
+			match c {
+				MapChunkEntry::Complete(c) => Ok(c),
+				_ => Err(MapError::ChunkUnloaded),
+			}
 		} else {
-			GenerationStage::Nothing
-		}
-	}
-	pub fn chunk_and_stage(&self, chunk_position: [i32; 3]) -> Option<(&Chunk, GenerationStage)> {
-		if self.chunks.contains_key(&chunk_position) {
-			let (c, s) = &self.chunks[&chunk_position];
-			Some((c, *s))
-		} else {
-			None
+			Err(MapError::ChunkUnloaded)
 		}
 	}
 
@@ -341,21 +397,17 @@ impl Map {
 	pub fn set_voxel_world(&mut self, world_coords: [i32; 3], voxel: Voxel) {
 		let (cpos, cvpos) = self.world_chunk_voxel(world_coords);
 		debug!("world {:?} -> chunk {:?} voxel {:?} to {:?}", &world_coords, &cpos, &cvpos, &voxel);
-		if let Some(chunk) = self.chunk_mut(cpos) {
-			chunk.set_voxel(cvpos, voxel);
-		} else {
-			warn!("Tried to set a voxel in an unloaded chunk");
+		match self.chunk_mut(cpos) {
+			Ok(c) => c.set_voxel(cvpos, voxel),
+			Err(_) => todo!("add to cbms"), 
 		}
 	}
 
-	pub fn get_voxel_world(&self, world_coords: [i32; 3]) -> Option<Voxel> {
+	pub fn get_voxel_world(&self, world_coords: [i32; 3]) -> Result<Voxel, MapError> {
 		let (cpos, cvpos) = self.world_chunk_voxel(world_coords);
 		// debug!("world {:?} -> chunk {:?} voxel {:?}", &world_coords, &cpos, &cvpos);
-		if let Some(chunk) = self.chunk(cpos) {
-			Some(chunk.get_voxel(cvpos))
-		} else {
-			None
-		}
+		let chunk = self.chunk(cpos)?;
+		Ok(chunk.get_voxel(cvpos))
 	}
 
 	// Wrappers! (I think they make things easier)
@@ -870,80 +922,80 @@ const REVERSE_QUAD_INDICES: [u16; 6] = [
 
 
 
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use std::time::{Instant, Duration};
+// #[cfg(test)]
+// mod tests {
+// 	use super::*;
+// 	use std::time::{Instant, Duration};
 
-	// Tests that parallel chunk meshing is faster than non-parallel chunk meshing
-    #[test]
-    fn test_mesh_rayon() {
-		const CHUNKSIZE: [u32; 3] = [32; 3];
+// 	// Tests that parallel chunk meshing is faster than non-parallel chunk meshing
+//     #[test]
+//     fn test_mesh_rayon() {
+// 		const CHUNKSIZE: [u32; 3] = [32; 3];
 
-		let bm = Arc::new(RwLock::new({
-			let mut bm = BlockManager::new();
+// 		let bm = Arc::new(RwLock::new({
+// 			let mut bm = BlockManager::new();
 
-			bm.insert(Block::new(
-				&format!("stone")
-			));
-			bm.insert(Block::new(
-				&format!("grass")
-			));
-			bm.insert(Block::new(
-				&format!("dirt")
-			));
+// 			bm.insert(Block::new(
+// 				&format!("stone")
+// 			));
+// 			bm.insert(Block::new(
+// 				&format!("grass")
+// 			));
+// 			bm.insert(Block::new(
+// 				&format!("dirt")
+// 			));
 
-			bm
-		}));
+// 			bm
+// 		}));
 
-		println!("Generating world");
-		let mapgen_st = Instant::now();
-		let mut map = Map::new(CHUNKSIZE, &bm);
-		map.generate();
-		println!("Generated map in {}ms", (Instant::now() - mapgen_st).as_millis());
+// 		println!("Generating world");
+// 		let mapgen_st = Instant::now();
+// 		let mut map = Map::new(CHUNKSIZE, &bm);
+// 		map.generate();
+// 		println!("Generated map in {}ms", (Instant::now() - mapgen_st).as_millis());
 
-		println!("Begin meshing");
-		let start_t = Instant::now();
+// 		println!("Begin meshing");
+// 		let start_t = Instant::now();
 
-		let mut queue = Vec::new();
-		for cx in -4..4 {
-			for cy in -1..2 {
-				for cz in -4..4 {
-					queue.push((
-						[cx,cy,cz], 
-						Instant::now(), 
-						map.mesh_chunk_rayon([cx, cy, cz]),
-					));
-				}
-			}
-		}
+// 		let mut queue = Vec::new();
+// 		for cx in -4..4 {
+// 			for cy in -1..2 {
+// 				for cz in -4..4 {
+// 					queue.push((
+// 						[cx,cy,cz], 
+// 						Instant::now(), 
+// 						map.mesh_chunk_rayon([cx, cy, cz]),
+// 					));
+// 				}
+// 			}
+// 		}
 
-		let mut mesh_times = Vec::new();
-		while queue.len() > 0 {
-			queue.drain_filter(|(cpos, st, result)| {
-				let content = result.lock().unwrap();
-				if content.is_some() {
-					mesh_times.push((*cpos, Instant::now() - *st));
-					true
-				} else {
-					false
-				}
-			});
-			// Don't lock all the time
-			std::thread::sleep(Duration::from_millis(2));
-		}
+// 		let mut mesh_times = Vec::new();
+// 		while queue.len() > 0 {
+// 			queue.drain_filter(|(cpos, st, result)| {
+// 				let content = result.lock().unwrap();
+// 				if content.is_some() {
+// 					mesh_times.push((*cpos, Instant::now() - *st));
+// 					true
+// 				} else {
+// 					false
+// 				}
+// 			});
+// 			// Don't lock all the time
+// 			std::thread::sleep(Duration::from_millis(2));
+// 		}
 
-		let total_duration = Instant::now() - start_t;
+// 		let total_duration = Instant::now() - start_t;
 
-		// Display results
-		for (cpos, cdur) in &mesh_times {
-			println!("chunk {:?} meshed in {}ms", cpos, cdur.as_millis());
-		}
-		println!("{} chunks meshed in {}ms", mesh_times.len(), total_duration.as_millis());
+// 		// Display results
+// 		for (cpos, cdur) in &mesh_times {
+// 			println!("chunk {:?} meshed in {}ms", cpos, cdur.as_millis());
+// 		}
+// 		println!("{} chunks meshed in {}ms", mesh_times.len(), total_duration.as_millis());
 
-		let duration_sum: Duration = mesh_times.drain(..).map(|(_, d)| d).sum();
-		println!("Duration sum is {}ms", duration_sum.as_millis());
+// 		let duration_sum: Duration = mesh_times.drain(..).map(|(_, d)| d).sum();
+// 		println!("Duration sum is {}ms", duration_sum.as_millis());
 
-        assert!(duration_sum > total_duration);
-    }
-}
+//         assert!(duration_sum > total_duration);
+//     }
+// }

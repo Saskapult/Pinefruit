@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, RwLock};
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use crate::world::*;
 use crate::ecs::*;
 use rapier3d::prelude::*;
 use crate::mesh::Mesh;
+use crate::util::PTCT;
 
 
 
@@ -14,11 +15,11 @@ use crate::mesh::Mesh;
 #[derive(Debug)]
 pub enum ChunkModelEntry {
 	Empty,
-	Unloaded,
+	Unavailable,
 	UnModeled,
-	Modeling(Arc<Mutex<Option<Vec<(usize, Mesh)>>>>),
+	Modeling(PTCT<Vec<(usize, Mesh)>>),
 	RequestingReModel(Vec<(usize, usize)>),
-	ReModeling(Vec<(usize, usize)>, Arc<Mutex<Option<Vec<(usize, Mesh)>>>>),
+	ReModeling(Vec<(usize, usize)>, PTCT<Vec<(usize, Mesh)>>),
 	Complete(Vec<(usize, usize)>),
 }
 
@@ -29,6 +30,7 @@ pub enum ChunkModelEntry {
 pub struct MapComponent {
 	pub map: crate::world::Map,
 	pub chunk_models: HashMap<[i32; 3], ChunkModelEntry>,
+	pub loading_chunks: HashMap<[i32; 3], PTCT<Result<(Chunk, ChunkBlockMods, GenerationStage), GenerationError>>>,
 	pub chunk_collider_handles: HashMap<[i32; 3], ColliderHandle>,
 }
 impl MapComponent {
@@ -38,6 +40,7 @@ impl MapComponent {
 		Self {
 			map,
 			chunk_models: HashMap::new(),
+			loading_chunks: HashMap::new(),
 			chunk_collider_handles: HashMap::new(),
 		}		
 	}
@@ -113,52 +116,6 @@ impl MapComponent {
 
 /// The map system is responsible for loading and meshing chunks of maps near the cameras 
 pub struct MapSystem;
-impl MapSystem {
-	fn model_chunk(
-		renderr: &mut RenderResource,
-		map: &crate::world::Map, 
-		chunk_position: [i32; 3],
-	) -> ChunkModelEntry {
-		//info!("Evaluating chunk {:?} for modeling", chunk_position);
-		if map.is_chunk_loaded(chunk_position) {
-			info!("Modeling chunk {:?}", chunk_position);
-			// Model it and register the segments
-			let mesh_mats = {
-				let mut mm = renderr.meshes_manager.write().unwrap();
-				map.mesh_chunk(chunk_position).drain(..).map(|(material_idx, mesh)| {
-					let mesh_idx = mm.insert(mesh);
-					(mesh_idx, material_idx)
-				}).collect::<Vec<_>>()
-			};
-			if mesh_mats.len() > 0 {
-				//info!("Chunk {:?} modeled", chunk_position);
-				ChunkModelEntry::Complete(mesh_mats)
-			} else {
-				info!("Chunk {:?} was empty", chunk_position);
-				ChunkModelEntry::Empty
-			}
-		} else {
-			//info!("Chunk {:?} was not available", chunk_position);
-			ChunkModelEntry::Unloaded
-		}
-	}
-
-	fn generate_chunk_collider(
-		render_resource: &RenderResource,
-		entry: &ChunkModelEntry,
-	) -> Option<Collider> {
-		match entry {
-			ChunkModelEntry::Complete(meshmats) => {
-				let mm = render_resource.meshes_manager.read().unwrap();
-				let meshes = meshmats.iter().map(|(mesh_idx, _)| mm.index(*mesh_idx)).collect::<Vec<_>>();
-				let chunk_shape = crate::mesh::meshes_trimesh(meshes).unwrap();
-				let chunk_collider = ColliderBuilder::new(chunk_shape).build();
-				Some(chunk_collider)
-			},
-			_ => None,
-		}
-	}
-}
 impl<'a> System<'a> for MapSystem {
 	type SystemData = (
 		WriteExpect<'a, RenderResource>,
@@ -179,20 +136,68 @@ impl<'a> System<'a> for MapSystem {
 			transforms,
 		): Self::SystemData,
 	) { 
+		// I love closures! I love closures!
+		let generate_chunk_collider = |entry: &ChunkModelEntry| -> Option<Collider> {
+			match entry {
+				ChunkModelEntry::Complete(meshmats) => {
+					let mm = render_resource.meshes_manager.read().unwrap();
+					let meshes = meshmats.iter().map(|(mesh_idx, _)| mm.index(*mesh_idx)).collect::<Vec<_>>();
+					let chunk_shape = crate::mesh::meshes_trimesh(meshes).unwrap();
+					let chunk_collider = ColliderBuilder::new(chunk_shape).build();
+					Some(chunk_collider)
+				},
+				_ => None,
+			}
+		};
+
+		let load_radius = 4;
+		for map_c in (&mut maps).join() {
+			let mut chunks_to_load = Vec::new();
+			for (_, transform_c) in (&cameras, &transforms).join() {
+				let camera_chunk = map_c.map.point_chunk(&transform_c.position);
+				let mut cposs = map_c.map.chunks_sphere(camera_chunk, load_radius);
+				chunks_to_load.append(&mut cposs);				
+			}
+
+			let mut chunks_to_unload = Vec::new();
+			for chunk_position in map_c.chunk_models.keys() {
+				let should_remove = (&cameras, &transforms).join().any(|(_, transform)| {
+					let camera_chunk = map_c.map.point_chunk(&transform.position);
+					!Map::within_chunks_sphere(*chunk_position, camera_chunk, load_radius+1)
+				});
+				if should_remove {
+					chunks_to_unload.push(*chunk_position)
+				}
+			}
+
+			for _chunk_position in chunks_to_unload {
+				// Todo: This
+			}
+
+			for chunk_position in chunks_to_load {
+				if !map_c.chunk_models.contains_key(&chunk_position) {
+					debug!("Generating chunk {:?}", chunk_position);
+					map_c.map.begin_chunk_generation(chunk_position);
+					map_c.chunk_models.insert(chunk_position, ChunkModelEntry::UnModeled);
+				}
+			}
+		}
+		
+
 		// Model loading
 		let model_radius = 3;
 		for map_c in (&mut maps).join() {
 			
 			// Find all chunks which should be displayed
-			let mut chunks_to_show = Vec::new();
+			let mut chunks_to_display = Vec::new();
 			for (_, transform_c) in (&cameras, &transforms).join() {
 				let camera_chunk = map_c.map.point_chunk(&transform_c.position);
 				let mut cposs = map_c.map.chunks_sphere(camera_chunk, model_radius);
-				chunks_to_show.append(&mut cposs);				
+				chunks_to_display.append(&mut cposs);				
 			}
 
 			// Unload some models
-			let mut chunks_to_remove = Vec::new();
+			let mut chunks_to_undisplay = Vec::new();
 			for chunk_position in map_c.chunk_models.keys() {
 				// If the chunk is not used for any camera
 				let should_remove = (&cameras, &transforms).join().any(|(_, transform)| {
@@ -200,27 +205,13 @@ impl<'a> System<'a> for MapSystem {
 					!Map::within_chunks_sphere(*chunk_position, camera_chunk, model_radius+1)
 				});
 				if should_remove {
-					chunks_to_remove.push(*chunk_position)
-				}
-			}
-			for chunk_position in chunks_to_remove {
-				if let Some(_cme) = map_c.chunk_models.remove(&chunk_position) {
-					// Todo: unload mesh and all that
+					chunks_to_undisplay.push(*chunk_position)
 				}
 			}
 
-			// Enter new chunks for rendering
-			for chunk_position in chunks_to_show {
-				if !map_c.chunk_models.contains_key(&chunk_position) {
-					if map_c.map.is_chunk_loaded(chunk_position) {
-						map_c.chunk_models.insert(chunk_position, ChunkModelEntry::UnModeled);
-					} else {
-						debug!("Generating chunk {:?}", chunk_position);
-						map_c.map.generate_chunk(chunk_position).unwrap();
-						map_c.chunk_models.insert(chunk_position, ChunkModelEntry::UnModeled);
-						// map_c.chunk_models.insert(chunk_position, ChunkModelEntry::Unloaded);
-					}
-					
+			for chunk_position in chunks_to_undisplay {
+				if let Some(_cme) = map_c.chunk_models.remove(&chunk_position) {
+					// Todo: unload mesh and all that
 				}
 			}
 
@@ -228,60 +219,57 @@ impl<'a> System<'a> for MapSystem {
 			map_c.chunk_models.iter_mut().for_each(|(&chunk_position, cme)| {
 				match cme {
 					ChunkModelEntry::UnModeled => {
-						// Queue for modeling
-						let entry = map_c.map.mesh_chunk_rayon(chunk_position);
-						*cme = ChunkModelEntry::Modeling(entry);
-					},
-					ChunkModelEntry::RequestingReModel(d) => {
-						let entry = map_c.map.mesh_chunk_rayon(chunk_position);
-						*cme = ChunkModelEntry::ReModeling(d.clone(), entry);
-					},
-					ChunkModelEntry::ReModeling(_, result) => {
-						// Test if modeling is done
-						let mut content = result.lock().unwrap();
-						if content.is_some() {
-							info!("Got remodel for chunk {:?}", chunk_position);
-							let inner_content = content.as_mut().unwrap();
-
-							if inner_content.len() > 0 {
-								let mesh_mats = {
-									let mut mm = render_resource.meshes_manager.write().unwrap();
-									inner_content.drain(..).map(|(material_idx, mesh)| {
-										let mesh_idx = mm.insert(mesh);
-										(mesh_idx, material_idx)
-									}).collect::<Vec<_>>()
-								};
-								// drop(result);
-								drop(content);
-								*cme = ChunkModelEntry::Complete(mesh_mats);
-							} else {
-								drop(content);
-								*cme = ChunkModelEntry::Empty;
+						// Poll generation
+						if map_c.map.check_chunk_done(chunk_position) {
+							// Queue for modeling
+							if let Ok(entry) = map_c.map.mesh_chunk_rayon(chunk_position) {
+								*cme = ChunkModelEntry::Modeling(entry);
 							}
 						}
 					},
+					ChunkModelEntry::RequestingReModel(d) => {
+						if let Ok(entry) = map_c.map.mesh_chunk_rayon(chunk_position) {
+							*cme = ChunkModelEntry::ReModeling(d.clone(), entry);
+						}
+					},
+					ChunkModelEntry::ReModeling(_, result) => {
+						match result.pollmebb() {
+							Some(mut inner_content) => {
+								info!("Got remodel for chunk {:?}", chunk_position);
+								if inner_content.len() > 0 {
+									let mesh_mats = {
+										let mut mm = render_resource.meshes_manager.write().unwrap();
+										inner_content.drain(..).map(|(material_idx, mesh)| {
+											let mesh_idx = mm.insert(mesh);
+											(mesh_idx, material_idx)
+										}).collect::<Vec<_>>()
+									};
+									*cme = ChunkModelEntry::Complete(mesh_mats);
+								} else {
+									*cme = ChunkModelEntry::Empty;
+								}
+							},
+							None => {},
+						}
+					},
 					ChunkModelEntry::Modeling(result) => {
-						// Test if modeling is done
-						let mut content = result.lock().unwrap();
-						if content.is_some() {
-							info!("Got model for chunk {:?}", chunk_position);
-							let inner_content = content.as_mut().unwrap();
-
-							if inner_content.len() > 0 {
-								let mesh_mats = {
-									let mut mm = render_resource.meshes_manager.write().unwrap();
-									inner_content.drain(..).map(|(material_idx, mesh)| {
-										let mesh_idx = mm.insert(mesh);
-										(mesh_idx, material_idx)
-									}).collect::<Vec<_>>()
-								};
-								// drop(result);
-								drop(content);
-								*cme = ChunkModelEntry::Complete(mesh_mats);
-							} else {
-								drop(content);
-								*cme = ChunkModelEntry::Empty;
-							}
+						match result.pollmebb() {
+							Some(mut inner_content) => {
+								info!("Got model for chunk {:?}", chunk_position);
+								if inner_content.len() > 0 {
+									let mesh_mats = {
+										let mut mm = render_resource.meshes_manager.write().unwrap();
+										inner_content.drain(..).map(|(material_idx, mesh)| {
+											let mesh_idx = mm.insert(mesh);
+											(mesh_idx, material_idx)
+										}).collect::<Vec<_>>()
+									};
+									*cme = ChunkModelEntry::Complete(mesh_mats);
+								} else {
+									*cme = ChunkModelEntry::Empty;
+								}
+							},
+							None => {},
 						}
 					},
 					_ => {},
@@ -321,7 +309,7 @@ impl<'a> System<'a> for MapSystem {
 			for chunk_position in chunks_to_collide {
 				if map.chunk_models.contains_key(&chunk_position) && !map.chunk_collider_handles.contains_key(&chunk_position) {
 					let entry = &map.chunk_models[&chunk_position];
-					if let Some(collider) = MapSystem::generate_chunk_collider(&render_resource, entry) {
+					if let Some(collider) = generate_chunk_collider(entry) {
 						let ch = spc.add_collider(&mut physics_resource, collider);
 						map.chunk_collider_handles.insert(chunk_position, ch);
 					}

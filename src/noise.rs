@@ -188,9 +188,52 @@ pub fn xoshiro_blue_2d(
 
 
 
+#[inline(always)]
+pub fn xoshiro_hash_rng_3d(base_seed: u64, position: [i32; 3]) -> f64 {
+	let a = Xoshiro256PlusPlus::seed_from_u64(base_seed + position[0] as u64).gen::<u64>();
+	let b = Xoshiro256PlusPlus::seed_from_u64(a + position[1] as u64).gen::<u64>();
+	Xoshiro256PlusPlus::seed_from_u64(b + position[2] as u64).gen::<f64>()
+}
+#[inline(always)]
+pub fn xoshiro_hash_rng_2d(base_seed: u64, position: [i32; 2]) -> f64 {
+	let a = Xoshiro256PlusPlus::seed_from_u64(base_seed + position[0] as u64).gen::<u64>();
+	Xoshiro256PlusPlus::seed_from_u64(a + position[1] as u64).gen::<f64>()
+}
+
+
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::time::Instant;
+	use rayon::prelude::*;
+
+	// This test shows that parallel stuff is good stuff
+	#[test]
+	fn testyy() {
+		const WIDTH: u32 = 3000;
+		const HEIGHT: u32 = 3000;
+
+		println!("Noise start");
+		let st = Instant::now();
+		let output = (0..WIDTH*HEIGHT).into_par_iter().map(|v| {
+			let x = v % WIDTH;
+			let y = v / HEIGHT;
+			xoshiro_hash_rng_2d(0, [x as i32, y as i32])
+		}).collect::<Vec<_>>();
+		let en = Instant::now();
+		println!("Noise done in {:?}", (en-st));
+
+		let img = image::DynamicImage::ImageRgb8(
+			image::ImageBuffer::from_vec(WIDTH, HEIGHT, output.iter().flat_map(|&f| {
+				[(f * u8::MAX as f64) as u8; 3]
+			}).collect::<Vec<_>>()).unwrap()
+		);
+
+		crate::util::show_image(img).unwrap();
+
+		assert_eq!(2 + 2, 4);
+	}
 
     #[test]
     fn chunk_seed_test() {

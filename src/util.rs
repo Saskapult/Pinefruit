@@ -1,4 +1,4 @@
-use std::{time::Duration, path::Path};
+use std::{time::Duration, path::Path, sync::{Mutex, Arc}};
 use image::DynamicImage;
 use anyhow::*;
 use std::process::Command;
@@ -151,6 +151,33 @@ pub fn load_spline(path: impl AsRef<Path>) -> Result<Spline<f64, f64>> {
 		.with_context(|| format!("Failed to parse spline ron file '{:?}'", &canonical_path))?;
 	
 	Ok(spline)
+}
+
+
+
+/// Pollable. Threadish. Checker. Thing.
+#[derive(Debug, Clone)]
+pub struct PTCT<T: std::fmt::Debug> {
+	result: Arc<Mutex<Option<T>>>
+}
+impl<T: std::fmt::Debug> PTCT<T> {
+	pub fn new() -> Self {
+		Self { result: Arc::new(Mutex::new(None)) }
+	}
+
+	pub fn pollmebb(&mut self) -> Option<T> {
+		let mut res = self.result.lock().unwrap();
+		if res.is_some() {
+			Some(res.take().unwrap())
+		} else {
+			None
+		}
+	}
+
+	pub fn insert(&mut self, thing: T) {
+		let mut res = self.result.lock().unwrap();
+		*res = Some(thing);
+	}
 }
 
 

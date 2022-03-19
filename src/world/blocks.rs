@@ -222,7 +222,7 @@ impl BlockManager {
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum BlockModReason {
 	WorldGenSet(Voxel),
 	Explosion(f32),
@@ -275,7 +275,7 @@ impl VoxelPosition {
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlockMod {
 	pub position: VoxelPosition,
 	pub reason: BlockModReason,

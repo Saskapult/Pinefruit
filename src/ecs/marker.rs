@@ -103,7 +103,7 @@ impl<'a> System<'a> for MarkerSystem {
 
 			// Find first non-empty and the voxel before it
 			let first_block_index = map_raypositions.iter().position(|ray_hit| {
-				if let Some(v) = map.map.get_voxel_world(ray_hit.coords) {
+				if let Ok(v) = map.map.get_voxel_world(ray_hit.coords) {
 					match v {
 						crate::world::Voxel::Block(_) => true,
 						_ => false,
@@ -183,7 +183,7 @@ impl<'a> System<'a> for MarkerSystem {
 
 				mc.look_pos = hit.coords;
 				mc.look_normal = hit.normal.into();
-				mc.look_v = map.map.get_voxel_world(hit.coords);
+				mc.look_v = map.map.get_voxel_world(hit.coords).ok();
 			} else {
 				new_marker_pos = Some(Vector3::new(
 					0.5, 

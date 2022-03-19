@@ -3,7 +3,7 @@ use crate::world::*;
 
 
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum Voxel {
 	Empty,
 	Block(usize),
