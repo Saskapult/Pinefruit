@@ -147,16 +147,27 @@ impl GameWindow {
 					ui.label(format!("look normal: {:?} ({})", normal, normal_str));
 				}
 
-				let steptime = Duration::from_millis(42069);
+				let steptime = world.read_resource::<StepResource>().step_durations.latest().unwrap_or(Duration::ZERO);
 				ui.label(format!("step time: {}ms", steptime.as_millis()));
 				
-				let encodetime = render_resource.encode_durations.latest().unwrap_or(Duration::ZERO);
-				let encodep = encodetime.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-				ui.label(format!("encode time: {:>2}ms (~{:.2}%)", encodetime.as_millis(), encodep));
+				{
+					let encodetime = render_resource.encode_durations.latest().unwrap_or(Duration::ZERO);
+					let encodep = encodetime.as_secs_f32() / steptime.as_secs_f32() * 100.0;
+					ui.label(format!("encode time: {:>2}ms (~{:.2}%)", encodetime.as_millis(), encodep));
+					{
+						let rupdate_time = render_resource.instance.update_durations.latest().unwrap_or(Duration::ZERO);
+						let rupdate_p = rupdate_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
+						ui.label(format!("rupdate time: {:>2}ms (~{:.2}%)", rupdate_time.as_millis(), rupdate_p));
 
-				let submit_time = render_resource.submit_durations.latest().unwrap_or(Duration::ZERO);
-				let submit_p = submit_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-				ui.label(format!("submit time: {:>2}ms (~{:.2}%)", submit_time.as_millis(), submit_p));
+						let rencode_time = render_resource.instance.encode_durations.latest().unwrap_or(Duration::ZERO);
+						let rencode_p = rencode_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
+						ui.label(format!("rencode time: {:>2}ms (~{:.2}%)", rencode_time.as_millis(), rencode_p));
+					}
+
+					let submit_time = render_resource.submit_durations.latest().unwrap_or(Duration::ZERO);
+					let submit_p = submit_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
+					ui.label(format!("submit time: {:>2}ms (~{:.2}%)", submit_time.as_millis(), submit_p));
+				}
 
 				let physics_time = {
 					let physics_resource = world.read_resource::<PhysicsResource>();
@@ -165,13 +176,7 @@ impl GameWindow {
 				let physics_p = physics_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
 				ui.label(format!("physics time: {:>2}ms (~{:.2}%)", physics_time.as_millis(), physics_p));
 
-				let rupdate_time = render_resource.instance.update_durations.latest().unwrap_or(Duration::ZERO);
-				let rupdate_p = rupdate_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-				ui.label(format!("rupdate time: {:>2}ms (~{:.2}%)", rupdate_time.as_millis(), rupdate_p));
-
-				let rencode_time = render_resource.instance.encode_durations.latest().unwrap_or(Duration::ZERO);
-				let rencode_p = rencode_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-				ui.label(format!("rencode time: {:>2}ms (~{:.2}%)", rencode_time.as_millis(), rencode_p));
+				
 
 				// if ui.button("Clickme").clicked() {
 				// 	panic!("Button click");

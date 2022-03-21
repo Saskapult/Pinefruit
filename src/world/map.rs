@@ -339,7 +339,7 @@ impl Map {
 	}
 
 	/// Begins chunk generation.
-	/// Check for completion using check_chunk_done
+	/// Check for completion using check_chunk_done().
 	pub fn begin_chunk_generation(&mut self, chunk_position: [i32; 3]) {
 		self.chunks.insert(chunk_position, MapChunkEntry::Generating(
 			self.generate_chunk_rayon(chunk_position)
@@ -348,7 +348,7 @@ impl Map {
 
 	/// Checks if a chunk is done generating.
 	/// Inserts it if it is ready.
-	pub fn check_chunk_done(&mut self, chunk_position: [i32; 3]) -> bool {
+	pub fn check_chunk_available(&mut self, chunk_position: [i32; 3]) -> bool {
 		if self.chunks.contains_key(&chunk_position) {
 			match self.chunks.get_mut(&chunk_position).unwrap() {
 				MapChunkEntry::Complete(_) => true,

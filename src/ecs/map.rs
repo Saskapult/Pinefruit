@@ -136,6 +136,8 @@ impl<'a> System<'a> for MapSystem {
 			transforms,
 		): Self::SystemData,
 	) { 
+		let map_st = std::time::Instant::now();
+
 		// I love closures! I love closures!
 		let generate_chunk_collider = |entry: &ChunkModelEntry| -> Option<Collider> {
 			match entry {
@@ -150,7 +152,11 @@ impl<'a> System<'a> for MapSystem {
 			}
 		};
 
-		let load_radius = 4;
+		let model_radius = 4;
+		let load_radius = model_radius+1;
+		let collider_radius = 3;
+		
+		// Chunk loading
 		for map_c in (&mut maps).join() {
 			let mut chunks_to_load = Vec::new();
 			for (_, transform_c) in (&cameras, &transforms).join() {
@@ -185,7 +191,6 @@ impl<'a> System<'a> for MapSystem {
 		
 
 		// Model loading
-		let model_radius = 3;
 		for map_c in (&mut maps).join() {
 			
 			// Find all chunks which should be displayed
@@ -220,7 +225,8 @@ impl<'a> System<'a> for MapSystem {
 				match cme {
 					ChunkModelEntry::UnModeled => {
 						// Poll generation
-						if map_c.map.check_chunk_done(chunk_position) {
+						if map_c.map.check_chunk_available(chunk_position) {
+							debug!("Chunk {:?} has been genrated, inserting into model queue", chunk_position);
 							// Queue for modeling
 							if let Ok(entry) = map_c.map.mesh_chunk_rayon(chunk_position) {
 								*cme = ChunkModelEntry::Modeling(entry);
@@ -278,7 +284,6 @@ impl<'a> System<'a> for MapSystem {
 		}
 
 		// Collider loading
-		let collider_radius = 3;
 		for (map, spc) in (&mut maps, &mut static_objects).join() {
 			// Find all chunks which should have colliders
 			let mut chunks_to_collide = Vec::new();
@@ -316,6 +321,7 @@ impl<'a> System<'a> for MapSystem {
 				}
 			}
 		}
-		
+
+		println!("Map system: {}ms", (std::time::Instant::now() - map_st).as_millis());
 	}
 }

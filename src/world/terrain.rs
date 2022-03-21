@@ -1,10 +1,10 @@
 use std::collections::HashSet;
-
 use crate::world::*;
 use noise::Perlin;
 use noise::Seedable;
 use noise::Worley;
 use noise::NoiseFn;
+use splines::{Interpolation, Key, Spline};
 use thiserror::Error;
 
 
@@ -43,41 +43,71 @@ pub enum GenerationError {
 
 #[derive(Debug)]
 pub struct TerrainGenerator {
-	perlin: Perlin,
-	base_noise_threshold: f64,
+	density_perlin: Perlin,
+	density_threshold: f64,
+
+	max_height_perlin: Perlin,
+	/// Max height noise -> max height
+	max_height_spline: Spline<f64, f64>,
+
+	/// Elevation relative to max height -> adjustment in density
+	density_adjustment_spline: Spline<f64, f64>,
 }
 impl TerrainGenerator {
 	pub fn new(seed: u32) -> Self {
 		Self {
-			perlin: Perlin::new().set_seed(seed),
-			base_noise_threshold: 0.5,
+			density_perlin: Perlin::new().set_seed(seed),
+			density_threshold: 0.5,
+
+			max_height_perlin: Perlin::new().set_seed(42),
+			max_height_spline: Spline::from_vec(vec![
+				Key::new(0.0, 5.0, Interpolation::default()),
+				Key::new(0.5, 25.0, Interpolation::default()),
+				Key::new(0.75, 90.0, Interpolation::default()),
+				Key::new(1.0, 100.0, Interpolation::default()),
+			]),
+
+			density_adjustment_spline: Spline::from_vec(vec![
+				Key::new(-20.0, 1.0, Interpolation::default()),
+				Key::new(0.0, 0.0, Interpolation::default()),
+				Key::new(20.0, 0.0, Interpolation::default()),
+				Key::new(50.0, -1.0, Interpolation::default()),
+			]),
 		}
 	}
 
-	/// Should this block be solid by default?
+	/// Should this position be solid by default?
 	#[inline]
 	fn is_solid_default(&self, world_position: [i32; 3]) -> bool {
 		let density = crate::noise::octave_perlin_3d(
-			&self.perlin, 
+			&self.density_perlin, 
 			world_position.map(|v| (v as f64 + 0.5) / 25.0), 
 			4, 
 			0.5,
 			2.0,
 		);
 
-		let [_, y_world, _] = world_position;
-		let squashpart = if y_world >= 0 {
-			// No blocks after y=20
-			if y_world > 20 {
-				0.0
-			} else {
-				1.0 - (y_world as f64 / 20.0)
-			}
-		} else {
-			y_world.abs() as f64 / 20.0 + 1.0
-		};
+		let [x_world, y_world, z_world] = world_position;
 
-		density * squashpart >= self.base_noise_threshold
+		let max_height = self.max_height_spline.clamped_sample(
+			crate::noise::octave_perlin_2d(
+				&self.max_height_perlin, 
+				[
+					(x_world as f64 + 0.5) / 75.0,
+					(z_world as f64 + 0.5) / 75.0,
+				], 
+				1, 
+				0.5, 
+				2.0,
+			).powf(3.0)
+		).expect("Spline sampling failed!?");
+
+		let density_adjustment = self.density_adjustment_spline.clamped_sample(y_world as f64 - max_height).unwrap();
+
+		let new_density = density + density_adjustment;
+		//f64::max(f64::min(density + density_adjustment, 1.0), 0.0);
+
+		new_density >= self.density_threshold
 	}
 
 	/// Creates a chunk base based on 3d noise
@@ -404,4 +434,88 @@ impl Carver for WorleyCarver {
 
 		chunk
 	}
+}
+
+
+
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use rayon::prelude::*;
+
+	#[test]
+    fn spt() {
+		let s = Spline::from_vec(vec![
+			// x, y
+			Key::new(0.0, 0.0, Interpolation::default()),
+			Key::new(1.0, 10.0, Interpolation::default()),
+		]);
+		let vals = vec![
+			0.0,
+			0.5,
+			1.0,
+			-1.0,
+			2.0,
+		];
+		println!("Default:");
+		vals.iter().for_each(|&v| println!("s({}) = {:?}", v, s.sample(v)));
+
+		println!("Clamped:");
+		vals.iter().for_each(|&v| println!("s({}) = {:?}", v, s.clamped_sample(v)));
+	}
+
+
+
+    #[test]
+    fn show_terrain_slice() {
+
+		const WIDTH: u32 = 512;
+		const HEIGHT: u32 = 256;
+
+		let tgen = TerrainGenerator::new(0);
+
+		// let veccy = vec![
+		// 	0, 1,
+		// 	0, 0,
+		// ].iter().map(|&i| {
+		// 	if i == 0 {
+		// 		false
+		// 	} else {
+		// 		true
+		// 	}
+		// }).collect::<Vec<_>>();
+
+		// 0,0 -> 1,0
+		// |
+		// v
+		// 0,1
+		let output = (0..WIDTH*HEIGHT).into_par_iter().map(|v| {
+			let x = (v % WIDTH) as i32;
+			let y = HEIGHT as i32 - (v / WIDTH) as i32;
+			let xc = x - (WIDTH / 2) as i32;
+			let yc = y - (HEIGHT / 2) as i32;
+			// [xc, yc]
+			tgen.is_solid_default([
+				xc as i32, yc as i32, 0,
+			])
+		}).collect::<Vec<_>>();
+
+		// output.chunks(WIDTH as usize).for_each(|v| println!("{:>2?}", v));
+
+		let img = image::DynamicImage::ImageRgb8(
+			image::ImageBuffer::from_vec(WIDTH, HEIGHT, output.par_iter().flat_map(|&solid| {
+				if solid {
+					[u8::MAX; 3]
+				} else {
+					[u8::MIN; 3]
+				}
+			}).collect::<Vec<_>>()).unwrap()
+		);
+
+		crate::util::show_image(img).unwrap();
+
+        assert_eq!(2 + 2, 4);
+    }
 }

@@ -206,6 +206,7 @@ pub fn xoshiro_hash_rng_2d(base_seed: u64, position: [i32; 2]) -> f64 {
 mod tests {
 	use super::*;
 	use std::time::Instant;
+	use noise::Seedable;
 	use rayon::prelude::*;
 
 	// This test shows that parallel stuff is good stuff
@@ -236,21 +237,31 @@ mod tests {
 	}
 
     #[test]
-    fn chunk_seed_test() {
+    fn perlin_test() {
 
-		const WIDTH: u32 = 30;
-		const HEIGHT: u32 = 30;
-		const R: u32 = 1;
+		const WIDTH: u32 = 512;
+		const HEIGHT: u32 = 512;
 		
-		let output = xoshiro_blue_2d(0, WIDTH, HEIGHT, R);
+		let perlin = Perlin::new().set_seed(42);
+
+		let output = (0..WIDTH*HEIGHT).into_par_iter().map(|v| {
+			let x = v % WIDTH;
+			let y = v / HEIGHT;
+			octave_perlin_2d(
+				&perlin, 
+				[
+					(x as f64 + 0.5) / 50.0, 
+					(y as f64 + 0.5) / 50.0, 
+				],
+				4, 
+				0.5,
+				2.0,
+			).powf(3.0)
+		}).collect::<Vec<_>>();
 
 		let img = image::DynamicImage::ImageRgb8(
-			image::ImageBuffer::from_vec(WIDTH, HEIGHT, output.iter().flat_map(|&b| {
-				if b {
-					[u8::MAX; 3]
-				} else {
-					[u8::MIN; 3]
-				}
+			image::ImageBuffer::from_vec(WIDTH, HEIGHT, output.par_iter().flat_map(|&f| {
+				[(f * u8::MAX as f64) as u8; 3]
 			}).collect::<Vec<_>>()).unwrap()
 		);
 

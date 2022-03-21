@@ -12,7 +12,12 @@ def main():
 	result = np.zeros(shape)
 	for x in range(shape[0]):
 		for y in range(shape[1]):
-			result[y][x] = x | y
+			result[y][x] = octave_perlin_2d(
+				x/75, y/75,
+				1,
+				0.5,
+				2.0
+			) ** 3
 	result = np.floor(result * 255).astype(np.uint8)
 	print(result.max())
 	print(result.min())
