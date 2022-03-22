@@ -107,9 +107,11 @@ impl GraphLocals {
 	}
 
 	pub fn insert_texture(&mut self, t: BoundTexture, id: &String) -> usize {
-		debug!("Inserting texture '{}' as '{}'", &t.name, id);
 		let idx = self.textures.len();
-		self.textures_index_of_id.insert(id.clone(), idx);
+		debug!("Inserting texture '{}' as '{}' at index {idx}", &t.name, id);
+		if let Some(old_texture) = self.textures_index_of_id.insert(id.clone(), idx) {
+			warn!("Replaced texture {id} ({old_texture:?} -> {idx:?})");
+		}
 		self.textures.push(t);
 		idx
 	}
@@ -790,6 +792,7 @@ pub struct TextureNode {
 }
 impl TextureNode {
 	pub fn from_spec(spec: &TextureNodeSpecification) -> Self {
+		// error!("New texturenode '{}'", &spec.name);
 		Self {
 			name: spec.name.clone(),
 			resource_id: spec.resource_name.clone(),
@@ -807,6 +810,7 @@ impl TextureNode {
 		context: &mut GraphLocals, 
 		render_resources: &mut RenderResources, 
 	) -> usize {
+		// debug!("Creating texture for texture node '{}'", &self.name);
 		let [width, height] = match self.resolution {
 			Some(r) => r,
 			None => context.default_resolution,
@@ -835,8 +839,8 @@ impl RunnableNode for TextureNode {
 	}
 
 	fn update(&mut self, context: &mut GraphLocals, _: &mut ModelsQueueResource, render_resources: &mut RenderResources) {
-		// Should create if not exists but I'm lazy
 		self.texture_idx = self.create_texture(context, render_resources);
+		debug!("Texture node '{}' pulled texture idx {}", &self.name, &self.texture_idx);
 	}
 
 	fn run(
@@ -846,15 +850,15 @@ impl RunnableNode for TextureNode {
 		_: &mut RenderResources, 
 		encoder: &mut wgpu::CommandEncoder,
 	) {
-		debug!("Running texture node {}", &self.name);
+		debug!("Running texture node '{}'", &self.name);
 		encoder.push_debug_group(&*format!("Texture node '{}'", &self.name));
 
-		// Fill with stuff if needed
+		// Fill data if needed
 		if let Some(fill_with) = &self.fill_with {
 			let texxy = context.get_texture(self.texture_idx);
 			let colour_attachments = match self.texture_format.is_depth() {
 				true => vec![],
-				false => {vec![
+				false => vec![
 					wgpu::RenderPassColorAttachment {
 						view: &texxy.view,
 						resolve_target: None,
@@ -868,20 +872,20 @@ impl RunnableNode for TextureNode {
 							store: true,
 						},
 					},
-				]},
+				],
 			};
 	
 			let depth_stencil_attachment = match self.texture_format.is_depth() {
-				true => {
-					Some(wgpu::RenderPassDepthStencilAttachment {
+				true => Some(
+					wgpu::RenderPassDepthStencilAttachment {
 						view: &texxy.view,
 						depth_ops: Some(wgpu::Operations {
 							load: wgpu::LoadOp::Clear(fill_with[0]),
 							store: true,
 						}),
 						stencil_ops: None,
-					})
-				},
+					}
+				),
 				false => None,
 			};
 			

@@ -169,7 +169,7 @@ pub fn show_spline(s: Spline<f64, f64>, height: u32, width: Option<u32>) -> Resu
 	let width = match width {
 		Some(w) => w,
 		None => {
-			let aspect = y_range / x_range;
+			let aspect = x_range / y_range;
 			let w = (aspect * height as f64) as u32;
 			println!("derived width: {w}");
 			w
@@ -180,21 +180,74 @@ pub fn show_spline(s: Spline<f64, f64>, height: u32, width: Option<u32>) -> Resu
 		// let x = (v % width) as i32;
 		// let y = height as i32 - (v / width) as i32;
 		let xp = x as f64 / width as f64;
-		let yp = (s.sample(x_min + xp * x_range).unwrap() - y_min) / y_range;
+		let yp = 1.0 - (s.sample(x_min + xp * x_range).unwrap() - y_min) / y_range;
 		// y_min + yp * y_range
 		yp
 	}).collect::<Vec<_>>();
 
-	println!("{output:?}");
+	// println!("{output:?}");
 
 	let mut imb = image::ImageBuffer::new(width, height);
 	
-	output.iter()
+	// output.iter()
+	// 	.map(|&f| (f * (height-1) as f64).floor() as u32)
+	// 	.enumerate()
+	// 	.for_each(|(px, py)| {
+	// 		imb[(px as u32, py)] = [u8::MAX; 3].into();
+	// 	});
+	
+	// https://www.javatpoint.com/computer-graphics-bresenhams-line-algorithm
+	let mut bresenham = |x1: i32, y1: i32, x2: i32, y2: i32| {
+		// 4
+		let dx = x2 - x1;
+		let dy = y2 - y1;
+		let i1 = 2 * dy;
+		let i2 = 2 * (dy - dx);
+		let mut d = i1 - dx;
+
+		// 5
+		let (mut x, mut y, x_end) = 
+		if dx < 0 {
+			(x2, y2, x1)
+		} else if dx > 0 {
+			(x1, y1, x2)
+		} else {
+			panic!()
+		};
+
+		// 6
+		imb[(x as u32, y as u32)] = [u8::MAX; 3].into();
+
+		// 7
+		while x < x_end {
+
+			// 8
+			if d < 0 {
+				d += i1;
+			} else {
+				d += i2;
+				y += 1;
+			}
+
+			// 9
+			x += 1;
+
+			// 10
+			imb[(x as u32, y as u32)] = [u8::MAX; 3].into();
+
+			// 11
+		}
+	};
+	let pxy = output.iter()
 		.map(|&f| (f * (height-1) as f64).floor() as u32)
 		.enumerate()
-		.for_each(|(px, py)| {
-			imb[(px as u32, py)] = [u8::MAX; 3].into();
-		});
+		// .step_by(4)
+		.map(|(x, y)| (x as i32, y as i32))
+		.collect::<Vec<_>>();
+	pxy.iter().zip(pxy[1..].iter()).for_each(|(&(x1, y1), &(x2, y2))| {
+		bresenham(x1, y1, x2, y2)
+	});
+	// bresenham(5, 5, 20, 60);
 
 	let img = image::DynamicImage::ImageRgb8(imb);
 	
@@ -245,12 +298,23 @@ mod tests {
 	#[test]
 	fn test_show_spline() {
 		let s = Spline::from_vec(vec![
-			Key::new(0.0, 0.0, Interpolation::Cosine),
-			Key::new(0.5, 0.5, Interpolation::default()),
-			Key::new(1.0, 1.0, Interpolation::Cosine),
+			Key::new(0.0, -20.0, Interpolation::Cosine),
+			Key::new(0.1, 0.5, Interpolation::default()),
+			Key::new(1.0, 20.0, Interpolation::Cosine),
 		]);
 
-		show_spline(s, 512, None).unwrap();
+		show_spline(s, 1024, Some(1024)).unwrap();
+
+		assert!(true);
+	}
+
+	#[test]
+	fn huh() {
+		let v = vec![
+			1,2,3,4,
+		];
+
+		v.iter().zip(v[1..].iter()).for_each(|v| println!("{v:?}"));
 
 		assert!(true);
 	}

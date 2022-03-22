@@ -59,4 +59,11 @@
 		},
 		sounds: {},
 	), 
+	(
+		name: "glass",
+		faces: {
+			"every": "materials/kmaterials.ron::glass",
+		},
+		sounds: {},
+	),
 ]

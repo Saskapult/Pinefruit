@@ -137,7 +137,7 @@ impl<'a> System<'a> for MarkerSystem {
 					self.can_modify_block = false;
 
 					if let Some(pos) = back_block_pos {
-						map.set_voxel(pos, crate::world::Voxel::Block(0));
+						map.set_voxel(pos, crate::world::Voxel::Block(7));
 						error!("Set {:?}", back_block_pos);
 					} else {
 						error!("Did not set because no block to set");

@@ -11,6 +11,16 @@ use crate::texture::*;
 
 
 
+
+#[derive(Debug, PartialOrd, Ord, PartialEq, Eq, Hash)]
+pub enum RenderStage {
+	Opaque,
+	Transparent,
+	Overlay,
+}
+
+
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SSAOUniform {
@@ -112,7 +122,10 @@ pub struct RenderInstance {
 	models_end: Instant,
 
 	graph_resources: GraphLocals,
-	opaque_models: ModelsQueueResource,
+	graphs: Vec<Box<dyn RunnableNode>>,
+	loaded_graphs: Vec<PathBuf>,	// Workaround for no have path
+	// Models should be separated by graph for performance?
+	models: ModelsQueueResource,
 	opaque_graph: Box<dyn RunnableNode>,
 
 	pub duration_profiling: bool,
@@ -224,7 +237,9 @@ impl RenderInstance {
 			models_start: Instant::now(),
 			models_end: Instant::now(),
 			graph_resources,
-			opaque_models,
+			graphs: Vec::new(),
+			loaded_graphs: Vec::new(),
+			models: opaque_models,
 			opaque_graph,
 
 			duration_profiling: true,
@@ -237,20 +252,29 @@ impl RenderInstance {
 	/// Run this when a graph is added or the resolution changes
 	pub fn init_graphs(&mut self) {
 		let [width, height] = [800, 600];
-		
-		// Get model input formats
-		let graph_inputs = self.opaque_graph.inputs();
-		let model_inputs = graph_inputs.iter().filter_map(|(_, grt)| {
-			match grt {
-				GraphResourceType::Models(model_input) => Some(model_input.clone()),
-				_ => None,
-			}
-		}).collect::<HashSet<_>>();
 
 		self.graph_resources.default_resolution = [width, height]; // needed for texture making
-		self.opaque_models.update_formats(model_inputs);
-		self.opaque_graph.update(&mut self.graph_resources, &mut self.opaque_models, &mut self.render_resources);
 
+		// Get model input formats
+		let model_inputs: HashSet<(Vec<InstanceProperty>, Vec<VertexProperty>, BindGroupFormat)> = self.graphs.iter()
+			.flat_map(|graph| {
+				graph.inputs().iter().filter_map(|(_, grt)| {
+					match grt {
+						GraphResourceType::Models(model_input) => Some(model_input.clone()),
+						_ => None,
+					}
+				})
+			})
+			.collect::<HashSet<_>>();
+		
+		// Update model formats
+		self.models.update_formats(model_inputs);
+
+		// Update graphs
+		self.graphs.iter_mut().for_each(|graph| {
+			graph.update(&mut self.graph_resources, &mut self.models, &mut self.render_resources);
+		});
+		
 		// Update ssao
 		self.ssao_uniform.update(width, height);
 		self.queue.write_buffer(
@@ -260,19 +284,33 @@ impl RenderInstance {
 		);
 	}
 
-	pub fn set_data(&mut self, mut model_instances: Vec<ModelInstance>) {
+	pub fn set_data(&mut self, model_instances: Vec<ModelInstance>) {
 		let update_st = Instant::now();
 
-		// Collect all using kdefault
-		// Should collect by graph and load, but that's not a task for for current me
-		let materials = self.render_resources.materials.material_manager.read().unwrap();
-		let opaque_models = model_instances.drain_filter(|model_instance| {
-			materials.index(model_instance.material_idx).graph == PathBuf::from("resources/graphs/default.ron").canonicalize().unwrap()
-		}).collect::<Vec<_>>();
-		drop(materials);
+		let new_graphs = {
+			let materials = self.render_resources.materials.material_manager.read().unwrap();
+			model_instances.iter().filter_map(|model_instance| {
+				let g = &materials.index(model_instance.material_idx).graph;
+				if !self.loaded_graphs.contains(g) {
+					Some(g.clone())
+				} else {
+					None
+				}
+			}).collect::<HashSet<_>>()
+		};
+		if new_graphs.len() > 0 {
+			for graph_path in new_graphs {
+				info!("Loading graph {graph_path:?}");
+				let graph = Box::new(example_graph_read(&graph_path, &mut self.render_resources.shaders));
+				self.graphs.push(graph);
+				self.loaded_graphs.push(graph_path);
+			}
+			info!("Reinitializing graphs");
+			self.init_graphs();
+		}
 		
-		self.opaque_models.update_models(opaque_models, &mut self.render_resources);
-		self.opaque_models.update_instances(0.0);		
+		self.models.update_models(model_instances, &mut self.render_resources);
+		self.models.update_instances(0.0);		
 
 		self.update_durations.record(Instant::now() - update_st);
 	}
@@ -301,10 +339,10 @@ impl RenderInstance {
 		// let render_frac = self.get_render_frac(t);
 		// self.opaque_models.update_instances(render_frac);
 
-		// Run opaque graph
-		encoder.push_debug_group("opaque");
-		self.opaque_graph.run(&mut self.graph_resources, &mut self.opaque_models, &mut self.render_resources, &mut encoder);
-		encoder.pop_debug_group();
+		// Run graphs
+		for graph in &mut self.graphs {
+			graph.run(&mut self.graph_resources, &mut self.models, &mut self.render_resources, &mut encoder);
+		}
 
 		// Copy output to destination
 		let output_texture = self.graph_resources.get_texture(

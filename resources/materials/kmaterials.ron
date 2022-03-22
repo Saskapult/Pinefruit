@@ -100,4 +100,13 @@
 		floats: {},
 		sounds: {},
 	),
+	(
+		name: "glass",
+		graph: "../graphs/default.ron",
+		textures: {
+			"albedo": ["../not_for_git/InventivetalentDev/assets/minecraft/textures/blocks/glass.png"],
+		},
+		floats: {},
+		sounds: {},
+	),
 ]
