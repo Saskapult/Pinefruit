@@ -10,18 +10,6 @@ use thiserror::Error;
 
 
 
-pub trait SurfaceGenerator {
-	// Only stones
-	fn chunk_surface(&self, chunk_position: [i32; 3], chunk: Chunk, bm: &BlockManager) -> Chunk;
-	// Todo: top and filler block adder (max depth, depth noise)
-}
-pub trait Carver {
-	// Makes holes
-	fn carve_chunk(&self, chunk_position: [i32; 3], chunk: Chunk) -> Chunk;
-}
-
-
-
 #[derive(Error, Debug)]
 pub enum GenerationError {
 	#[error("a chunk ({chunk_position:?}) containing data requisite for generation was not loaded to the minimum stage of {stage_min:?}")]
@@ -35,7 +23,7 @@ pub enum GenerationError {
 		stage_current: GenerationStage,
 		stage_desired: GenerationStage,
 	},
-	#[error("lol idk")]
+	#[error("this error is generic, if you see this please remove it")]
 	GenericError,
 }
 
@@ -43,8 +31,8 @@ pub enum GenerationError {
 
 #[derive(Debug)]
 pub struct TerrainGenerator {
-	density_perlin: Perlin,
-	density_threshold: f64,
+	density_noise: Perlin,
+	density_noise_threshold: f64,
 
 	max_height_perlin: Perlin,
 	/// Max height noise -> max height
@@ -52,27 +40,50 @@ pub struct TerrainGenerator {
 
 	/// Elevation relative to max height -> adjustment in density
 	density_adjustment_spline: Spline<f64, f64>,
+	/// Density adjustment noise -> density adjustment multiplier
+	height_difference_multiplier_spline: Spline<f64, f64>,
+	/// Essentially a "weirdness" value
+	height_difference_multiplier_perlin: Perlin,
+
+	cave_noise: Worley,
+	cave_noise_thresold: f64,
 }
 impl TerrainGenerator {
 	pub fn new(seed: u32) -> Self {
 		Self {
-			density_perlin: Perlin::new().set_seed(seed),
-			density_threshold: 0.5,
+			density_noise: Perlin::new().set_seed(seed),
+			density_noise_threshold: 0.5,
 
-			max_height_perlin: Perlin::new().set_seed(42),
+			max_height_perlin: Perlin::new().set_seed(seed+1),
 			max_height_spline: Spline::from_vec(vec![
-				Key::new(0.0, 5.0, Interpolation::default()),
+				// Ocean island
+				Key::new(0.0, 10.0, Interpolation::default()),
+				Key::new(0.05, 3.0, Interpolation::default()),
+				// Ocean floor
+				Key::new(0.1, -30.0, Interpolation::default()),
+				Key::new(0.25, -30.0, Interpolation::default()),
+				// Normal ground
+				Key::new(0.4, 3.0, Interpolation::default()),
+				Key::new(0.45, 7.0, Interpolation::default()),
 				Key::new(0.5, 25.0, Interpolation::default()),
-				Key::new(0.75, 90.0, Interpolation::default()),
+				// Mountains
+				Key::new(0.70, 30.0, Interpolation::default()),
+				Key::new(0.80, 90.0, Interpolation::default()),
 				Key::new(1.0, 100.0, Interpolation::default()),
 			]),
 
 			density_adjustment_spline: Spline::from_vec(vec![
-				Key::new(-20.0, 1.0, Interpolation::default()),
-				Key::new(0.0, 0.0, Interpolation::default()),
-				Key::new(20.0, 0.0, Interpolation::default()),
-				Key::new(50.0, -1.0, Interpolation::default()),
+				Key::new(-20.0, 1.0, Interpolation::Cosine),
+				Key::new(20.0, -1.0, Interpolation::Cosine),
 			]),
+			height_difference_multiplier_spline: Spline::from_vec(vec![
+				Key::new(0.0, 1.0, Interpolation::Cosine),
+				Key::new(1.0, 0.1, Interpolation::Cosine),
+			]),
+			height_difference_multiplier_perlin: Perlin::new().set_seed(seed+2),
+
+			cave_noise: Worley::new().set_seed(seed),
+			cave_noise_thresold: 0.5,
 		}
 	}
 
@@ -80,8 +91,8 @@ impl TerrainGenerator {
 	#[inline]
 	fn is_solid_default(&self, world_position: [i32; 3]) -> bool {
 		let density = crate::noise::octave_perlin_3d(
-			&self.density_perlin, 
-			world_position.map(|v| (v as f64 + 0.5) / 25.0), 
+			&self.density_noise, 
+			world_position.map(|v| (v as f64 + 0.5) / 50.0), 
 			4, 
 			0.5,
 			2.0,
@@ -93,8 +104,8 @@ impl TerrainGenerator {
 			crate::noise::octave_perlin_2d(
 				&self.max_height_perlin, 
 				[
-					(x_world as f64 + 0.5) / 75.0,
-					(z_world as f64 + 0.5) / 75.0,
+					(x_world as f64 + 0.5) / 300.0,
+					(z_world as f64 + 0.5) / 300.0,
 				], 
 				1, 
 				0.5, 
@@ -102,12 +113,25 @@ impl TerrainGenerator {
 			).powf(3.0)
 		).expect("Spline sampling failed!?");
 
-		let density_adjustment = self.density_adjustment_spline.clamped_sample(y_world as f64 - max_height).unwrap();
+		let density_adjustment = self.density_adjustment_spline.clamped_sample(
+			(y_world as f64 - max_height) * self.height_difference_multiplier_spline.clamped_sample(
+				crate::noise::octave_perlin_2d(
+					&self.height_difference_multiplier_perlin, 
+					[
+						(x_world as f64 + 0.5) / 50.0,
+						(z_world as f64 + 0.5) / 50.0,
+					], 
+					1, 
+					0.5, 
+					2.0,
+				).powf(1.5)
+			).unwrap()
+		).unwrap();
 
 		let new_density = density + density_adjustment;
 		//f64::max(f64::min(density + density_adjustment, 1.0), 0.0);
 
-		new_density >= self.density_threshold
+		new_density >= self.density_noise_threshold
 	}
 
 	/// Creates a chunk base based on 3d noise
@@ -115,7 +139,7 @@ impl TerrainGenerator {
 		&self, 
 		chunk_position: [i32; 3], 
 		mut chunk: Chunk,
-		base_idx: usize
+		base_voxel: Voxel,
 	) -> Chunk {
 		for x in 0..chunk.size[0] {
 			let x_world = chunk.size[0] as i32 * chunk_position[0] + x as i32;
@@ -127,7 +151,7 @@ impl TerrainGenerator {
 					chunk.set_voxel(
 						[x as i32, y as i32, z as i32], 
 						if self.is_solid_default([x_world, y_world, z_world]) {
-							Voxel::Block(base_idx)
+							base_voxel
 						} else {
 							Voxel::Empty
 						},
@@ -146,8 +170,8 @@ impl TerrainGenerator {
 		&self,
 		mut chunk: Chunk,
 		chunk_position: [i32; 3], 
-		top_idx: usize,
-		fill_idx: usize,
+		top_voxel: Voxel,
+		fill_voxel: Voxel,
 		fill_depth: i32, // n following top placement
 	) -> Chunk {
 		let chunk_size = chunk.size;
@@ -174,7 +198,7 @@ impl TerrainGenerator {
 							dirt_to_place = 3;
 							
 							if v_chunk_position == chunk_position {
-								chunk.set_voxel([x,y,z], Voxel::Block(top_idx));
+								chunk.set_voxel([x,y,z], top_voxel);
 							}
 						} else {
 							// If not exposed and more dirt to place, set dirt
@@ -182,7 +206,7 @@ impl TerrainGenerator {
 								dirt_to_place -= 1;
 								// set to dirt if within this chunk
 								if v_chunk_position == chunk_position {
-									chunk.set_voxel([x,y,z], Voxel::Block(fill_idx));
+									chunk.set_voxel([x,y,z], fill_voxel);
 								}
 							}
 						}
@@ -192,6 +216,25 @@ impl TerrainGenerator {
 
 					
 				}
+			}
+		}
+
+		chunk
+	}
+
+	// If a voxel is below sea level and is empty, fill with water
+	pub fn flood_chunk(
+		&self, 
+		mut chunk: Chunk,
+		flood_voxel: Voxel,
+	) -> Chunk {
+		for x in 0..chunk.size[0] {
+			for z in 0..chunk.size[2] {
+				for y in 0..chunk.size[1] {
+					if chunk.get_voxel([x as i32, y as i32, z as i32]).is_empty() {
+						chunk.set_voxel([x as i32, y as i32, z as i32], flood_voxel);
+					}
+				}				
 			}
 		}
 
@@ -272,7 +315,7 @@ impl TerrainGenerator {
 		leaves_voxel: Voxel,
 		trunk_voxel: Voxel,
 	) -> Result<ChunkBlockMods, GenerationError> {
-		let mut block_mods = ChunkBlockMods::new();
+		let mut block_mods = ChunkBlockMods::new(map.chunk_size);
 
 		let chunk = map.chunk(chunk_position).unwrap();
 		
@@ -299,7 +342,7 @@ impl TerrainGenerator {
 						// And we can generate a tree here
 						if self.could_generate_tree([bx + x, by + y, bz + z], map, &generates_on) {
 							let bms = self.place_tree([bx + x, by + y, bz + z], map.chunk_size, leaves_voxel, trunk_voxel);
-							append_chunkblockmods(&mut block_mods, bms);
+							block_mods += bms;
 							// Done with trees for this chunk column
 							break
 						}
@@ -320,19 +363,15 @@ impl TerrainGenerator {
 		leaves_voxel: Voxel,
 		trunk_voxel: Voxel,
 	) -> ChunkBlockMods {
-		let mut block_mods = ChunkBlockMods::new();
+		let mut block_mods = ChunkBlockMods::new(chunk_size);
 		let [x, y, z] = world_pos;
 
 		// Trunk
 		for i in 1..=5 {
-			insert_chunkblockmods(
-				&mut block_mods,
-				BlockMod {
-					position: VoxelPosition::WorldRelative([x, y+i, z]),
-					reason: BlockModReason::WorldGenSet(trunk_voxel),
-				},
-				chunk_size,
-			);
+			block_mods += BlockMod {
+				position: VoxelPosition::WorldRelative([x, y+i, z]),
+				reason: BlockModReason::WorldGenSet(trunk_voxel),
+			};
 		}
 		
 		let leaflayers = [
@@ -376,15 +415,10 @@ impl TerrainGenerator {
 				for (lz, &bleaves) in z_slice.iter().enumerate() {
 					let lz = lz as i32 - 2;
 					if bleaves {
-						insert_chunkblockmods(
-							&mut block_mods,
-							BlockMod {
-								position: VoxelPosition::WorldRelative([x+lx, y+ly, z+lz]),
-								reason: BlockModReason::WorldGenSet(leaves_voxel),
-							},
-							chunk_size,
-						);
-					
+						block_mods += BlockMod {
+							position: VoxelPosition::WorldRelative([x+lx, y+ly, z+lz]),
+							reason: BlockModReason::WorldGenSet(leaves_voxel),
+						};
 					}
 				}
 			}
@@ -392,22 +426,8 @@ impl TerrainGenerator {
 
 		block_mods
 	}
-}
 
-
-
-pub struct WorleyCarver {
-	worley: Worley,
-}
-impl WorleyCarver {
-	pub fn new(seed: u32) -> Self {
-		Self {
-			worley: Worley::new().set_seed(seed),
-		}
-	}
-}
-impl Carver for WorleyCarver {
-	fn carve_chunk(
+	pub fn carve_chunk(
 		&self, 
 		chunk_position: [i32; 3], 
 		mut chunk: Chunk,
@@ -419,13 +439,13 @@ impl Carver for WorleyCarver {
 				for y in 0..chunk.size[1] {
 					let y_world = chunk.size[1] as i32 * chunk_position[1] + y as i32;
 
-					let density = self.worley.get([
+					let density = self.cave_noise.get([
 						x_world as f64 / 5.0, 
 						y_world as f64 / 5.0,
 						z_world as f64 / 5.0,
 					]) / 2.0 + 0.5;
 
-					if density >= 0.8 {
+					if density >= self.cave_noise_thresold {
 						chunk.set_voxel([x as i32, y as i32, z as i32], Voxel::Empty)
 					}
 				}
@@ -435,8 +455,6 @@ impl Carver for WorleyCarver {
 		chunk
 	}
 }
-
-
 
 
 
@@ -471,21 +489,10 @@ mod tests {
     #[test]
     fn show_terrain_slice() {
 
-		const WIDTH: u32 = 512;
+		const WIDTH: u32 = 1024;
 		const HEIGHT: u32 = 256;
 
 		let tgen = TerrainGenerator::new(0);
-
-		// let veccy = vec![
-		// 	0, 1,
-		// 	0, 0,
-		// ].iter().map(|&i| {
-		// 	if i == 0 {
-		// 		false
-		// 	} else {
-		// 		true
-		// 	}
-		// }).collect::<Vec<_>>();
 
 		// 0,0 -> 1,0
 		// |
@@ -496,13 +503,10 @@ mod tests {
 			let y = HEIGHT as i32 - (v / WIDTH) as i32;
 			let xc = x - (WIDTH / 2) as i32;
 			let yc = y - (HEIGHT / 2) as i32;
-			// [xc, yc]
 			tgen.is_solid_default([
 				xc as i32, yc as i32, 0,
 			])
 		}).collect::<Vec<_>>();
-
-		// output.chunks(WIDTH as usize).for_each(|v| println!("{:>2?}", v));
 
 		let img = image::DynamicImage::ImageRgb8(
 			image::ImageBuffer::from_vec(WIDTH, HEIGHT, output.par_iter().flat_map(|&solid| {

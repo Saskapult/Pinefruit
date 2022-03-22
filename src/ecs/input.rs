@@ -24,6 +24,8 @@ pub struct InputResource {
 	pub my: f64,
 	pub mdx: f64,
 	pub mdy: f64,
+	pub dscrollx: f32,
+	pub dscrolly: f32,
 	pub last_read: Instant,
 	pub last_updated: Instant,
 	// controlmap: HashMap<VirtualKeyCode, (some kind of enum option?)>
@@ -39,6 +41,8 @@ impl InputResource {
 			my: 0.0,
 			mdx: 0.0, 
 			mdy: 0.0,
+			dscrollx: 0.0,
+			dscrolly: 0.0,
 			last_read: Instant::now(),
 			last_updated: Instant::now(),
 		}
@@ -53,7 +57,7 @@ impl<'a> System<'a> for InputSystem {
 	type SystemData = (
 		WriteExpect<'a, InputResource>,
 		WriteStorage<'a, TransformComponent>,
-		ReadStorage<'a, MovementComponent>,
+		WriteStorage<'a, MovementComponent>,
 	);
 
 	fn run(
@@ -61,7 +65,7 @@ impl<'a> System<'a> for InputSystem {
 		(
 			mut input_resource, 
 			mut transform, 
-			movement
+			mut movement
 		): Self::SystemData
 	) { 
 		let apply_duration_secs = (input_resource.last_updated - input_resource.last_read).as_secs_f32();
@@ -94,7 +98,9 @@ impl<'a> System<'a> for InputSystem {
 			}
 		}
 
-		for (transform_c, movement_c) in (&mut transform, &movement).join() {
+		for (transform_c, movement_c) in (&mut transform, &mut movement).join() {
+
+			movement_c.speed = f32::max(movement_c.speed + input_resource.dscrolly * 4.0, 1.0);
 
 			let quat_ry = UnitQuaternion::from_euler_angles(ry, 0.0, 0.0);
 			let quat_rx = UnitQuaternion::from_euler_angles(0.0, rx, 0.0);

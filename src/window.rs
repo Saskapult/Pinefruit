@@ -531,6 +531,9 @@ impl WindowManager {
 			input_resource.mdy = 0.0;
 			input_resource.board_keys.clear();
 			input_resource.mouse_keys.clear();
+
+			input_resource.dscrollx = 0.0;
+			input_resource.dscrolly = 0.0;
 		}
 
 		// Keyboard buttons
@@ -664,9 +667,14 @@ impl WindowManager {
 								},
 							}
 						},
-						WindowEvent::MouseWheel {delta, phase, ..} => {
-							let _d = delta;
-							let _p = phase;
+						WindowEvent::MouseWheel {delta, ..} => {
+							match delta {
+								winit::event::MouseScrollDelta::LineDelta(x, y) => {
+									input_resource.dscrolly += *y;
+									input_resource.dscrollx += *x;
+								},
+								_ => {},
+							}
 						},
 						WindowEvent::CursorEntered {..} => {
 							window.cursor_inside = true;

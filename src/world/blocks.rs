@@ -280,41 +280,109 @@ pub struct BlockMod {
 	pub position: VoxelPosition,
 	pub reason: BlockModReason,
 }
-pub type ChunkBlockMods = HashMap<[i32; 3], Vec<BlockMod>>;
 
 
 
-/// Appends a to b, leaving b empty
-pub fn append_chunkblockmods(
-	a: &mut ChunkBlockMods, 
-	b: ChunkBlockMods,
-) {
-	for (p, mut q) in b {
-		if a.contains_key(&p) {
-			let a_q = a.get_mut(&p).unwrap();
-			a_q.append(&mut q);
-		} else {
-			a.insert(p, q);
+/// Block mods arranged by chunk
+#[derive(Debug, Clone)]
+pub struct ChunkBlockMods {
+	chunk_size: [u32; 3],
+	contents: HashMap<[i32; 3], Vec<BlockMod>>,
+}
+impl ChunkBlockMods {
+	pub fn new(chunk_size: [u32; 3]) -> Self {
+		Self {
+			chunk_size,
+			contents: HashMap::new(),
+		}
+	}
+
+	pub fn contains_key(&self, key: &[i32; 3]) -> bool {
+		self.contents.contains_key(key)
+	}
+}
+impl std::ops::Add<ChunkBlockMods> for ChunkBlockMods {
+	type Output = Self;
+
+	fn add(mut self, _rhs: Self) -> Self {
+		if self.chunk_size != _rhs.chunk_size {
+			panic!()
+		}
+
+		for (chunk_position, mut queue) in _rhs.contents {
+			if self.contents.contains_key(&chunk_position) {
+				let self_queue = self.contents.get_mut(&chunk_position).unwrap();
+				self_queue.append(&mut queue);
+			} else {
+				self.contents.insert(chunk_position, queue);
+			}
+		}
+
+		self
+	}
+}
+impl std::ops::AddAssign<ChunkBlockMods> for ChunkBlockMods {
+	fn add_assign(&mut self, other: ChunkBlockMods) {
+		for (p, mut q) in other {
+			if self.contents.contains_key(&p) {
+				let a_q = self.contents.get_mut(&p).unwrap();
+				a_q.append(&mut q);
+			} else {
+				self.contents.insert(p, q);
+			}
 		}
 	}
 }
+impl std::ops::Add<BlockMod> for ChunkBlockMods {
+	type Output = Self;
 
+	fn add(mut self, _rhs: BlockMod) -> Self {
+		let (chunk_position, voxel_position) = _rhs.position.chunk_voxel_position(self.chunk_size);
+		let bm = BlockMod {
+			position: VoxelPosition::from_chunk_voxel(chunk_position, voxel_position),
+			.._rhs
+		};
+		if self.contents.contains_key(&chunk_position) {
+			let queue = self.contents.get_mut(&chunk_position).unwrap();
+			queue.push(_rhs);
+		} else {
+			self.contents.insert(chunk_position, vec![bm]);
+		}
+		self
+	}
+}
+impl std::ops::AddAssign<BlockMod> for ChunkBlockMods {
+	fn add_assign(&mut self, other: BlockMod) {
+		let (chunk_position, voxel_position) = other.position.chunk_voxel_position(self.chunk_size);
+		let bm = BlockMod {
+			position: VoxelPosition::from_chunk_voxel(chunk_position, voxel_position),
+			..other
+		};
+		if self.contents.contains_key(&chunk_position) {
+			let queue = self.contents.get_mut(&chunk_position).unwrap();
+			queue.push(bm);
+		} else {
+			self.contents.insert(chunk_position, vec![bm]);
+		}
+	}
+}
+impl std::ops::Index<[i32; 3]> for ChunkBlockMods {
+	type Output = Vec<BlockMod>;
 
+	fn index(&self, idx: [i32; 3]) -> &Self::Output {
+		self.contents.get(&idx).unwrap()
+	}
+}
+impl std::ops::IndexMut<[i32; 3]> for ChunkBlockMods {
+	fn index_mut(&mut self, idx: [i32; 3]) -> &mut Self::Output {
+		self.contents.get_mut(&idx).unwrap()
+	}
+}
+impl std::iter::IntoIterator for ChunkBlockMods {
+	type Item = ([i32; 3], Vec<BlockMod>);
+	type IntoIter = std::collections::hash_map::IntoIter<[i32; 3], Vec<BlockMod>>;
 
-pub fn insert_chunkblockmods(
-	a: &mut ChunkBlockMods, 
-	bm: BlockMod,
-	chunk_size: [u32; 3],
-) {
-	let (chunk_position, voxel_position) = bm.position.chunk_voxel_position(chunk_size);
-	let bm = BlockMod {
-		position: VoxelPosition::from_chunk_voxel(chunk_position, voxel_position),
-		..bm
-	};
-	if a.contains_key(&chunk_position) {
-		let q = a.get_mut(&chunk_position).unwrap();
-		q.push(bm);
-	} else {
-		a.insert(chunk_position, vec![bm]);
+	fn into_iter(self) -> Self::IntoIter {
+		self.contents.into_iter()
 	}
 }

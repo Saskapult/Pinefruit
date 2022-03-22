@@ -136,6 +136,7 @@ impl<'a> System<'a> for MapSystem {
 			transforms,
 		): Self::SystemData,
 	) { 
+		debug!("Begin map system");
 		let map_st = std::time::Instant::now();
 
 		// I love closures! I love closures!
@@ -157,6 +158,7 @@ impl<'a> System<'a> for MapSystem {
 		let collider_radius = 3;
 		
 		// Chunk loading
+		let loading_st = std::time::Instant::now();
 		for map_c in (&mut maps).join() {
 			let mut chunks_to_load = Vec::new();
 			for (_, transform_c) in (&cameras, &transforms).join() {
@@ -188,9 +190,10 @@ impl<'a> System<'a> for MapSystem {
 				}
 			}
 		}
-		
+		let loading_en = std::time::Instant::now();
 
 		// Model loading
+		let model_st = std::time::Instant::now();
 		for map_c in (&mut maps).join() {
 			
 			// Find all chunks which should be displayed
@@ -226,9 +229,10 @@ impl<'a> System<'a> for MapSystem {
 					ChunkModelEntry::UnModeled => {
 						// Poll generation
 						if map_c.map.check_chunk_available(chunk_position) {
-							debug!("Chunk {:?} has been genrated, inserting into model queue", chunk_position);
+							
 							// Queue for modeling
 							if let Ok(entry) = map_c.map.mesh_chunk_rayon(chunk_position) {
+								debug!("Chunk {:?} has been generated, inserting into modeling queue", chunk_position);
 								*cme = ChunkModelEntry::Modeling(entry);
 							}
 						}
@@ -282,8 +286,10 @@ impl<'a> System<'a> for MapSystem {
 				}
 			})
 		}
+		let model_en = std::time::Instant::now();
 
 		// Collider loading
+		let collider_st = std::time::Instant::now();
 		for (map, spc) in (&mut maps, &mut static_objects).join() {
 			// Find all chunks which should have colliders
 			let mut chunks_to_collide = Vec::new();
@@ -321,7 +327,18 @@ impl<'a> System<'a> for MapSystem {
 				}
 			}
 		}
+		let collider_en = std::time::Instant::now();
 
-		println!("Map system: {}ms", (std::time::Instant::now() - map_st).as_millis());
+		let map_dur = std::time::Instant::now() - map_st;
+		debug!("Map system: {}ms", map_dur.as_millis());
+
+		let loading_dur = loading_en - loading_st;
+		debug!("\tLoading: {}ms ({:.2}%)", loading_dur.as_millis(), loading_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
+
+		let model_dur = model_en - model_st;
+		debug!("\tModel: {}ms ({:.2}%)", model_dur.as_millis(), model_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
+
+		let collider_dur = collider_en - collider_st;
+		debug!("\tCollider: {}ms ({:.2}%)", collider_dur.as_millis(), collider_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
 	}
 }

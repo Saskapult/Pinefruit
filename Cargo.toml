@@ -7,9 +7,12 @@ resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# Use some optimizations for all deps
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.dev.package.rapier3d]
 opt-level = 3
-
 [profile.release]
 codegen-units = 1
 
@@ -29,7 +32,7 @@ thiserror = "1.0.30"
 tobj = "3.0"
 nalgebra = "0.29.0"
 #dashmap = "4.0.2"	# Concurrent hashmap
-specs = { version = "0.17.0", features = ["specs-derive"]}
+specs = { version = "0.17.0", features = ["specs-derive"] }
 rand = "0.8.4"
 rand_xoshiro = "0.6.0"
 noise = "0.7.0"

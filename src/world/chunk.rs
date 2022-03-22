@@ -1,4 +1,4 @@
-use crate::world::*;
+// use crate::world::*;
 
 
 
@@ -118,14 +118,6 @@ impl Chunk {
 			});
 		});
 		self
-	}
-
-	pub fn carve(self, self_position: [i32; 3], carver: &impl Carver) -> Self {
-		carver.carve_chunk(self_position, self)
-	}
-
-	pub fn base(self, self_position: [i32; 3], base_generator: &impl SurfaceGenerator, bm: &BlockManager) -> Self {
-		base_generator.chunk_surface(self_position, self, bm)
 	}
 }
 

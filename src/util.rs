@@ -154,6 +154,55 @@ pub fn load_spline(path: impl AsRef<Path>) -> Result<Spline<f64, f64>> {
 }
 
 
+pub fn show_spline(s: Spline<f64, f64>, height: u32, width: Option<u32>) -> Result<()> {
+	let x_min = s.keys().iter().map(|k| k.t).reduce(|accum, v| accum.min(v)).unwrap();
+	let x_max = s.keys().iter().map(|k| k.t).reduce(|accum, v| accum.max(v)).unwrap();
+	let y_min = s.keys().iter().map(|k| k.value).reduce(|accum, v| accum.min(v)).unwrap();
+	let y_max = s.keys().iter().map(|k| k.value).reduce(|accum, v| accum.max(v)).unwrap();
+
+	println!("x: {x_min} -> {x_max}");
+	println!("y: {y_min} -> {y_max}");
+
+	let x_range = x_max - x_min;
+	let y_range = y_max - y_min;
+	
+	let width = match width {
+		Some(w) => w,
+		None => {
+			let aspect = y_range / x_range;
+			let w = (aspect * height as f64) as u32;
+			println!("derived width: {w}");
+			w
+		}
+	};
+
+	let output = (0..width).map(|x| {
+		// let x = (v % width) as i32;
+		// let y = height as i32 - (v / width) as i32;
+		let xp = x as f64 / width as f64;
+		let yp = (s.sample(x_min + xp * x_range).unwrap() - y_min) / y_range;
+		// y_min + yp * y_range
+		yp
+	}).collect::<Vec<_>>();
+
+	println!("{output:?}");
+
+	let mut imb = image::ImageBuffer::new(width, height);
+	
+	output.iter()
+		.map(|&f| (f * (height-1) as f64).floor() as u32)
+		.enumerate()
+		.for_each(|(px, py)| {
+			imb[(px as u32, py)] = [u8::MAX; 3].into();
+		});
+
+	let img = image::DynamicImage::ImageRgb8(imb);
+	
+	show_image(img)?;
+	Ok(())
+}
+
+
 
 /// Pollable. Threadish. Checker. Thing.
 #[derive(Debug, Clone)]
@@ -191,6 +240,19 @@ mod tests {
 		let k2 = Key::new(1.0, 1.0, Interpolation::Linear);
 		let spline = Spline::from_vec(vec![k1, k2]);
 		spline
+	}
+
+	#[test]
+	fn test_show_spline() {
+		let s = Spline::from_vec(vec![
+			Key::new(0.0, 0.0, Interpolation::Cosine),
+			Key::new(0.5, 0.5, Interpolation::default()),
+			Key::new(1.0, 1.0, Interpolation::Cosine),
+		]);
+
+		show_spline(s, 512, None).unwrap();
+
+		assert!(true);
 	}
 
     #[test]

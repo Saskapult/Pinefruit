@@ -73,7 +73,7 @@ impl Map {
 			// max_heightmap: HashMap::new(),
 			chunk_size, 
 			blocks: blockmanager.clone(),
-			blockmods: HashMap::new(), 
+			blockmods: ChunkBlockMods::new(chunk_size), 
 			tgen: TerrainGenerator::new(0),
 		}
 	}
@@ -91,6 +91,8 @@ impl Map {
 						_ => todo!(),
 					}
 				}
+			} else {
+				// Add bms to self bms
 			}
 		}
 	}
@@ -98,13 +100,13 @@ impl Map {
 	pub fn generate_chunk(&self, chunk_position: [i32; 3]) -> Result<(Chunk, ChunkBlockMods), GenerationError> {
 		
 		let mut chunk = Chunk::new(self.chunk_size);
-		let cbms = ChunkBlockMods::new();
+		let cbms = ChunkBlockMods::new(self.chunk_size);
 
 		// Generate bare
 		{
 			let bm = self.blocks.read().unwrap();
 			let stone_idx = bm.index_name(&"stone".to_string()).unwrap();
-			chunk = self.tgen.chunk_base_3d(chunk_position, chunk, stone_idx);
+			chunk = self.tgen.chunk_base_3d(chunk_position, chunk, Voxel::Block(stone_idx));
 		}
 		
 		// Covering
@@ -113,7 +115,7 @@ impl Map {
 			let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
 			let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();	
 			drop(bm);
-			chunk =  self.tgen.cover_chunk(chunk, chunk_position, grass_idx, dirt_idx, 3);
+			chunk =  self.tgen.cover_chunk(chunk, chunk_position, Voxel::Block(grass_idx), Voxel::Block(dirt_idx), 3);
 		}
 		
 		// Decoration
@@ -141,12 +143,12 @@ impl Map {
 		let chunk_size = self.chunk_size;
 		rayon::spawn(move || {			
 			let mut chunk = Chunk::new(chunk_size);
-			let cbms = ChunkBlockMods::new();
+			let cbms = ChunkBlockMods::new(chunk_size);
 			let tgen = TerrainGenerator::new(0);
 	
-			chunk = tgen.chunk_base_3d(chunk_position, chunk, stone_idx);
+			chunk = tgen.chunk_base_3d(chunk_position, chunk, Voxel::Block(stone_idx));
 		
-			chunk = tgen.cover_chunk(chunk, chunk_position, grass_idx, dirt_idx, 3);
+			chunk = tgen.cover_chunk(chunk, chunk_position, Voxel::Block(grass_idx), Voxel::Block(dirt_idx), 3);
 
 			result_clone.insert((chunk, cbms));
 		});
@@ -354,8 +356,8 @@ impl Map {
 				MapChunkEntry::Complete(_) => true,
 				MapChunkEntry::Generating(ptct) => {
 					if let Some((c, cbms)) = ptct.pollmebb() {
-						self.apply_chunkblockmods(cbms);
 						self.chunks.insert(chunk_position, MapChunkEntry::Complete(c));
+						self.apply_chunkblockmods(cbms);
 						true
 					} else {
 						false
