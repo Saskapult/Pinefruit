@@ -72,21 +72,3 @@ impl TransformComponent {
 }
 
 
-
-#[derive(Component, Debug)]
-#[storage(VecStorage)]
-pub struct MovementComponent {
-	pub speed: f32,	// Units per second
-}
-impl MovementComponent {
-	pub fn new() -> Self {
-		MovementComponent {
-			speed: 1.0,
-		}
-	}
-	pub fn with_speed(self, speed: f32) -> Self {
-		Self {
-			speed,
-		}
-	}
-}

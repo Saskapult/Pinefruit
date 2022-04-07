@@ -62,7 +62,7 @@ pub struct Map {
 	// Could be used for lighting or feature placement
 	// max_heightmap: HashMap<[i32; 3], Vec<i32>>, 
 	pub chunk_size: [u32; 3],
-	blocks: Arc<RwLock<BlockManager>>,
+	pub blocks: Arc<RwLock<BlockManager>>,
 	blockmods: ChunkBlockMods,
 	tgen: TerrainGenerator,
 }

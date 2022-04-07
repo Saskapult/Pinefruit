@@ -25,6 +25,8 @@ pub mod vertex;
 pub mod graph;
 pub mod light;
 pub mod resources;
+pub mod interpolation;
+pub mod rays;
 
 pub use camera::*;
 pub use boundmaterial::*;

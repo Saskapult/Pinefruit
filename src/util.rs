@@ -111,12 +111,16 @@ pub fn k_tofrom_rapier(mut input: nalgebra::Vector3<f32>) -> nalgebra::Vector3<f
 const IMAGE_PATH: &str = "/tmp/kkraftimagetoshow.png";
 const IMAGE_VIEWER: &str = "gwenview";
 pub fn show_image(image: DynamicImage) -> Result<()> {
-	image.save(IMAGE_PATH)?;
+	save_image(image)?;
 
 	Command::new(IMAGE_VIEWER)
 		.arg(IMAGE_PATH)
 		.output()?;
 	
+	Ok(())
+}
+pub fn save_image(image: DynamicImage) -> Result<()> {
+	image.save(IMAGE_PATH)?;
 	Ok(())
 }
 

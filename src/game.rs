@@ -78,11 +78,12 @@ impl Game {
 
 		// Dispatcher(s?)
 		let tick_dispatcher = DispatcherBuilder::new()
-			.with(InputSystem, "input", &[])
-			.with(MarkerSystem::new(), "marker", &["input"])
-			.with(MapSystem, "map", &["input"])
-			.with(DynamicPhysicsSystem, "dynamic_physics", &["input"])
-			.with(RenderDataSystem, "render_system", &["input", "map", "dynamic_physics", "marker"])
+			.with(MovementSystem, "movement", &[])
+			.with(MarkerSystem::new(), "marker", &["movement"])
+			.with(MapSystem, "map", &["movement"])
+			.with(DynamicPhysicsSystem, "dynamic_physics", &["movement"])
+			.with(RenderDataSystem, "render_system", &["movement", "map", "dynamic_physics", "marker"])
+			.with(TraceShotSystem, "ts", &[])
 			.build();
 
 		let window_manager = WindowManager::new(
@@ -255,6 +256,11 @@ impl Game {
 			self.last_tick = now;
 
 			self.tick_dispatcher.dispatch(&mut self.world);
+			{
+				let mut input_resource = self.world.write_resource::<InputResource>();
+				input_resource.last_read = Instant::now();
+			}
+			
 			
 			self.render_cameras();
 
