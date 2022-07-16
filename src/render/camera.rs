@@ -1,4 +1,4 @@
-
+use wgpu::util::DeviceExt;
 use nalgebra::*;
 
 
@@ -104,11 +104,37 @@ impl CameraUniform {
 			inv_projection: Matrix4::identity().into(),
 		}
 	}
+
+	pub fn new_from_camera(camera: &Camera, width: f32, height: f32) -> Self {
+		Self {
+			position: camera.position.to_homogeneous().into(),
+			view_projection: camera.view_projection_matrix(width, height).into(),
+			projection: camera.projection_matrix(width, height).into(),
+			inv_projection: camera.projection_matrix(width, height).try_inverse().unwrap().into(),
+		}
+	}
+
 	pub fn update(&mut self, camera: &Camera, width: f32, height: f32,) {
 		self.position = camera.position.to_homogeneous().into();
 		self.view_projection = camera.view_projection_matrix(width, height).into();
 		self.projection = camera.projection_matrix(width, height).into();
 		self.inv_projection = camera.projection_matrix(width, height).try_inverse().unwrap().into();
+	}
+
+	pub fn make_buffer(&self, device: &wgpu::Device) -> wgpu::Buffer {
+		device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			label: Some("Camera uniform Buffer"),
+			contents: bytemuck::cast_slice(&[self.clone()]),
+			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+		})
+	}
+
+	pub fn update_buffer(&self, queue: &wgpu::Queue, buffer: &wgpu::Buffer) {
+		queue.write_buffer(
+			buffer, 
+			0, 
+			bytemuck::cast_slice(&[self.clone()]),
+		);
 	}
 }
 

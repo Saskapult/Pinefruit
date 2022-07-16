@@ -16,15 +16,15 @@ opt-level = 3
 [profile.release]
 codegen-units = 1
 
-[profile.dev]
-debug = 1
+# [profile.dev]
+# debug = 1
 
 [dependencies]
-image = "0.23"
+image = "0.24"
 winit = "0.26.1"
 env_logger = "0.9"
 log = "0.4"
-wgpu = "0.12"
+wgpu = "0.13.1"
 pollster = "0.2"
 bytemuck = { version = "1.4", features = [ "derive" ] }
 anyhow = "1.0"
@@ -45,14 +45,16 @@ rapier3d = "0.11.1"	# Physics
 #dot_vox = "4.1.0"	# .vox files
 derivative = "2.2.0"	# Sometimes I like to exclude fields from derived traits of a struct, this helps me to do that
 mlua = { version = "0.7.1", features = ["lua54", "vendored"] }
-egui = "0.16.1"
+egui = "0.18.1"
 epi = "0.16.0"
-egui_wgpu_backend = "0.16.0"
-egui-winit = "0.16.0"
-egui_winit_platform = "0.13.0"
-egui_demo_lib = "0.16.0"
-splines = {version = "4.0.3", features = ["serde"] }
+egui_wgpu_backend = "0.18.0"
+# egui-wgpu = "0.18.0"
+# egui-winit = "0.16.0"
+egui_winit_platform = "0.15.0"
+egui_extras = "0.18.0"
+splines = { version = "4.0.3", features = ["serde"] }
 rayon = "1.5.1"
+viuer = "0.6.1"
 
 [build-dependencies]
 anyhow = "1.0"

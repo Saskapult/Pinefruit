@@ -2,14 +2,14 @@ use specs::prelude::*;
 use winit::event_loop::*;
 use nalgebra::*;
 use std::collections::HashMap;
-use std::time::{Instant, Duration};
+use std::time::Instant;
 use std::sync::{Arc, Mutex, RwLock};
 use rapier3d::prelude::*;
-use crate::mesh::*;
-use crate::material::*;
-// use crate::texture::*;
 use crate::ecs::*;
 use crate::window::*;
+use crate::mesh::*;
+use crate::texture::*;
+use crate::material::*;
 
 
 
@@ -67,8 +67,13 @@ impl Game {
 		let step_resource = StepResource::new();
 		world.insert(step_resource);
 
-		let render_resource = RenderResource::new(&adapter);
-		world.insert(render_resource);
+		let gpu_resource = GPUResource::new(
+			&adapter,
+			&Arc::new(RwLock::new(TextureManager::new())),
+			&Arc::new(RwLock::new(MeshManager::new())),
+			&Arc::new(RwLock::new(MaterialManager::new())),
+		);
+		world.insert(gpu_resource);
 
 		let input_resource = InputResource::new();
 		world.insert(input_resource);
@@ -109,10 +114,10 @@ impl Game {
 	pub fn setup(&mut self) {
 		// Material loading
 		{
-			let rr = self.world.write_resource::<RenderResource>();
+			let gpu = self.world.write_resource::<GPUResource>();
 
-			let mut matm = rr.materials_manager.write().unwrap();
-			let mut texm = rr.textures_manager.write().unwrap();
+			let mut matm = gpu.data.materials.data_manager.write().unwrap();
+			let mut texm = gpu.data.textures.data_manager.write().unwrap();
 
 			// Load some materials
 			load_materials_file(
@@ -126,9 +131,9 @@ impl Game {
 		{
 			let mut bm = self.blocks_manager.write().unwrap();
 
-			let rr = self.world.write_resource::<RenderResource>();
-			let mut mm = rr.materials_manager.write().unwrap();
-			let mut tm = rr.textures_manager.write().unwrap();
+			let gpu = self.world.write_resource::<GPUResource>();
+			let mut mm = gpu.data.materials.data_manager.write().unwrap();
+			let mut tm = gpu.data.textures.data_manager.write().unwrap();
 
 			crate::world::blocks::load_blocks_file(
 				"resources/kblocks.ron",
@@ -140,9 +145,9 @@ impl Game {
 
 		// Teapot loading
 		let teapot_mesh_idx = {
-			let rr = self.world.write_resource::<RenderResource>();
+			let gpu = self.world.write_resource::<GPUResource>();
 
-			let mut meshm = rr.meshes_manager.write().unwrap();
+			let mut meshm = gpu.data.meshes.data_manager.write().unwrap();
 
 			let (obj_models, _) = tobj::load_obj(
 				"resources/not_for_git/arrow.obj", 
@@ -164,8 +169,8 @@ impl Game {
 		// Static and dynamic teapots
 		{
 			let collider_shape = {
-				let rr = self.world.write_resource::<RenderResource>();
-				let mm = rr.meshes_manager.read().unwrap();
+				let gpu = self.world.write_resource::<GPUResource>();
+				let mm = gpu.data.meshes.data_manager.read().unwrap();
 				mm.index(teapot_mesh_idx).make_trimesh().unwrap()
 			};
 
@@ -240,68 +245,26 @@ impl Game {
 	}
 
 	pub fn tick(&mut self) {
-
-		let now = Instant::now();
-
 		// Run window update
-		if now - self.last_window_update >= Duration::from_millis(1) {
-			self.last_window_update = now;
-
+		{
 			let mut input_resource = self.world.write_resource::<InputResource>();
 			self.window_manager.update(&mut input_resource);
 		}
 
-		// Tick and re-render
-		if now - self.last_tick >= Duration::from_millis(20) { // 16.7 to 33.3
-			self.last_tick = now;
+		// Do ticking stuff
 
-			self.tick_dispatcher.dispatch(&mut self.world);
-			{
-				let mut input_resource = self.world.write_resource::<InputResource>();
-				input_resource.last_read = Instant::now();
-			}
-			
-			
-			self.render_cameras();
-
-			self.world.write_resource::<StepResource>().step_durations.record(Instant::now() - now);
-		}
-	}
-
-	fn render_cameras(&mut self) {
-
-		let mut windows_to_redraw = Vec::new();
-		
+		// Show windows
 		{
-			let entities = self.world.entities();
-			let cameras = self.world.read_component::<CameraComponent>();
-			let transforms = self.world.read_component::<TransformComponent>();
-			for (e, camera, _camera_transform) in (&entities, &cameras, &transforms).join() {
-				match camera.target {
-					// Find destination
-					RenderTarget::Window(id) => {
-						if id >= self.window_manager.windows.len() {
-							error!("Tried to render to nonexistent window! idx: {}", id);
-							continue
-						}
-						// This is bad because it clones the camera's model queue
-						windows_to_redraw.push((id, e));
-					},
-					RenderTarget::Texture(_) => {
-						todo!("Todo: Implement rendering to a texture");
-					},
-				}
+			let mut gpu_resource = self.world.write_resource::<GPUResource>();
+			// Update UI
+			for window in self.window_manager.windows.iter_mut() {
+				
+				window.update(
+					&mut gpu_resource,
+					&self.world,
+				);
 			}
 		}
-
-		for (window_id, entity) in windows_to_redraw {
-			let window = self.window_manager.windows.get_mut(window_id).unwrap();
-			window.draw(
-				&mut self.world, 
-				entity,
-			);
-		}
-		
 	}
 
 	pub fn new_window(&mut self) {

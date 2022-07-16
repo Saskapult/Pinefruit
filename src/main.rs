@@ -1,5 +1,6 @@
 #![feature(drain_filter)]
 #![allow(dead_code)]
+#![feature(int_log)]
 
 mod render;
 mod window;
@@ -12,6 +13,8 @@ mod texture;
 mod ecs;
 mod noise;
 mod lua;
+mod octree;
+mod gui;
 
 
 use window::*;
@@ -61,7 +64,7 @@ fn main() {
 		.name("game thread".into())
 		.spawn(move || {
 			let mut game = game::Game::new(event_loop_proxy, game_thread_event_queue);
-			game.setup();
+			// game.setup();
 			game.new_window();
 			loop {
 				game.tick();

@@ -1,14 +1,7 @@
-use std::sync::Arc;
-use std::sync::RwLock;
-use std::time::Instant;
 use crate::render::*;
-use crate::mesh::*;
-use crate::material::*;
-use crate::texture::*;
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use crate::ecs::*;
-use nalgebra::*;
 
 
 
@@ -23,90 +16,6 @@ pub enum RenderTarget {
 
 pub trait RenderableComponent {
 	fn get_render_data(&self) -> Vec<(usize, usize)>;
-}
-
-
-
-pub struct RenderResource {
-	pub instance: RenderInstance,
-	pub materials_manager: Arc<RwLock<MaterialManager>>,
-	pub textures_manager: Arc<RwLock<TextureManager>>,
-	pub meshes_manager: Arc<RwLock<MeshManager>>,
-	pub egui_rpass: egui_wgpu_backend::RenderPass,
-	pub submit_durations: crate::util::DurationHolder,
-	pub encode_durations: crate::util::DurationHolder,
-}
-impl RenderResource {
-	pub fn new(
-		adapter: &wgpu::Adapter,
-	) -> Self {
-
-		let textures_manager = Arc::new(RwLock::new(TextureManager::new()));
-
-		let materials_manager = Arc::new(RwLock::new(MaterialManager::new()));
-
-		let meshes_manager = Arc::new(RwLock::new(MeshManager::new()));
-
-		let mut instance = pollster::block_on(
-			crate::render::RenderInstance::new(
-				adapter,
-				&textures_manager,
-				&meshes_manager,
-				&materials_manager,
-			)
-		);
-		instance.init_graphs();
-
-		let egui_rpass = egui_wgpu_backend::RenderPass::new(
-			&instance.device, 
-			wgpu::TextureFormat::Bgra8UnormSrgb, 
-			1,
-		);
-
-		Self {
-			instance,
-			materials_manager,
-			textures_manager,
-			meshes_manager,
-			egui_rpass,
-			submit_durations: crate::util::DurationHolder::new(32),
-			encode_durations: crate::util::DurationHolder::new(32),
-		}
-	}
-	
-	
-}
-
-
-
-#[derive(Debug)]
-pub struct LineData {
-	pub start: Point3<f32>,
-	pub end: Point3<f32>,
-	pub colour: [f32; 3],
-	pub remove_after: Instant,
-}
-
-
-
-/// Holds lines to be rendered.
-/// Lines could easily be made into components but are stored here because I said so.
-#[derive(Debug)]
-pub struct LinesResource {
-	pub lines: Vec<LineData>,
-}
-impl LinesResource {
-	pub fn new() -> Self {
-		Self {
-			lines: Vec::new(),
-		}
-	}
-
-	pub fn prune(&mut self, t: Instant) {
-		self.lines = self.lines.drain(..).filter(|line| {
-			line.remove_after < t
-		}).collect::<Vec<_>>();
-	}
 }
 
 

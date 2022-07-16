@@ -79,6 +79,31 @@ impl BoundTexture {
 	pub const SRGB_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb; 
 	pub const OTHER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm; 
 	pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;    
+
+	pub fn new(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
+		let size = wgpu::Extent3d {
+			width,
+			height,
+			depth_or_array_layers: 1,
+		};
+		let mip_count = 1;
+		let desc = wgpu::TextureDescriptor {
+			label: Some(label),
+			size,
+			mip_level_count: mip_count,
+			sample_count: 1,
+			dimension: wgpu::TextureDimension::D2,
+			format: Self::DEPTH_FORMAT,
+			usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+		};
+		let texture = device.create_texture(&desc);
+
+		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+		let name = format!("Texture {}, width {} height {}", &label, width, height);
+
+		Self { name, texture, view, size, mip_count }
+	}
 	
 	pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
 		let size = wgpu::Extent3d {
@@ -317,7 +342,7 @@ pub struct BoundTextureManager {
 	textures: Vec<BoundTexture>, 
 	textures_index_name: HashMap<String, usize>,
 	textures_index_path: HashMap<PathBuf, usize>,
-	data_manager: Arc<RwLock<TextureManager>>,
+	pub data_manager: Arc<RwLock<TextureManager>>,
 }
 impl BoundTextureManager {
 	pub fn new(

@@ -22,6 +22,17 @@ pub enum ShaderSourceType {
 
 
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum ShaderType {
+	Compute(ShaderSourceFile),
+	Polygon{
+		vertex: ShaderSourceFile, 
+		fragment: Option<ShaderSourceFile>,
+	}
+}
+
+
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShaderSource {
 	pub file_type: ShaderSourceType,
@@ -31,7 +42,7 @@ pub struct ShaderSource {
 
 
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShaderSourceFile {
 	pub path: PathBuf,
 	pub entry: String,
@@ -600,14 +611,14 @@ impl ShaderManager {
 
 		// Attachments input
 		let attachments = specification.attachments.iter().map(|a| {
-			wgpu::ColorTargetState {
+			Some(wgpu::ColorTargetState {
 				format: a.format.translate(),
 				blend: Some(wgpu::BlendState {
 					alpha: a.blend_alpha.translate(),
 					color: a.blend_colour.translate(),
 				}),
 				write_mask: wgpu::ColorWrites::ALL,
-			}
+			})
 		}).collect::<Vec<_>>();
 
 		// Shader compilation

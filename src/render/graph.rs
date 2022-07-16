@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
-use std::{collections::{HashMap, HashSet}, sync::Arc};
-use crate::render::*;
+use std::collections::{HashMap, HashSet};
+use crate::{render::*, ecs::GPUData};
 use std::path::{Path, PathBuf};
 use wgpu::util::DeviceExt;
 use anyhow::*;
@@ -23,9 +23,9 @@ pub trait RunnableNode : Send + Sync {
 	fn outputs(&self) -> &HashSet<(String, GraphResourceType)>;
 	// update should pull mesh data and create texture data for run()
 	// For performance it would be best to only check to reate the resources when initialized or resolution is changed, but I am too lazy
-	fn update(&mut self, graph_resources: &mut GraphLocals, model_resources: &mut ModelsQueueResource, render_resources: &mut RenderResources);
+	fn update(&mut self, graph_resources: &mut GraphResources, model_resources: &mut ModelQueuesResource, gpu_data: &mut GPUData);
 	// Mutate context and encode rendering
-	fn run(&self, graph_resources: &mut GraphLocals, model_resources: &ModelsQueueResource, render_resources: &mut RenderResources, encoder: &mut wgpu::CommandEncoder);
+	fn run(&self, graph_resources: &mut GraphResources, model_resources: &ModelQueuesResource, gpu_data: &GPUData, encoder: &mut wgpu::CommandEncoder);
 }
 impl std::fmt::Debug for dyn RunnableNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -56,10 +56,7 @@ pub enum GraphResourceType {
 /// A structure which can be configured to hold the transient resources for a graph.
 /// These are textures, buffers, and globals but not models. Definitely not models.
 #[derive(Debug)]
-pub struct GraphLocals {
-	device: Arc<wgpu::Device>,
-	queue: Arc<wgpu::Queue>,
-	
+pub struct GraphResources {
 	resources_bgs: Vec<wgpu::BindGroup>,
 	resource_bg_index_of_format: HashMap<BindGroupFormat, usize>,
 
@@ -71,21 +68,16 @@ pub struct GraphLocals {
 
 	pub default_resolution: [u32; 2],
 }
-impl GraphLocals {
-	pub fn new(
-		device: &Arc<wgpu::Device>,
-		queue: &Arc<wgpu::Queue>,
-	) -> Self {
+impl GraphResources {
+	pub fn new() -> Self {
 		Self {
-			device: device.clone(), 
-			queue: queue.clone(), 
 			resources_bgs: Vec::new(),
 			resource_bg_index_of_format: HashMap::new(),
 			textures: Vec::new(),
 			textures_index_of_id: HashMap::new(),
 			buffers: Vec::new(),
 			buffers_index_of_id: HashMap::new(),
-			default_resolution: [0, 0],
+			default_resolution: [800, 600],
 		}
 	}
 
@@ -132,13 +124,13 @@ impl GraphLocals {
 	pub fn create_resources_group(
 		&mut self, 
 		format: &BindGroupFormat, 
-		resources: &mut RenderResources,
+		gpu_data: &mut GPUData,
 	) -> Result<usize> {
 		debug!("Creating resources bg for '{}'", format);
 
 		// The default sampler, used for every requested sampler
 		// Todo: make this customizable
-		let sampler_thing = self.device.create_sampler(&wgpu::SamplerDescriptor {
+		let sampler_thing = gpu_data.device.create_sampler(&wgpu::SamplerDescriptor {
 			address_mode_u: wgpu::AddressMode::Repeat,
 			address_mode_v: wgpu::AddressMode::Repeat,
 			address_mode_w: wgpu::AddressMode::Repeat,
@@ -185,13 +177,13 @@ impl GraphLocals {
 			}
 		}
 
-		let layout_idx = match resources.shaders.bind_group_layout_index_from_bind_group_format(format) {
+		let layout_idx = match gpu_data.shaders.bind_group_layout_index_from_bind_group_format(format) {
 			Some(idx) => idx,
-			None => resources.shaders.bind_group_layout_create(format),
+			None => gpu_data.shaders.bind_group_layout_create(format),
 		};
-		let layout = resources.shaders.bind_group_layout_index(layout_idx);
+		let layout = gpu_data.shaders.bind_group_layout_index(layout_idx);
 
-		let bind_group = resources.device.create_bind_group(&wgpu::BindGroupDescriptor {
+		let bind_group = gpu_data.device.create_bind_group(&wgpu::BindGroupDescriptor {
 			entries: &bindings[..],
 			layout,
 			label: Some(&*format!("resources group with format '{}'", format)),
@@ -217,11 +209,11 @@ impl GraphLocals {
 	}
 
 	/// Find index of resource bind group, create it if it doesn't exist
-	pub fn resource_bg_of_format_create(&mut self, bgf: &BindGroupFormat, resources: &mut RenderResources) -> Result<usize> {
+	pub fn resource_bg_of_format_create(&mut self, bgf: &BindGroupFormat, gpu_data: &mut GPUData) -> Result<usize> {
 		if self.resource_bg_index_of_format.contains_key(bgf) {
 			Ok(self.resource_bg_index_of_format[bgf])
 		} else {
-			Ok(self.create_resources_group(bgf, resources)?)
+			Ok(self.create_resources_group(bgf, gpu_data)?)
 		}
 	}
 }
@@ -311,27 +303,27 @@ impl RunnableNode for GraphNode {
 	
 	fn update(
 		&mut self, 
-		graph_resources: &mut GraphLocals, 
-		model_resources: &mut ModelsQueueResource, 
-		render_resources: &mut RenderResources,
+		graph_resources: &mut GraphResources, 
+		model_resources: &mut ModelQueuesResource, 
+		gpu_data: &mut GPUData,
 	) {
 		debug!("Updating graph {}", &self.name);
 		for node in &mut self.nodes {
-			node.update(graph_resources, model_resources, render_resources);
+			node.update(graph_resources, model_resources, gpu_data);
 		}
 	}
 	
 	fn run(
 		&self, 
-		context: &mut GraphLocals, 
-		model_resources: &ModelsQueueResource,
-		render_resources: &mut RenderResources, 
+		context: &mut GraphResources, 
+		model_resources: &ModelQueuesResource,
+		gpu_data: &GPUData, 
 		encoder: &mut wgpu::CommandEncoder,
 	) {
 		debug!("Running graph {}", &self.name);
 		encoder.push_debug_group(&*format!("Graph node '{}'", &self.name));
 		for i in &self.order {
-			self.nodes[*i].run(context, model_resources, render_resources, encoder);
+			self.nodes[*i].run(context, model_resources, gpu_data, encoder);
 		}
 		encoder.pop_debug_group();
 	}
@@ -538,13 +530,13 @@ impl RunnableNode for ShaderNode {
 	
 	fn update(
 		&mut self, 
-		graph_resources: &mut GraphLocals, 
-		model_resources: &mut ModelsQueueResource, 
-		render_resources: &mut RenderResources,
+		graph_resources: &mut GraphResources, 
+		model_resources: &mut ModelQueuesResource, 
+		gpu_data: &mut GPUData,
 	) {	
 		debug!("Updating shader node '{}'", &self.name);
 
-		let shader = render_resources.shaders.index(self.shader_idx);
+		let shader = gpu_data.shaders.index(self.shader_idx);
 		let instance_properties = shader.instance_properties.clone();
 		let vertex_properties = shader.vertex_properties.clone();
 		let globals_bgf = shader.bind_groups[&0].format();
@@ -556,7 +548,7 @@ impl RunnableNode for ShaderNode {
 
 		let filtered_globals_bgf = ShaderNode::resources_alias_filter(&self.aliases, globals_bgf);
 		self.resources_idx = Some(
-			graph_resources.resource_bg_of_format_create(&filtered_globals_bgf, render_resources).unwrap()
+			graph_resources.resource_bg_of_format_create(&filtered_globals_bgf, gpu_data).unwrap()
 		);
 		trace!("Shader node {} chose globals idx {}", &self.name, &self.resources_idx.unwrap());
 
@@ -594,7 +586,7 @@ impl RunnableNode for ShaderNode {
 			}
 		});
 
-		let shader = render_resources.shaders.index(self.shader_idx);
+		let shader = gpu_data.shaders.index(self.shader_idx);
 		self.colour_attachments = shader.attachments.iter().map(|attachment| {
 			let resource_name = {
 				match self.alias_for(&attachment.usage) {
@@ -624,7 +616,7 @@ impl RunnableNode for ShaderNode {
 
 		// Workaround buffer for FullQuad because wgpu needs something to be bound in vertex and instance in order to draw
 		if self.fugg_buff.is_none() {
-			self.fugg_buff = Some(render_resources.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			self.fugg_buff = Some(gpu_data.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 				label: Some("fugg Buffer"),
 				contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
 				usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
@@ -634,25 +626,25 @@ impl RunnableNode for ShaderNode {
 	
 	fn run(
 		&self, 
-		context: &mut GraphLocals, 
-		model_resources: &ModelsQueueResource,
-		resources: &mut RenderResources, 
+		context: &mut GraphResources, 
+		model_resources: &ModelQueuesResource,
+		data: &GPUData, 
 		encoder: &mut wgpu::CommandEncoder,
 	) {
 		debug!("Running shader node {}", &self.name);
 		encoder.push_debug_group(&*format!("Shader node '{}'", &self.name));
 		
-		let shader = resources.shaders.index(self.shader_idx);
+		let shader = data.shaders.index(self.shader_idx);
 
 		let colour_attachments = self.colour_attachments.iter().cloned().map(|(idx, store)| {
-			wgpu::RenderPassColorAttachment {
+			Some(wgpu::RenderPassColorAttachment {
 				view: &context.get_texture(idx).view,
 				resolve_target: None, // Same as view unless using multisampling
 				ops: wgpu::Operations {
 					load: wgpu::LoadOp::Load,
 					store,
 				},
-			}
+			})
 		}).collect::<Vec<_>>();
 
 		let depth_stencil_attachment = match self.depth_attachment.clone() {
@@ -695,11 +687,11 @@ impl RunnableNode for ShaderNode {
 				let mut instance_position = 0;
 				for (material_idx, mesh_idx, instance_count) in models {
 					// Material
-					let material = resources.materials.index(*material_idx);
+					let material = data.materials.index(*material_idx);
 					render_pass.set_bind_group(1, &material.bind_group, &[]);
 					
 					// Mesh
-					let mesh = resources.meshes.index(*mesh_idx);
+					let mesh = data.meshes.index(*mesh_idx);
 					render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
 					render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 					
@@ -722,7 +714,7 @@ impl RunnableNode for ShaderNode {
 				let mut instance_position = 0;
 				for (_, mesh_idx, instance_count) in models {
 					// Mesh
-					let mesh = resources.meshes.index(*mesh_idx);
+					let mesh = data.meshes.index(*mesh_idx);
 					render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
 					render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 					
@@ -807,8 +799,8 @@ impl TextureNode {
 
 	fn create_texture(
 		&self,
-		context: &mut GraphLocals, 
-		render_resources: &mut RenderResources, 
+		context: &mut GraphResources, 
+		gpu_data: &mut GPUData, 
 	) -> usize {
 		// debug!("Creating texture for texture node '{}'", &self.name);
 		let [width, height] = match self.resolution {
@@ -816,7 +808,7 @@ impl TextureNode {
 			None => context.default_resolution,
 		};
 		let t = BoundTexture::new_with_format(
-			&render_resources.device,
+			&gpu_data.device,
 			&self.resource_id,
 			self.texture_format.translate(),
 			width,
@@ -838,16 +830,16 @@ impl RunnableNode for TextureNode {
 		&self.outputs
 	}
 
-	fn update(&mut self, context: &mut GraphLocals, _: &mut ModelsQueueResource, render_resources: &mut RenderResources) {
-		self.texture_idx = self.create_texture(context, render_resources);
+	fn update(&mut self, context: &mut GraphResources, _: &mut ModelQueuesResource, gpu_data: &mut GPUData) {
+		self.texture_idx = self.create_texture(context, gpu_data);
 		debug!("Texture node '{}' pulled texture idx {}", &self.name, &self.texture_idx);
 	}
 
 	fn run(
 		&self, 
-		context: &mut GraphLocals, 
-		_: &ModelsQueueResource,
-		_: &mut RenderResources, 
+		context: &mut GraphResources, 
+		_: &ModelQueuesResource,
+		_: &GPUData, 
 		encoder: &mut wgpu::CommandEncoder,
 	) {
 		debug!("Running texture node '{}'", &self.name);
@@ -859,7 +851,7 @@ impl RunnableNode for TextureNode {
 			let colour_attachments = match self.texture_format.is_depth() {
 				true => vec![],
 				false => vec![
-					wgpu::RenderPassColorAttachment {
+					Some(wgpu::RenderPassColorAttachment {
 						view: &texxy.view,
 						resolve_target: None,
 						ops: wgpu::Operations {
@@ -871,7 +863,7 @@ impl RunnableNode for TextureNode {
 							}),
 							store: true,
 						},
-					},
+					}),
 				],
 			};
 	

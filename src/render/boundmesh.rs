@@ -52,7 +52,7 @@ pub struct BoundMeshManager {
 	meshes: Vec<BoundMesh>, // These should be stored in an arena
 	meshes_index_from_name_properties: HashMap<(String, Vec<VertexProperty>), usize>,
 	meshes_index_from_index_properties: HashMap<(usize, Vec<VertexProperty>), usize>,
-	mesh_manager: Arc<RwLock<MeshManager>>,
+	pub data_manager: Arc<RwLock<MeshManager>>,
 }
 impl BoundMeshManager {
 	pub fn new(
@@ -66,7 +66,7 @@ impl BoundMeshManager {
 			meshes: Vec::new(),
 			meshes_index_from_name_properties: HashMap::new(),
 			meshes_index_from_index_properties: HashMap::new(),
-			mesh_manager: mesh_manager.clone(),
+			data_manager: mesh_manager.clone(),
 		}
 	}
 
@@ -85,7 +85,7 @@ impl BoundMeshManager {
 	}
 
 	pub fn bind_by_index(&mut self, mesh_idx: usize, vertex_properties: &Vec<VertexProperty>) -> usize {
-		let mm = self.mesh_manager.read().unwrap();
+		let mm = self.data_manager.read().unwrap();
 		let mesh = mm.index(mesh_idx);
 
 		info!("Binding mesh '{}' with properties '{:?}'", mesh, vertex_properties);
@@ -126,7 +126,7 @@ impl BoundMeshManager {
 	}
 
 	pub fn index_from_name_properites_bind(&mut self, name: &String, vertex_properties: &Vec<VertexProperty>) -> usize {
-		let mm = self.mesh_manager.read().unwrap();
+		let mm = self.data_manager.read().unwrap();
 		let key = (name.clone(), vertex_properties.clone());
 		if self.meshes_index_from_name_properties.contains_key(&key) {
 			self.meshes_index_from_name_properties[&key]

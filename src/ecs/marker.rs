@@ -45,7 +45,7 @@ impl MarkerSystem {
 impl<'a> System<'a> for MarkerSystem {
 	type SystemData = (
 		Entities<'a>,
-		WriteExpect<'a, RenderResource>,
+		WriteExpect<'a, GPUResource>,
 		WriteExpect<'a, PhysicsResource>,
 		ReadExpect<'a, InputResource>,
 		WriteStorage<'a, MapComponent>,
@@ -58,7 +58,7 @@ impl<'a> System<'a> for MarkerSystem {
 		&mut self, 
 		(
 			entities,
-			_render_resource,
+			_gpu,
 			_physics_resource,
 			input_resource,
 			mut maps,

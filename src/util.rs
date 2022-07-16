@@ -1,4 +1,4 @@
-use std::{time::Duration, path::Path, sync::{Mutex, Arc}};
+use std::{time::Duration, path::{Path, PathBuf}, sync::{Mutex, Arc}};
 use image::DynamicImage;
 use anyhow::*;
 use std::process::Command;
@@ -108,19 +108,30 @@ pub fn k_tofrom_rapier(mut input: nalgebra::Vector3<f32>) -> nalgebra::Vector3<f
 
 /// Shows an image by saving it to tmp and opening it with gwenview
 // Todo: Make an iterator of prorams to try?
-const IMAGE_PATH: &str = "/tmp/kkraftimagetoshow.png";
-const IMAGE_VIEWER: &str = "gwenview";
+
+
 pub fn show_image(image: DynamicImage) -> Result<()> {
-	save_image(image)?;
+	const IMAGE_VIEWER: &str = "gwenview";
+	const OVERWRITE_T: Duration = Duration::from_secs(10);
+
+	let mut counter = 0;
+	let mut path = PathBuf::from(format!("/tmp/kkraftimagetoshow_{counter}.png"));
+	while path.exists() && std::fs::metadata(&path)?.modified()?.elapsed()? < OVERWRITE_T {
+		counter += 1;
+		path = PathBuf::from(format!("/tmp/kkraftimagetoshow_{counter}.png"));
+	}
+	
+	save_image(image, &path)?;
 
 	Command::new(IMAGE_VIEWER)
-		.arg(IMAGE_PATH)
+		.arg(path)
 		.output()?;
 	
 	Ok(())
 }
-pub fn save_image(image: DynamicImage) -> Result<()> {
-	image.save(IMAGE_PATH)?;
+pub fn save_image(image: DynamicImage, path: &impl AsRef<Path>) -> Result<()> {
+	image.save(path.as_ref())?;
+
 	Ok(())
 }
 
@@ -284,6 +295,19 @@ impl<T: std::fmt::Debug> PTCT<T> {
 		let mut res = self.result.lock().unwrap();
 		*res = Some(thing);
 	}
+}
+
+
+
+fn load_egui_image_from_path(path: &std::path::Path) -> Result<egui::ColorImage, image::ImageError> {
+    let image = image::io::Reader::open(path)?.decode()?;
+    let size = [image.width() as _, image.height() as _];
+    let image_buffer = image.to_rgba8();
+    let pixels = image_buffer.as_flat_samples();
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        size,
+        pixels.as_slice(),
+    ))
 }
 
 

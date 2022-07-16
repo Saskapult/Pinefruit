@@ -21,6 +21,12 @@ impl Voxel {
 			_ => panic!("Tried to unwrap an empty voxel!"),
 		}
 	}
+	pub fn id(&self) -> Option<usize> {
+		match self {
+			Voxel::Block(id) => Some(*id),
+			_ => None,
+		}
+	}
 }
 
 
@@ -104,7 +110,7 @@ impl Chunk {
 	}
 	
 	/// Decodes self from a run-length encoding.
-	/// Like rle, it does NOT use mappings, instead using raw ids.
+	/// Like rle, it does NOT use mappings, instead storing raw ids.
 	pub fn rld(mut self, rle: &Vec<(usize, u32)>) -> Self {
 		let mut voxel_position = 0;
 		rle.iter().for_each(|&(id, length)| {

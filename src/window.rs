@@ -1,4 +1,4 @@
-
+use specs::Entity;
 use winit::{
 	event::*,
 	event_loop::*,
@@ -12,7 +12,8 @@ use std::thread;
 use std::time::{Instant, Duration};
 use egui;
 use crate::ecs::*;
-use specs::{WorldExt, Entity};
+use crate::gui::GameWidget;
+use crate::render::BoundTexture;
 
 
 
@@ -22,16 +23,28 @@ pub struct GameWindow {
 	pub surface: wgpu::Surface,
 	pub surface_config: wgpu::SurfaceConfiguration,
 	pub platform: egui_winit_platform::Platform,
-	pub previous_frame_time: Option<f32>,
+	pub start_time: Instant,
 	pub cursor_inside: bool,
+	pub game_draw_rate: Duration,
+	pub last_game_draw: Instant,
+	pub last_update: Instant,
+	reconfigure: bool,
+
+	texture: Option<egui::TextureHandle>,
+	game_thing: GameWidget,
+	
 }
 impl GameWindow {
-	pub fn new(instance: &wgpu::Instance, adapter: &wgpu::Adapter, window: Window) -> Self {
+	pub fn new(
+		instance: &wgpu::Instance, 
+		adapter: &wgpu::Adapter, 
+		window: Window,
+	) -> Self {
 		let surface = unsafe { instance.create_surface(&window) };
 		let size = window.inner_size();
 		let surface_config = wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
-			format: surface.get_preferred_format(&adapter).unwrap(),
+			format: surface.get_supported_formats(&adapter)[0],
 			width: size.width,
 			height: size.height,
 			present_mode: wgpu::PresentMode::Fifo,
@@ -53,7 +66,7 @@ impl GameWindow {
 							bg_stroke: egui::Stroke::none(),
 							// normal text color
 							fg_stroke: egui::Stroke::new(1.0, egui::Color32::WHITE), 
-							corner_radius: 0.0,
+							rounding: egui::Rounding::none(),
 							expansion: 0.0,
 						},
 						..Default::default()
@@ -69,259 +82,223 @@ impl GameWindow {
 			surface,
 			surface_config,
 			platform,
-			previous_frame_time: None,
+			start_time: Instant::now(),
 			cursor_inside: false,
+			game_draw_rate: Duration::from_millis(10),
+			last_game_draw: Instant::now(),
+			last_update: Instant::now(),
+			reconfigure: true,
+
+			texture: None,
+			game_thing: GameWidget::new(None),
 		}
 	}
 
-	// To be called by the game when there is a resize event in the queue
-	pub fn resize(&mut self, device: &wgpu::Device, new_size: winit::dpi::PhysicalSize<u32>) {
-		if new_size.width > 0 && new_size.height > 0 {
-			self.surface_config.width = new_size.width;
-			self.surface_config.height = new_size.height;
-			self.surface.configure(&device, &self.surface_config);		
-		}
+	pub fn resize(&mut self, width: u32, height: u32) {
+		self.surface_config.width = width;
+		self.surface_config.height = height;
+		self.reconfigure = true;
 	}
 
-	fn render_ui(
+	fn encode_ui(
 		&mut self,
 		mut encoder: &mut wgpu::CommandEncoder,
-		render_resource: &mut RenderResource,
+		gpu_resource: &mut GPUResource,
 		destination_view: &wgpu::TextureView,
-		world: &specs::World,
-		entity: Entity,
-	) {
-		let egui_start = Instant::now();
+		_world: &specs::World,
+	) -> egui::TexturesDelta {
+		self.platform.update_time(self.start_time.elapsed().as_secs_f64());
+
 		self.platform.begin_frame();
 
-		let input = egui::RawInput::default();
-		let (_output, shapes) = self.platform.context().run(input, |egui_ctx| {
-			egui::SidePanel::left("info panel").min_width(300.0).resizable(false).show(egui_ctx, |ui| {
-				// Some of these values are not from the same step so percentages will be inaccurate
+		// let input = egui::RawInput::default();
+		let mut ctx = self.platform.context();
 
+		egui::SidePanel::left("info panel")
+			.min_width(300.0)
+			.resizable(false)
+			.show(&mut ctx, |ui| {
 				ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
 
-				// Transform info
-				if let Some(transform) = world.read_component::<TransformComponent>().get(entity) {
-					// Find camera for this window or something idk
-					let pos = transform.position;
-					ui.label(format!("pos: [{:.1}, {:.1}, {:.1}]", pos[0], pos[1], pos[2]));
-					let world_pos = [
-						pos[0].floor() as i32,
-						pos[1].floor() as i32,
-						pos[2].floor() as i32,
-					];
-					ui.label(format!("world: {:?}", world_pos));
-					let cpos = [
-						world_pos[0].div_euclid(16),
-						world_pos[1].div_euclid(16),
-						world_pos[2].div_euclid(16),
-					];
-					let mut vpos = [
-						(world_pos[0] % 16 + 16) % 16,
-						(world_pos[1] % 16 + 16) % 16,
-						(world_pos[2] % 16 + 16) % 16,
-					];
-					vpos.iter_mut().zip([16; 3].iter()).for_each(|(v, cs)| {
-						if *v < 0 {
-							*v = *cs as i32 + *v;
-						}
-					});
-					ui.label(format!("chunk: {:?} - {:?}", cpos, vpos));
+				let texture: &egui::TextureHandle = self.texture.get_or_insert_with(|| {
+					// Load the texture only once.
+					ui.ctx().load_texture("my-image", egui::ColorImage::example())
+				});
+
+				ui.label("TESTING TESTING TESTING");
+				ui.image(texture, texture.size_vec2());
+				if ui.button("click me!").clicked() {
+					println!("Hey!");
 				}
 
-				// Lookat info
-				if let Some(marker_stuff) = world.read_component::<MarkerComponent>().get(entity) {
-					let look_pos= marker_stuff.look_pos;
-					let normal = marker_stuff.look_normal;
-					let normal_str = match normal.map(|f| f.round() as i32) {
-						[1, 0, 0] => "xp",
-						[0, 1, 0] => "yp",
-						[0, 0, 1] => "zp",
-						[-1, 0, 0] => "xn",
-						[0, -1, 0] => "yn",
-						[0, 0, -1] => "zn",
-						_ => "unaligned",
-					};
-					ui.label(format!("look at: {:?} ({:?})", look_pos, marker_stuff.look_v));
-					ui.label(format!("look normal: {:?} ({})", normal, normal_str));
-				}
+				self.game_thing.thing(ui);
 
-				let steptime = world.read_resource::<StepResource>().step_durations.latest().unwrap_or(Duration::ZERO);
-				ui.label(format!("step time: {}ms", steptime.as_millis()));
-				
-				{
-					let encodetime = render_resource.encode_durations.latest().unwrap_or(Duration::ZERO);
-					let encodep = encodetime.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-					ui.label(format!("encode time: {:>2}ms (~{:.2}%)", encodetime.as_millis(), encodep));
-					{
-						let rupdate_time = render_resource.instance.update_durations.latest().unwrap_or(Duration::ZERO);
-						let rupdate_p = rupdate_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-						ui.label(format!("rupdate time: {:>2}ms (~{:.2}%)", rupdate_time.as_millis(), rupdate_p));
 
-						let rencode_time = render_resource.instance.encode_durations.latest().unwrap_or(Duration::ZERO);
-						let rencode_p = rencode_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-						ui.label(format!("rencode time: {:>2}ms (~{:.2}%)", rencode_time.as_millis(), rencode_p));
-					}
-
-					let submit_time = render_resource.submit_durations.latest().unwrap_or(Duration::ZERO);
-					let submit_p = submit_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-					ui.label(format!("submit time: {:>2}ms (~{:.2}%)", submit_time.as_millis(), submit_p));
-				}
-
-				let physics_time = {
-					let physics_resource = world.read_resource::<PhysicsResource>();
-					physics_resource.tick_durations.latest().unwrap_or(Duration::ZERO)
-				};
-				let physics_p = physics_time.as_secs_f32() / steptime.as_secs_f32() * 100.0;
-				ui.label(format!("physics time: {:>2}ms (~{:.2}%)", physics_time.as_millis(), physics_p));
-
-				
-
-				// if ui.button("Clickme").clicked() {
-				// 	panic!("Button click");
-				// }
 			});
-			// egui::Area::new("centre cursor panel").interactable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(egui_ctx, |ui| { 
-			// 	ui.label(format!("X"));
-			// });
-			// egui::TopBottomPanel::bottom("selected block panel").show(egui_ctx, |ui| { 
-			// 	ui.label(format!("Selected: "));
-			// });
-		});
+		
+		let full_output = self.platform.end_frame(Some(&self.window));
 
-		let paint_jobs = self.platform.context().tessellate(shapes);
+		let paint_jobs = self.platform.context().tessellate(full_output.shapes);
 
-		let frame_time = (Instant::now() - egui_start).as_secs_f64() as f32;
-		self.previous_frame_time = Some(frame_time);
+		let device = gpu_resource.device.clone();
+		let queue = gpu_resource.queue.clone();
 
-		let device = render_resource.instance.device.clone();
-		let queue = render_resource.instance.queue.clone();
-
-		// GPU upload
+		// GPU uploads
 		let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
 			physical_width: self.window.outer_size().width,
 			physical_height: self.window.outer_size().height,
 			scale_factor: self.window.scale_factor() as f32,
 		};
-		render_resource.egui_rpass.update_texture(
-			&device, 
-			&queue, 
-			&self.platform.context().font_image(),
-		);
-		render_resource.egui_rpass.update_user_textures(
-			&device, 
-			&queue,
-		);
-		render_resource.egui_rpass.update_buffers(
+		let tdelta = full_output.textures_delta;
+		gpu_resource.egui_rpass.add_textures(
+			&device, &queue, &tdelta,
+		).expect("Failed to add egui textures!");
+		gpu_resource.egui_rpass.update_buffers(
 			&device, 
 			&queue, 
 			&paint_jobs, 
 			&screen_descriptor,
 		);
 
-		render_resource.egui_rpass.execute(
+		// GPU executions
+		gpu_resource.egui_rpass.execute(
 			&mut encoder,
 			destination_view,
 			&paint_jobs,
 			&screen_descriptor,
 			None,
 		).unwrap();
+
+		tdelta
 	}
 
-	fn render_game<'b>(
-		&self,
-		mut encoder: &mut wgpu::CommandEncoder,
-		camera: &CameraComponent,
-		camera_transform: &TransformComponent,
-		destination_texture: &wgpu::Texture,
-		render_resource: &mut RenderResource,
-	) {
-		render_resource.instance.set_data(camera.render_data.clone());
-
-		let render_camera = crate::render::Camera {
-			position: camera_transform.position,
-			rotation: camera_transform.rotation,
-			fovy: camera.fovy,
-			znear: camera.znear,
-			zfar: camera.zfar,
-		};
-
-		let width = self.surface_config.width;
-		let height = self.surface_config.height;
-		
-		render_resource.instance.render(
-			&mut encoder,
-			destination_texture, 
-			width, 
-			height, 
-			&render_camera, 
-			Instant::now(),
-		);
-	}
-
-	pub fn draw(
+	/// The rendering part!
+	/// It should stay here and be invoked by the window.
+	fn encode_game<'b>(
 		&mut self,
-		world: &mut specs::World,
-		entity: Entity,
+		encoder: &mut wgpu::CommandEncoder,
+		world: &specs::World,
+		gpu_resource: &mut GPUResource,
 	) {
+		use specs::WorldExt;
 
-		let mut render_resource = world.write_resource::<RenderResource>(); 
+		if let Some(entity) = self.game_thing.tracked_entity {
+			// let ccs = world.read_component::<CameraComponent>();
+			// let camera = ccs.get(entity)
+			// 	.expect("Render point has no camera!");
+			// let tcs = world.read_component::<TransformComponent>();
+			// let camera_transform = tcs.get(entity)
+			// 	.expect("Render camera has no transform!");
 
-		self.surface.configure(&render_resource.instance.device, &self.surface_config);
+			// gpu_resource.set_data(camera.render_data.clone());
+			// let render_camera = crate::render::Camera {
+			// 	position: camera_transform.position,
+			// 	rotation: camera_transform.rotation,
+			// 	fovy: camera.fovy,
+			// 	znear: camera.znear,
+			// 	zfar: camera.zfar,
+			// };
+			// gpu_resource.encode_render(
+			// 	&mut encoder,
+			// 	&self.game_thing.get_source(&gpu_resource.device).texture, 
+			// 	self.surface_config.width, 
+			// 	self.surface_config.height, 
+			// 	&render_camera, 
+			// 	Instant::now(),
+			// );
+
+			// let cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+			// 	label: Some("CP"),
+			// });
+
+			// let bt = crate::render::BoundTexture::from_image(
+			// 	&gpu_resource.device, 
+			// 	&gpu_resource.queue, 
+			// 	img, 
+			// 	"Testyy", 
+			// 	true,
+			// );
+
+			// Update ui texture
+			self.game_thing.update_display(
+				&mut gpu_resource.egui_rpass, 
+				&gpu_resource.device, 
+			)
+		}
+	}
+
+	/// Encodes and executes an update to this window's display.
+	/// UI should be redrawn if it is dirty.
+	/// Game should be readrawn if the window's frame is dirty.
+	/// 
+	/// Game frames should be drawn as an element of the GUI.
+	pub fn update(
+		&mut self,
+		gpu_resource: &mut GPUResource,
+		world: &specs::World,
+	) {
+		// Do nothing if it is not time to do things
+		let now = Instant::now();
+		if now - self.last_update < Duration::from_millis(10) {
+			return
+		}
+		self.last_update = now;
+
+		// Decide if game texture must be redrawn
+		let redraw_game = Instant::now() - self.last_game_draw >= self.game_draw_rate;
+		if redraw_game {
+			self.last_game_draw = Instant::now();
+		}
+
+		// If size changed then reconfigure
+		if self.reconfigure {
+			self.surface.configure(&gpu_resource.device, &self.surface_config);
+			self.reconfigure = false;
+		}		
 
 		let frame = match self.surface.get_current_texture() {
 			Ok(tex) => tex,
 			Err(wgpu::SurfaceError::Outdated) => {
 				// Apparently happens when minimized on Windows
-				error!("Render to outdated texture for window");
-				panic!();
+				panic!("Render to outdated texture for window");
 			},
 			Err(e) => {
 				panic!("{}", e);
 			},
 		};
 		let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let mut encoder = render_resource.instance.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("Render Encoder"),
+		let mut encoder = gpu_resource.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("Window Encoder"),
 		});
 
-		// Game
-		{
-			let encode_st = Instant::now();
-			let ccs = world.read_component::<CameraComponent>();
-			let camera = ccs.get(entity)
-				.expect("Render point has no camera!");
-			let tcs = world.read_component::<TransformComponent>();
-			let camera_transform = tcs.get(entity)
-				.expect("Render camera has no transform!");
-			self.render_game(
+		if redraw_game {
+			// Redraw game texture			
+			self.encode_game(
 				&mut encoder,
-				camera,
-				camera_transform,
-				&frame.texture,
-				&mut render_resource,
+				world,
+				gpu_resource,
 			);
-			render_resource.encode_durations.record(Instant::now() - encode_st);
 		}
-
+		
 		// Ui
-		self.render_ui(
+		let tdelta = self.encode_ui(
 			&mut encoder,
-			&mut render_resource,
+			gpu_resource,
 			&frame_view,
 			world,
-			entity,
 		);
 
 		// Submit
 		let submit_st = Instant::now();
-		render_resource.instance.queue.submit(std::iter::once(encoder.finish()));
-		render_resource.submit_durations.record(Instant::now() - submit_st);
-		
-		// Present
+		gpu_resource.queue.submit(std::iter::once(encoder.finish()));
+		let _submit_en = Instant::now() - submit_st;
+
+		// Show
 		frame.present();
+
+		// More egui stuff
+		gpu_resource.egui_rpass.remove_textures(tdelta)
+			.expect("Failed to remove egui textures!");
 	}
 }
 
@@ -677,6 +654,10 @@ impl WindowManager {
 							}
 						},
 						WindowEvent::CursorEntered {..} => {
+							// Sometimes it is not fast enough and the cursor escapes
+							// This makes an error
+							// Maybe add a timer and only capture after 5ms of in window time
+							// Otherwise just be faster?
 							window.cursor_inside = true;
 							window.window.set_cursor_grab(true).unwrap();
 							window.window.set_cursor_visible(false);
@@ -684,6 +665,7 @@ impl WindowManager {
 						},
 						WindowEvent::CursorLeft {..} => {
 							window.cursor_inside = false;
+							// self.capturing_cursor = false;
 						},
 						WindowEvent::CursorMoved {position, ..} => {
 							// Don't use this for camera control!
@@ -692,13 +674,10 @@ impl WindowManager {
 							my = position.y;
 						},
 						WindowEvent::Resized (newsize) => {
-							let _ns = newsize;
-							// window_resource.windows[
-							// 	window_resource.id_idx[&window_id]
-							// ].resize(
-							// 	&render_resource.renderer.device, 
-							// 	newsize.clone(),
-							// );
+							if newsize.width > 0 && newsize.height > 0 {
+								let win = self.windows.get_mut(self.id_idx[&window_id]).unwrap();
+								win.resize(newsize.width, newsize.height);
+							}
 						},
 						WindowEvent::CloseRequested => {
 							let idx = self.id_idx[&window_id];

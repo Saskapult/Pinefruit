@@ -37,7 +37,7 @@ pub struct BoundMaterialManager {
 	bound_materials: Vec<BoundMaterial>,
 	materials_index_from_index_format: HashMap<(usize, BindGroupFormat), usize>,
 	materials_index_from_name_format: HashMap<(String, BindGroupFormat), usize>,
-	pub material_manager: Arc<RwLock<MaterialManager>>,
+	pub data_manager: Arc<RwLock<MaterialManager>>,
 }
 impl BoundMaterialManager {
 	pub fn new(
@@ -51,7 +51,7 @@ impl BoundMaterialManager {
 			bound_materials: Vec::new(),
 			materials_index_from_index_format: HashMap::new(), 
 			materials_index_from_name_format: HashMap::new(), 
-			material_manager: material_manager.clone(),
+			data_manager: material_manager.clone(),
 		}
 	}
 
@@ -110,7 +110,7 @@ impl BoundMaterialManager {
 		shaders: &mut ShaderManager,
 		textures: &mut BoundTextureManager,
 	) -> usize {
-		let mm = self.material_manager.read().unwrap();
+		let mm = self.data_manager.read().unwrap();
 		let material = mm.index(material_idx);
 
 		info!("Binding material '{}' with format '{}'", material, bind_group_format);

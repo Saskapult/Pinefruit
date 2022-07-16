@@ -15,27 +15,37 @@
 
 
 pub mod camera;
-pub mod boundmaterial;
-pub mod boundmesh;
-pub mod model;
-pub mod renderinstance;
-pub mod shader;
-pub mod boundtexture;
-pub mod vertex;
-pub mod graph;
-pub mod light;
-pub mod resources;
-pub mod interpolation;
-pub mod rays;
-
 pub use camera::*;
+
+pub mod boundmaterial;
 pub use boundmaterial::*;
+
+pub mod boundmesh;
 pub use boundmesh::*;
+
+pub mod model;
 pub use model::*;
-pub use renderinstance::*;
+
+pub mod shader;
 pub use shader::*;
+
+pub mod boundtexture;
 pub use boundtexture::*;
+
+pub mod vertex;
 pub use vertex::*;
-pub use light::*;
+
+pub mod graph;
 pub use graph::*;
-pub use resources::*;
+
+pub mod light;
+pub use light::*;
+
+pub mod interpolation;
+pub use interpolation::*;
+
+pub mod rays;
+pub use rays::*;
+
+pub mod ssao;
+pub use ssao::*;

@@ -136,6 +136,35 @@ Hit amanatides_woo(vec3 origin, vec3 direction, float t_limit) {
 	return Hit(false, 0.0, vec4(0.0));
 }
 
+
+// https://nullprogram.com/blog/2018/07/31/
+uint lowbias32(uint x) {
+    x ^= x >> 16;
+    x *= 0x7feb352dU;
+    x ^= x >> 15;
+    x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+uint triple32(uint x) {
+    x ^= x >> 17;
+    x *= 0xed5ad4bbU;
+    x ^= x >> 11;
+    x *= 0xac4c1b51U;
+    x ^= x >> 15;
+    x *= 0x31848babU;
+    x ^= x >> 14;
+    return x;
+}
+
+
+struct MapMap {
+	uint size;
+	int[] colour;
+	vec4 colour_map[];
+}
+
+
  
 void main() {
     vec3 viewGridTopLeftCorner = vec3(push.viewGridTopLeftCornerX, push.viewGridTopLeftCornerY, push.viewGridTopLeftCornerZ);

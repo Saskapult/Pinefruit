@@ -17,6 +17,26 @@ impl Texture {
 			data: image::open(path.clone()).expect("Failed to open file"),
 		}
 	}
+
+	pub fn mean_rgba(&self) -> [f32; 4] {
+		let mut r = 0.0;
+		let mut g = 0.0;
+		let mut b = 0.0;
+		let mut a = 0.0;
+		let raw = self.data.to_rgba8().into_raw();
+		raw.iter()
+			.map(|&v| v as f32 / u8::MAX as f32)
+			.collect::<Vec<_>>()
+			.chunks_exact(4)
+			.for_each(|p| {
+				r += p[0];
+				g += p[1];
+				b += p[2];
+				a += p[3];
+			});
+		
+		[r, g, b, a].map(|v| v / (raw.len() / 4) as f32)
+	}
 }
 
 

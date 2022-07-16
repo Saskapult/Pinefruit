@@ -334,6 +334,112 @@ impl Map {
 		(x.pow(2) + y.pow(2) + z.pow(2)) < radius.pow(2)
 	}
 
+	/// A ray that continues until it either reaches max length or hits a non-empty voxel.
+	/// Uses fast voxel traversal but twice.
+	pub fn ray(
+		&self, 
+		origin: Vector3<f32>,
+		direction: Vector3<f32>,
+		t_limit: f32,
+	) -> Option<(Voxel, f32, Vector3<f32>)> {
+
+		let direction = direction.normalize();
+
+		// Bad stuff happens at [0.0, 0.0, 0.0]
+		fn point_chunk_offset(point: Vector3<f32>, chunk_size: f32) -> Vector3<f32> {
+			Vector3::new(
+				(point[0] - (point[0] / chunk_size).floor() * chunk_size) % chunk_size,
+				(point[1] - (point[1] / chunk_size).floor() * chunk_size) % chunk_size,
+				(point[2] - (point[2] / chunk_size).floor() * chunk_size) % chunk_size,
+			)
+		}
+
+		fn point_chunk(point: Vector3<f32>, chunk_size: f32) -> [i32; 3] {
+			[
+				(point[0] / chunk_size).floor() as i32,
+				(point[1] / chunk_size).floor() as i32,
+				(point[2] / chunk_size).floor() as i32,
+			]
+		}
+
+		assert_eq!(self.chunk_size[0], self.chunk_size[1]);
+		assert_eq!(self.chunk_size[0], self.chunk_size[2]);
+		let chunk_size = self.chunk_size[0] as f32;
+
+		let mut c_iter = crate::render::rays::AWIter::new(
+			origin,
+			direction,
+			0.0,
+			t_limit,
+			chunk_size,
+		);
+		loop {
+			// println!("{:#?}", c_iter);
+
+			let cpos = [c_iter.vx, c_iter.vy, c_iter.vz];
+
+			// Point of entry into chunk relative to map
+			let entry = origin + direction * c_iter.t + direction * 0.001;
+			
+			// // If entry isn't in the chunk then continue
+			// let [ctx, cty, ctz] = point_chunk(entry, chunk_size);
+			// if ctx != c_iter.vx || cty != c_iter.vy || ctz != c_iter.vz {
+			// 	println!("Chunk {cpos:?}");
+			// 	println!("Entry is {:?}", entry.data);
+			// 	println!("Meant for chunk {:?}", [ctx, cty, ctz]);
+			// 	println!("{:#?}", c_iter);
+			// 	// break
+			// 	panic!()
+			// }
+
+			match self.chunk(cpos) {
+				Ok(c) => {
+					// Point of entry into chunk relative to chunk
+					let rel_entry = point_chunk_offset(entry, chunk_size);
+					// println!("Relative entry is {:?}", rel_entry.data);
+					let mut v_iter = crate::render::rays::AWIter::new(
+						rel_entry,
+						direction,
+						0.0,
+						t_limit - c_iter.t,
+						1.0,
+					);
+
+					loop {
+						let vpos = [v_iter.vx, v_iter.vy, v_iter.vz];
+						if !c.is_in_bounds(v_iter.vx, v_iter.vy, v_iter.vz) {
+							// Todo: This but better-er
+							break
+						}
+						// println!("Voxel {vpos:?} ({:?} world)", [
+						// 	vpos[0] + cpos[0] * chunk_size as i32,
+						// 	vpos[1] + cpos[1] * chunk_size as i32,
+						// 	vpos[2] + cpos[2] * chunk_size as i32,
+						// ]);
+
+						let v = c.get_voxel(vpos);
+						if !v.is_empty() {
+							// println!("Hit!");
+							return Some((v, c_iter.t + v_iter.t, v_iter.normal))
+						}
+					
+						if !v_iter.next().is_some() {
+							// println!("Distance exceeded in voxel");
+							break
+						}
+					}
+				},
+				_ => {},
+			}
+			if !c_iter.next().is_some() {
+				// println!("Distance exceeded in chunk");
+				break
+			}
+		}
+
+		None
+	}
+
 	// Returns the positions of all chunks that should be rendered from this camera
 	// There was some article showing how this can be optimized quite well, but I don't remember its name 
 	pub fn chunks_view_cone(&self, _camera: Camera, _distance: u32) -> Vec<[i32; 3]> {
@@ -923,81 +1029,81 @@ const REVERSE_QUAD_INDICES: [u16; 6] = [
 ];
 
 
+/*
+#[cfg(test)]
+mod tests {
+	use super::*;
 
-// #[cfg(test)]
-// mod tests {
-// 	use super::*;
-// 	use std::time::{Instant, Duration};
+	// Tests that parallel chunk meshing is faster than non-parallel chunk meshing
+    #[test]
+    fn test_mesh_rayon() {
+		const CHUNKSIZE: [u32; 3] = [32; 3];
 
-// 	// Tests that parallel chunk meshing is faster than non-parallel chunk meshing
-//     #[test]
-//     fn test_mesh_rayon() {
-// 		const CHUNKSIZE: [u32; 3] = [32; 3];
+		let bm = Arc::new(RwLock::new({
+			let mut bm = BlockManager::new();
 
-// 		let bm = Arc::new(RwLock::new({
-// 			let mut bm = BlockManager::new();
+			bm.insert(Block::new(
+				&format!("stone")
+			));
+			bm.insert(Block::new(
+				&format!("grass")
+			));
+			bm.insert(Block::new(
+				&format!("dirt")
+			));
 
-// 			bm.insert(Block::new(
-// 				&format!("stone")
-// 			));
-// 			bm.insert(Block::new(
-// 				&format!("grass")
-// 			));
-// 			bm.insert(Block::new(
-// 				&format!("dirt")
-// 			));
+			bm
+		}));
 
-// 			bm
-// 		}));
+		println!("Generating world");
+		let mapgen_st = Instant::now();
+		let mut map = Map::new(CHUNKSIZE, &bm);
+		map.generate();
+		println!("Generated map in {}ms", (Instant::now() - mapgen_st).as_millis());
 
-// 		println!("Generating world");
-// 		let mapgen_st = Instant::now();
-// 		let mut map = Map::new(CHUNKSIZE, &bm);
-// 		map.generate();
-// 		println!("Generated map in {}ms", (Instant::now() - mapgen_st).as_millis());
+		println!("Begin meshing");
+		let start_t = Instant::now();
 
-// 		println!("Begin meshing");
-// 		let start_t = Instant::now();
+		let mut queue = Vec::new();
+		for cx in -4..4 {
+			for cy in -1..2 {
+				for cz in -4..4 {
+					queue.push((
+						[cx,cy,cz], 
+						Instant::now(), 
+						map.mesh_chunk_rayon([cx, cy, cz]),
+					));
+				}
+			}
+		}
 
-// 		let mut queue = Vec::new();
-// 		for cx in -4..4 {
-// 			for cy in -1..2 {
-// 				for cz in -4..4 {
-// 					queue.push((
-// 						[cx,cy,cz], 
-// 						Instant::now(), 
-// 						map.mesh_chunk_rayon([cx, cy, cz]),
-// 					));
-// 				}
-// 			}
-// 		}
+		let mut mesh_times = Vec::new();
+		while queue.len() > 0 {
+			queue.drain_filter(|(cpos, st, result)| {
+				let content = result.lock().unwrap();
+				if content.is_some() {
+					mesh_times.push((*cpos, Instant::now() - *st));
+					true
+				} else {
+					false
+				}
+			});
+			// Don't lock all the time
+			std::thread::sleep(Duration::from_millis(2));
+		}
 
-// 		let mut mesh_times = Vec::new();
-// 		while queue.len() > 0 {
-// 			queue.drain_filter(|(cpos, st, result)| {
-// 				let content = result.lock().unwrap();
-// 				if content.is_some() {
-// 					mesh_times.push((*cpos, Instant::now() - *st));
-// 					true
-// 				} else {
-// 					false
-// 				}
-// 			});
-// 			// Don't lock all the time
-// 			std::thread::sleep(Duration::from_millis(2));
-// 		}
+		let total_duration = Instant::now() - start_t;
 
-// 		let total_duration = Instant::now() - start_t;
+		// Display results
+		for (cpos, cdur) in &mesh_times {
+			println!("chunk {:?} meshed in {}ms", cpos, cdur.as_millis());
+		}
+		println!("{} chunks meshed in {}ms", mesh_times.len(), total_duration.as_millis());
 
-// 		// Display results
-// 		for (cpos, cdur) in &mesh_times {
-// 			println!("chunk {:?} meshed in {}ms", cpos, cdur.as_millis());
-// 		}
-// 		println!("{} chunks meshed in {}ms", mesh_times.len(), total_duration.as_millis());
+		let duration_sum: Duration = mesh_times.drain(..).map(|(_, d)| d).sum();
+		println!("Duration sum is {}ms", duration_sum.as_millis());
 
-// 		let duration_sum: Duration = mesh_times.drain(..).map(|(_, d)| d).sum();
-// 		println!("Duration sum is {}ms", duration_sum.as_millis());
-
-//         assert!(duration_sum > total_duration);
-//     }
-// }
+        assert!(duration_sum > total_duration);
+    }
+}
+*/

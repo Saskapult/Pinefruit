@@ -1,11 +1,8 @@
+use crate::ecs::GPUData;
 use crate::render::*;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use wgpu::util::DeviceExt;
-// use rapier3d::prelude::*;
-// use anyhow::*;
-// use crate::mesh::*;
-// use crate::material::*;
+
 
 
 
@@ -57,6 +54,8 @@ pub struct Model {
 
 
 
+/// Holds indices to meshes which correspond to their assigned materials.
+/// Lame and maybe not needed.
 #[derive(Debug)]
 pub struct ModelManager {
 	models: Vec<Model>,
@@ -155,19 +154,16 @@ pub fn modelq_from_meshq(mesh_queue: MeshQueue, materials: Vec<usize>) -> ModelQ
 
 
 
-/// The model resource maps shader input to a model queue.
+/// The model queues resource maps shader input to a model queue.
 /// Function call order should be (update_formats -> update_models -> update_instances).
 /// 
 /// Currently instancing has been neglected and vector capacity has been optimized.
 /// If you want to change that, you must fight the allocator!
 /// 
-/// Instances have been set up to support interpolation based on time.
+/// It should be able to support interpolation.
 /// This could be useful in the future.
 #[derive(Debug)]
-pub struct ModelsQueueResource {
-	device: Arc<wgpu::Device>,
-	queue: Arc<wgpu::Queue>,
-
+pub struct ModelQueuesResource {
 	raw_models: Vec<ModelInstance>,
 	queues: Vec<ModelQueue>,
 	queue_index_of_format: HashMap<ShaderInput, usize>,
@@ -175,14 +171,9 @@ pub struct ModelsQueueResource {
 	instances_buffers: Vec<wgpu::Buffer>,
 	instances_buffer_index_of_format: HashMap<InstanceProperties, usize>,
 }
-impl ModelsQueueResource {
-	pub fn new(
-		device: &Arc<wgpu::Device>,
-		queue: &Arc<wgpu::Queue>,
-	) -> Self {
+impl ModelQueuesResource {
+	pub fn new() -> Self {
 		Self {
-			device: device.clone(),
-			queue: queue.clone(),
 			raw_models: Vec::new(),
 			queues: Vec::new(),
 			queue_index_of_format: HashMap::new(),
@@ -215,7 +206,7 @@ impl ModelsQueueResource {
 	pub fn add_format(
 		&mut self,
 		format: &ShaderInput,
-		resources: &mut RenderResources,
+		gpu_data: &mut GPUData,
 	) -> usize {
 		warn!("Adding format without setup");
 		match self.queue_index_of_format(format) {
@@ -228,7 +219,7 @@ impl ModelsQueueResource {
 						instances_data.extend_from_slice(&instance_data[..]);
 					}
 
-					let instances_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+					let instances_buffer = gpu_data.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 						label: Some("Instance Buffer"),
 						contents: &instances_data[..],
 						usage: wgpu::BufferUsages::VERTEX,
@@ -243,8 +234,8 @@ impl ModelsQueueResource {
 				let queue_idx = {
 					// Once again neglect instancing for simplicity
 					let queue_contents = self.raw_models.iter().map(|model| {
-						let mesh_idx = resources.meshes.index_from_index_properites_bind(model.mesh_idx, &format.1);
-						let material_idx = resources.materials.index_from_index_format_bind(model.material_idx, &format.2, &mut resources.shaders, &mut resources.textures);
+						let mesh_idx = gpu_data.meshes.index_from_index_properites_bind(model.mesh_idx, &format.1);
+						let material_idx = gpu_data.materials.index_from_index_format_bind(model.material_idx, &format.2, &mut gpu_data.shaders, &mut gpu_data.textures);
 						let count = 1;
 						(material_idx, mesh_idx, count)
 					}).collect::<Vec<_>>();
@@ -263,7 +254,7 @@ impl ModelsQueueResource {
 	pub fn update_models(
 		&mut self, 
 		models: Vec<ModelInstance>,
-		resources: &mut RenderResources,
+		gpu_data: &mut GPUData,
 	) {
 		for ((_, vp, mbgf), &queue_idx) in self.queue_index_of_format.iter() {
 			// I don't want to allocate a new vector
@@ -279,8 +270,8 @@ impl ModelsQueueResource {
 			// });
 
 			models.iter().enumerate().for_each(|(i, model)| {
-				let mesh_idx = resources.meshes.index_from_index_properites_bind(model.mesh_idx, vp);
-				let material_idx = resources.materials.index_from_index_format_bind(model.material_idx, mbgf, &mut resources.shaders, &mut resources.textures);
+				let mesh_idx = gpu_data.meshes.index_from_index_properites_bind(model.mesh_idx, vp);
+				let material_idx = gpu_data.materials.index_from_index_format_bind(model.material_idx, mbgf, &mut gpu_data.shaders, &mut gpu_data.textures);
 				let count = 1;
 				queue_content[i] = (material_idx, mesh_idx, count);
 			});
@@ -292,6 +283,7 @@ impl ModelsQueueResource {
 	/// Is meant to interpolate between two timesteps, currently does not.
 	pub fn update_instances(
 		&mut self, 
+		device: &wgpu::Device,
 		_t: f32,
 	) {
 		// This is usually very small so I'm okay with reallocation
@@ -317,7 +309,7 @@ impl ModelsQueueResource {
 			}
 
 			// Load into buffer
-			let instances_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+			let instances_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 				label: Some("Instance Buffer"),
 				contents: &instances_data[..],
 				usage: wgpu::BufferUsages::VERTEX,
@@ -357,7 +349,3 @@ impl ModelsQueueResource {
 		}
 	}
 }
-
-
-
-
