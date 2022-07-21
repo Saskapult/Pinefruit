@@ -1,5 +1,10 @@
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+#![allow(unreachable_code)]
+
+
 use serde::{Serialize, Deserialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use crate::{render::*, ecs::GPUData};
 use std::path::{Path, PathBuf};
 use wgpu::util::DeviceExt;
@@ -419,9 +424,11 @@ impl ShaderNode {
 		};
 		let shader = shaders.index(shader_idx);
 
+		/*
+
 		// Add globals input if needed
 		if let Some(idx) = shader.resources_bg_index {
-			let globals_bgf = ShaderNode::resources_alias_filter(&spec.aliases, shader.bind_groups[&idx].format().clone());
+			let globals_bgf = ShaderNode::alias_filter(&spec.aliases, shader.bind_groups[&idx].format().clone());
 			inputs.insert(("_globals".to_string(), GraphResourceType::Resources(globals_bgf)));
 		}
 
@@ -455,7 +462,7 @@ impl ShaderNode {
 				None
 			},
 		};
-
+		
 		// Add model input
 		if mesh_input_format.is_some() {
 			if material_input_bgf.is_some() {
@@ -472,13 +479,14 @@ impl ShaderNode {
 				))));
 			}
 		}
+		*/
 
 		Ok(Self {
 			name: spec.name.clone(),
 			shader_path: spec.shader.clone(),
 			shader_idx,
-			mesh_input_format,
-			material_input_bgf,
+			mesh_input_format: todo!(),
+			material_input_bgf: todo!(),
 			resources_idx: None,
 			render_queue: None,
 			colour_attachments: Vec::new(),
@@ -500,8 +508,22 @@ impl ShaderNode {
 		}
 	}
 
+	fn alias_filter_2(
+		aliases: &HashMap<String, String>, 
+		mut bind_groups: BTreeMap<u32, ShaderBindGroup>,
+	) -> BTreeMap<u32, ShaderBindGroup> {
+		bind_groups.iter_mut().for_each(|(_, bg)| {
+			bg.entries.iter_mut().for_each(|bge| {
+				if let Some(alias) = aliases.get(&bge.format.resource_usage) {
+					bge.format.resource_usage = alias.clone();
+				}
+			});
+		});
+		bind_groups
+	}
+
 	/// Filters a bind group to use this node's aliases
-	fn resources_alias_filter(
+	fn alias_filter(
 		aliases: &HashMap<String, String>, 
 		mut bgf: BindGroupFormat,
 	) -> BindGroupFormat {
@@ -534,6 +556,7 @@ impl RunnableNode for ShaderNode {
 		model_resources: &mut ModelQueuesResource, 
 		gpu_data: &mut GPUData,
 	) {	
+		/* 
 		debug!("Updating shader node '{}'", &self.name);
 
 		let shader = gpu_data.shaders.index(self.shader_idx);
@@ -546,7 +569,7 @@ impl RunnableNode for ShaderNode {
 		};
 		drop(shader);
 
-		let filtered_globals_bgf = ShaderNode::resources_alias_filter(&self.aliases, globals_bgf);
+		let filtered_globals_bgf = ShaderNode::alias_filter(&self.aliases, globals_bgf);
 		self.resources_idx = Some(
 			graph_resources.resource_bg_of_format_create(&filtered_globals_bgf, gpu_data).unwrap()
 		);
@@ -622,6 +645,7 @@ impl RunnableNode for ShaderNode {
 				usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
 			}));
 		}
+		*/
 	}
 	
 	fn run(
@@ -667,7 +691,7 @@ impl RunnableNode for ShaderNode {
 			depth_stencil_attachment,
 		});
 
-		render_pass.set_pipeline(&shader.pipeline);
+		// render_pass.set_pipeline(&shader.pipeline);
 
 		// Globals
 		if let Some(idx) = self.resources_idx {
@@ -747,11 +771,12 @@ impl RunnableNode for ShaderNode {
 struct ShaderNodeSpecification {
 	pub name: String,
 	pub shader: PathBuf,
+	// Things pulled from global data and put into this shader's input places
 	pub render_inputs: HashSet<(String, GraphResourceType)>,	// ("resource name", resource type)
 	pub depth: Option<String>,
 	// When assigning resources to the shader inputs we look to see if the input name exists as an alias
 	// If no match is found we look through inputs as a fallback, avoiding manadtory overspecification
-	pub aliases: HashMap<String, String>,	// ("resource name", "shader input usage")
+	pub aliases: HashMap<String, String>,	// ("name in resources", "name in shader")
 	pub outputs: HashSet<(String, GraphResourceType)>,
 }
 
@@ -966,3 +991,417 @@ pub fn example_graph_read(
 // 		assert!(true);
 // 	}
 // }
+
+#[derive(Debug)]
+enum ResourceLocation {
+	Global,
+	MaterialQueue(Vec<String>),
+	BuffersQueue(Vec<String>),
+}
+
+
+#[derive(Debug)]
+struct PolygonShaderNode {
+	name: String,
+	shader_path: PathBuf,
+	shader_idx: usize,
+
+	// The mesh input descriptor and its corresponding mesh queue index
+	mesh_input_format: Option<(ShaderMeshFormat, Option<usize>)>,
+
+	// Material input queue
+	
+	bind_group_things: Vec<Option<(ResourceLocation, BindGroupFormat)>>,
+	// Stored indices to bind group data
+	bind_group_indices: Vec<Option<(GraphResourceType, usize)>>,
+
+	// Index of texture, should store bool
+	colour_attachments: Vec<(usize, bool)>,
+	depth_attachment: Option<(usize, bool)>,
+	// The queue index (if initialized) (if necessary)
+	
+
+	inputs: HashSet<(String, GraphResourceType)>,
+	depth: Option<String>,
+	aliases: HashMap<String, String>,
+	outputs: HashSet<(String, GraphResourceType)>,
+
+	fugg_buff: Option<wgpu::Buffer>,
+}
+impl PolygonShaderNode {
+	pub fn from_spec(
+		spec: &ShaderNodeSpecification, 
+		folder_context: &Path, 
+		shaders: &mut ShaderManager,
+	) -> Result<Self> {
+		let mut inputs = spec.render_inputs.clone();
+		if let Some(depth_id) = &spec.depth {
+			inputs.insert((depth_id.clone(), GraphResourceType::Texture));
+		}
+
+		let shader_path = folder_context.join(&spec.shader).canonicalize()
+			.with_context(|| format!("Failed to canonicalize shader path ('{:?}' + '{:?}')", &folder_context, &spec.shader))?;
+		let shader_idx = match shaders.index_from_path(&shader_path) {
+			Some(idx) => idx,
+			None => shaders.register_path(&shader_path),
+		};
+		let shader = shaders.index(shader_idx);
+
+		/*
+		match shader.pipeline {
+			ShaderPipeline::Compute(pl) => {},
+			ShaderPipeline::Polygon{
+				pipeline,
+				mesh_format,
+				attachments,
+			} => {
+				let accepts_meshes = mesh_format.is_some();
+				// let skinned = shader.bind_groups.iter().
+
+			},
+		}
+
+		// Add globals input if needed
+		if let Some(idx) = shader.resources_bg_index {
+			let globals_bgf = ShaderNode::alias_filter(&spec.aliases, shader.bind_groups[&idx].format().clone());
+			inputs.insert(("_globals".to_string(), GraphResourceType::Resources(globals_bgf)));
+		}
+		
+		// Mesh input
+		let mesh_input_format = {
+			if shader.vertex_properties.len() > 0 || shader.instance_properties.len() > 0 {
+				inputs.insert(("meshes".to_string(), GraphResourceType::Meshes(
+					shader.vertex_properties.clone(), 
+					shader.instance_properties.clone(), 
+				)));
+				Some((shader.vertex_properties.clone(), shader.instance_properties.clone()))
+			} else {
+				None
+			}
+		};
+		
+		// Material input
+		let material_input_bgf = match shader.material_bg_index {
+			Some(idx) => {
+				inputs.insert(("materials".to_string(), GraphResourceType::Materials(
+					shader.bind_groups[&idx].format(),
+				)));
+				Some(shader.bind_groups[&idx].format())
+			},
+			None => {
+				// Currently a shader needs some material input to generate a queue
+				// We still won't bind it or anything but it needs to be here
+				inputs.insert(("materials".to_string(), GraphResourceType::Materials(
+					BindGroupFormat::empty(),
+				)));
+				None
+			},
+		};
+		*/
+
+		// // Add model input
+		// if mesh_input_format.is_some() {
+		// 	if material_input_bgf.is_some() {
+		// 		inputs.insert(("models".to_string(), GraphResourceType::Models((
+		// 			shader.instance_properties.clone(), 
+		// 			shader.vertex_properties.clone(), 
+		// 			shader.bind_groups[&1].format(),
+		// 		))));
+		// 	} else {
+		// 		inputs.insert(("models".to_string(), GraphResourceType::Models((
+		// 			shader.instance_properties.clone(), 
+		// 			shader.vertex_properties.clone(), 
+		// 			BindGroupFormat::empty(),
+		// 		))));
+		// 	}
+		// }
+
+		Ok(Self {
+			name: spec.name.clone(),
+			shader_path: spec.shader.clone(),
+			shader_idx,
+			mesh_input_format: todo!(),
+			// material_input_bgf,
+			// resources_idx: None,
+			// render_queue: None,
+			colour_attachments: Vec::new(),
+			depth_attachment: None,
+			inputs,
+			depth: spec.depth.clone(),
+			aliases: spec.aliases.clone(),
+			outputs: spec.outputs.clone(),
+			fugg_buff: None,
+
+			// Temporary stuff
+			bind_group_things: vec![],
+			bind_group_indices: vec![],
+		})
+	}
+
+	/// Checks if there is an alias for something
+	fn alias_for(&self, s: &String) -> Option<&String> {
+		if self.aliases.contains_key(s) {
+			Some(&self.aliases[s])
+		} else {
+			None
+		}
+	}
+
+	fn alias_filter_2(
+		aliases: &HashMap<String, String>, 
+		mut bind_groups: BTreeMap<u32, ShaderBindGroup>,
+	) -> BTreeMap<u32, ShaderBindGroup> {
+		bind_groups.iter_mut().for_each(|(_, bg)| {
+			bg.entries.iter_mut().for_each(|bge| {
+				if let Some(alias) = aliases.get(&bge.format.resource_usage) {
+					bge.format.resource_usage = alias.clone();
+				}
+			});
+		});
+		bind_groups
+	}
+
+	/// Filters a bind group to use this node's aliases
+	fn alias_filter(
+		aliases: &HashMap<String, String>, 
+		mut bgf: BindGroupFormat,
+	) -> BindGroupFormat {
+		for (_, bgef) in &mut bgf.entry_formats {
+			if aliases.contains_key(&bgef.resource_usage) {
+				let alias = aliases[&bgef.resource_usage].clone();
+				trace!("Found alias '{}' -> '{}'", &bgef.resource_usage, &alias);
+				bgef.resource_usage = alias;
+			}
+		}
+		bgf
+	}
+}
+impl RunnableNode for PolygonShaderNode {
+	fn name(&self) -> &String {
+		&self.name
+	}
+
+	fn inputs(&self) -> &HashSet<(String, GraphResourceType)> {
+		&self.inputs
+	}
+	
+	fn outputs(&self) -> &HashSet<(String, GraphResourceType)> {
+		&self.outputs
+	}
+	
+	fn update(
+		&mut self, 
+		graph_resources: &mut GraphResources, 
+		model_resources: &mut ModelQueuesResource, 
+		gpu_data: &mut GPUData,
+	) {	
+		debug!("Updating shader node '{}'", &self.name);
+
+		/*
+		let shader = gpu_data.shaders.index(self.shader_idx);
+		let instance_properties = shader.instance_properties.clone();
+		let vertex_properties = shader.vertex_properties.clone();
+		let globals_bgf = shader.bind_groups[&0].format();
+		let materials_bgf = match shader.material_bg_index {
+			Some(idx) => Some(shader.bind_groups[&idx].format().clone()),
+			None => None,
+		};
+		drop(shader);
+
+		let filtered_globals_bgf = ShaderNode::alias_filter(&self.aliases, globals_bgf);
+		self.resources_idx = Some(
+			graph_resources.resource_bg_of_format_create(&filtered_globals_bgf, gpu_data).unwrap()
+		);
+		trace!("Shader node {} chose globals idx {}", &self.name, &self.resources_idx.unwrap());
+
+		// Update render queue
+		self.render_queue = Some({
+			// If takes mesh input find the mesh bit
+			let takes_meshes = vertex_properties.len() > 0 || instance_properties.len() > 0;
+			if takes_meshes {
+				match materials_bgf {
+					Some(materials_bgf) => {
+						// Takes materials too, so model input
+						let model_format = (instance_properties, vertex_properties, materials_bgf);
+						let queue_index = model_resources.queue_index_of_format(&model_format).unwrap();
+						trace!("Shader node {} chose model queue idx {} (format: {:?})", &self.name, &queue_index, &model_format);
+						QueueType::Models(queue_index)
+					},
+					None => {
+						// Only mesh input
+						let model_format = (instance_properties, vertex_properties, BindGroupFormat::empty());
+						let queue_index = match model_resources.queue_index_of_format(&model_format) {
+							Some(idx) => idx,
+							None => {
+								// This should really not be done here but whatever
+								// model_resources.add_format(&model_format, render_resources)
+								panic!("I told you not to do that anymore!")
+							}
+						};
+						trace!("Shader node {} chose mesh queue idx {} (format: {:?})", &self.name, &queue_index, &model_format);
+						QueueType::Meshes(queue_index)
+					},
+				}
+			} else {
+				trace!("Shader node {} uses FullQuad", &self.name);
+				QueueType::FullQuad
+			}
+		});
+
+		let shader = gpu_data.shaders.index(self.shader_idx);
+		self.colour_attachments = shader.attachments.iter().map(|attachment| {
+			let resource_name = {
+				match self.alias_for(&attachment.usage) {
+					Some(alias) => alias.clone(),
+					None => attachment.usage.clone(),
+				}
+			};
+			let attachment_key = (resource_name.clone(), GraphResourceType::Texture);
+			if self.inputs.contains(&attachment_key) {
+				let store = self.outputs.contains(&attachment_key);
+				let idx = graph_resources.get_index_of_id(&attachment_key.0, GraphResourceType::Texture).expect("Attachment not found!");
+				(idx, store)
+			} else {
+				panic!("Shader requires attachment not found in node inputs!")
+			}
+		}).collect::<Vec<_>>();
+
+		self.depth_attachment = match &self.depth {
+			Some(depth_id) => {
+				let depth_key = (depth_id.clone(), GraphResourceType::Texture);
+				let depth_write = self.outputs.contains(&depth_key);
+				let idx = graph_resources.get_index_of_id(&depth_key.0, GraphResourceType::Texture).expect("Depth attatchment not found!?");
+				Some((idx, depth_write))
+			},
+			_ => None,
+		};
+
+		// Workaround buffer for FullQuad because wgpu needs something to be bound in vertex and instance in order to draw
+		if self.fugg_buff.is_none() {
+			self.fugg_buff = Some(gpu_data.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+				label: Some("fugg Buffer"),
+				contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+				usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
+			}));
+		}
+	
+		*/
+	}
+	
+	fn run(
+		&self, 
+		context: &mut GraphResources, 
+		model_resources: &ModelQueuesResource,
+		data: &GPUData, 
+		encoder: &mut wgpu::CommandEncoder,
+	) {
+		debug!("Running shader node {}", &self.name);
+		encoder.push_debug_group(&*format!("Shader node '{}'", &self.name));
+		
+		let shader = data.shaders.index(self.shader_idx);
+
+		let colour_attachments = self.colour_attachments.iter().cloned().map(|(idx, store)| {
+			Some(wgpu::RenderPassColorAttachment {
+				view: &context.get_texture(idx).view,
+				resolve_target: None, // Same as view unless using multisampling
+				ops: wgpu::Operations {
+					load: wgpu::LoadOp::Load,
+					store,
+				},
+			})
+		}).collect::<Vec<_>>();
+
+		let depth_stencil_attachment = match self.depth_attachment.clone() {
+			Some((idx, store)) => {
+				Some(wgpu::RenderPassDepthStencilAttachment {
+					view: &context.get_texture(idx).view,
+					depth_ops: Some(wgpu::Operations {
+						load: wgpu::LoadOp::Load,
+						store,
+					}),
+					stencil_ops: None,
+				})
+			},
+			_ => None,
+		};
+
+		/* 
+		let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+			label: Some(&*self.name),
+			color_attachments: &colour_attachments[..],
+			depth_stencil_attachment,
+		});
+
+		render_pass.set_pipeline(&shader.pipeline);
+
+		// Globals
+		if let Some(idx) = self.resources_idx {
+			let globals_bind_group = context.resource_bg(idx);
+			render_pass.set_bind_group(0, globals_bind_group, &[]);
+		}
+
+		match self.render_queue.as_ref().unwrap() {
+			QueueType::Models(models_queue_idx) => {
+				trace!("This uses a model queue");
+				let (instances_idx, models) = model_resources.queue(*models_queue_idx);
+
+				// Instances
+				let instance_buffer = model_resources.instances_buffer(*instances_idx);
+				render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+
+				let mut instance_position = 0;
+				for (material_idx, mesh_idx, instance_count) in models {
+					// Material
+					let material = data.materials.index(*material_idx);
+					render_pass.set_bind_group(1, &material.bind_group, &[]);
+					
+					// Mesh
+					let mesh = data.meshes.index(*mesh_idx);
+					render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+					render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+					
+					// Draw
+					let instance_end = instance_position + instance_count;
+					render_pass.draw_indexed(0..mesh.n_vertices, 0, instance_position..instance_end);
+					instance_position = instance_end;
+				}
+			},
+			QueueType::Meshes(meshes_queue_idx) => {
+				// Mesh queues are just model queues with empty material bgf
+				// It's a crude workaround but it works around
+				trace!("This uses a mesh queue");
+				let (instances_idx, models) = model_resources.queue(*meshes_queue_idx);
+				
+				// Instances
+				let instance_buffer = model_resources.instances_buffer(*instances_idx);
+				render_pass.set_vertex_buffer(1, instance_buffer.slice(..));
+
+				let mut instance_position = 0;
+				for (_, mesh_idx, instance_count) in models {
+					// Mesh
+					let mesh = data.meshes.index(*mesh_idx);
+					render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+					render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+					
+					// Draw
+					let instance_end = instance_position + instance_count;
+					render_pass.draw_indexed(0..mesh.n_vertices, 0, instance_position..instance_end);
+					instance_position = instance_end;
+				}
+			},
+			QueueType::FullQuad => {
+				// This must be a fullquad type game.
+				trace!("This must be a fullquad type game.");
+
+				let g = self.fugg_buff.as_ref().unwrap();
+				render_pass.set_vertex_buffer(0, g.slice(..));
+				render_pass.set_vertex_buffer(1, g.slice(..));
+				render_pass.draw(0..3, 0..1);
+			},
+		}
+
+		drop(render_pass);
+		encoder.pop_debug_group();
+		*/
+	}
+}

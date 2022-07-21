@@ -1,40 +1,56 @@
+/*
+
+
+
+
+*/
+
+
+
 (
     name: "albedo shader",
     source: (
         file_type: Glsl,
-        vertex: (
-            path: "albedo.vert",
-            entry: "main",
-        ),
-        fragment: Some((
-            path: "albedo.frag",
-            entry: "main",
-        )),
-    ),
-    vertex_inputs: [
-        VertexPosition,
-        VertexUV,
-    ],
-    instance_inputs: [
-        InstanceModelMatrix,
-    ],
-    attachments: [
-        (
-            usage: "albedo", 
-            format: Rgba8Unorm, 
-            blend_colour: Replace,
-            blend_alpha: Replace,
-        ),
-    ],
-    depth_write: Some(false),
-    multisample_count: 1,
-    bind_groups: {
-        0: {
-            0: ("camera_uniform", Buffer),
+        variety: Polygon {
+            vertex: (
+                path: "albedo.vert",
+                entry: "main",
+            ),
+            fragment: Some((
+                path: "albedo.frag",
+                entry: "main",
+            )),
+            // Used for vertex and primitive state
+            inputs: Some((
+                vertex: [
+                    VertexPosition,
+                    VertexUV,
+                ],
+                instance: [
+                    InstanceModelMatrix,
+                ],
+                depth_write: Some(false),
+                multisample_count: 1,
+                mode: Fill,
+            )),
+            // Used for fragment state
+            attachments: [
+                (
+                    usage: "albedo", 
+                    format: Rgba8Unorm, 
+                    blend_colour: Replace,
+                    blend_alpha: Replace,
+                ),
+            ],
         },
-        1: {
+    ),
+    bind_groups: {
+        0: (Global, {
+            0: ("camera_uniform", Buffer),
+        }),
+        1: (ModelQueue("models") {
             0: ("albedo", Texture),
 			1: ("albedo sampler", Sampler),
-        },
+        }),
     },
 )

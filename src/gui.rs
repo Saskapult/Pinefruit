@@ -1,7 +1,14 @@
+use std::{time::Instant, sync::mpsc::{Receiver, SyncSender}};
 use egui;
 use specs::Entity;
+use std::sync::mpsc::sync_channel;
+use crate::render::*;
 
-use crate::render::BoundTexture;
+
+
+
+// use egui::Widget;
+
 
 
 pub struct GameWidget {
@@ -16,7 +23,7 @@ impl GameWidget {
 			tracked_entity,
 			source_texture: None,
 			display_texture: None,
-			size: [100.0; 2]
+			size: [400.0; 2]
 		}
 	}
 
@@ -36,6 +43,7 @@ impl GameWidget {
 		} 
 		self.source_texture = Some(BoundTexture::new(
 			device, 
+			TextureFormat::Rgba8UnormSrgb,
 			intended_size[0], 
 			intended_size[1], 
 			"GameWidgetSource",
@@ -48,15 +56,16 @@ impl GameWidget {
 		rpass: &mut egui_wgpu_backend::RenderPass, 
 		device: &wgpu::Device,
 	) {
-		self.display_texture = Some(rpass.egui_texture_from_wgpu_texture(
-			device,
-			&self.source_texture.as_ref().unwrap().view,
-			wgpu::FilterMode::Nearest, 
-		));
+		self.display_texture = self.source_texture.as_ref().and_then(|st| {
+			Some(rpass.egui_texture_from_wgpu_texture(
+				device,
+				&st.view,
+				wgpu::FilterMode::Nearest, 
+			))
+		});
 	}
 
-	pub fn thing(&mut self, ui: &mut egui::Ui) {
-		ui.label("GAME GOES HERE PLEASE");
+	pub fn display(&mut self, ui: &mut egui::Ui) {
 
 		if self.source_texture.is_none() {
 			ui.label("Source texture not created!");
@@ -65,11 +74,6 @@ impl GameWidget {
 		if self.tracked_entity.is_none() {
 			ui.label("Tracked entity not set!");
 		}
-
-		// let texture = &*self.world_view.get_or_insert_with(|| {
-		// 	// Load the texture only once.
-		// 	ui.ctx().load_texture("my-image", egui::ColorImage::example())
-		// });
 		
 		if let Some(tid) = self.display_texture {
 			let [width, height] = self.size;
@@ -80,3 +84,48 @@ impl GameWidget {
 	}
 }
 
+
+
+
+pub struct PopupWidget {
+	popups: Vec<(String, Instant)>,
+	receiver: Receiver<(String, Instant)>,
+	sender: SyncSender<(String, Instant)>,
+}
+impl PopupWidget {
+	pub fn new() -> Self {
+
+		let (sender, receiver) = sync_channel(100);
+
+		Self {
+			popups: Vec::new(),
+			receiver,
+			sender,
+		}
+	}
+
+	pub fn new_sender(&self) -> SyncSender<(String, Instant)> {
+		self.sender.clone()
+	}
+
+	pub fn display(&mut self, ui: &mut egui::Ui) {
+		// Get new popups
+		self.popups.extend(self.receiver.try_iter());
+
+		// Remove expired popups
+		let now = Instant::now();
+		self.popups.drain_filter(|(_, t)| *t < now);
+
+		// List popups
+		ui.scope(|ui| {
+			ui.visuals_mut().override_text_color = Some(egui::Color32::RED);
+			ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
+  			ui.style_mut().wrap = Some(false);
+			
+			self.popups.iter().for_each(|(message, _)| {
+				ui.label(message);
+			});
+		});
+		
+	}
+}

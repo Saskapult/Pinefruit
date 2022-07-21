@@ -48,7 +48,8 @@ impl GPUResource {
 					wgpu::Features::PARTIALLY_BOUND_BINDING_ARRAY | 
 					wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING |
 					wgpu::Features::TIMESTAMP_QUERY |
-					wgpu::Features::WRITE_TIMESTAMP_INSIDE_PASSES,
+					wgpu::Features::WRITE_TIMESTAMP_INSIDE_PASSES | 
+					wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
 				limits: wgpu::Limits {
 					max_sampled_textures_per_shader_stage: 1024,
 					..wgpu::Limits::default()

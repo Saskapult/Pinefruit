@@ -12,10 +12,10 @@ use crate::texture::*;
 
 
 /// Format for loaded textures (not rendering things!)
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Copy, Clone)]
 pub enum TextureType {
 	RGBA,
-	SRGBA,
+	SRGBA, // Best format, love it
 	DEPTH,
 }
 impl TextureType {
@@ -80,7 +80,7 @@ impl BoundTexture {
 	pub const OTHER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm; 
 	pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;    
 
-	pub fn new(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
+	pub fn new(device: &wgpu::Device, format: TextureFormat, width: u32, height: u32, label: &str) -> Self {
 		let size = wgpu::Extent3d {
 			width,
 			height,
@@ -93,8 +93,12 @@ impl BoundTexture {
 			mip_level_count: mip_count,
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
-			format: Self::DEPTH_FORMAT,
-			usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+			format: format.translate(),
+			// Hacky and bad
+			usage: match format {
+				TextureFormat::Rgba8Unorm => wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::STORAGE_BINDING,
+				_ => wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
+			},
 		};
 		let texture = device.create_texture(&desc);
 

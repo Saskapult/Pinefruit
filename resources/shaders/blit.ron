@@ -1,0 +1,32 @@
+(
+    name: "blit -> srgba",
+    source: (
+        language: Wgsl,
+        base: Polygon (
+            vertex: (
+                path: "blit.wgsl",
+                entry: "vs_main",
+            ),
+            fragment: Some((
+                path: "blit.wgsl",
+                entry: "fs_main",
+            )),
+            inputs: None,
+            attachments: [
+                (
+                    usage: "output", 
+                    format: Rgba8UnormSrgb, 
+                    blend_colour: Replace,
+                    blend_alpha: Replace,
+                ),
+            ],
+            multisample_count: 1,
+        ),
+    ),
+    bind_groups: {
+		0: {
+			0: ("input", Texture),
+            1: ("sampler", Sampler),
+		},
+	},
+)

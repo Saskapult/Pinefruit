@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use crate::world::*;
@@ -99,46 +99,43 @@ impl MapComponent {
 		// The main chunk
 		remodel_helper(&mut self.chunk_models, c);
 	}
-
-	// trait RenderableComponent?
-	pub fn get_render_data(&self) -> Vec<(usize, usize)> {
-
-		// self.chunk_models.iter().filter_map(|(_cpos, cme)| {
-		// 	match cme {
-		// 		_ => None,
-		// 	}
-		// }).collect::<Vec<_>>();
-
-		todo!()
-	}
 }
 
 
 
+const LOAD_RADIUS: i32 = 4;
 /// The map system is responsible for loading and meshing chunks of maps near the cameras.
 /// It could be split into three systems.
-pub struct MapSystem;
-impl MapSystem {
-	fn load_chunks<'a>(
-		load_radius: i32,
-		maps: &mut WriteStorage<'a, MapComponent>,
-		cameras: &ReadStorage<'a, CameraComponent>,
-		transforms: &ReadStorage<'a, TransformComponent>,
-	) -> Duration {
+pub struct MapLoadingSystem;
+impl<'a> System<'a> for MapLoadingSystem {
+	type SystemData = (
+		WriteStorage<'a, MapComponent>,
+		ReadStorage<'a, CameraComponent>,
+		ReadStorage<'a, TransformComponent>,
+	);
+	fn run(
+		&mut self, 
+		(
+			mut maps,
+			cameras,
+			transforms,
+		): Self::SystemData,
+	) { 
 		let loading_st = std::time::Instant::now();
-		for map_c in (maps).join() {
+
+		for map_c in (&mut maps).join() {
 			let mut chunks_to_load = Vec::new();
-			for (_, transform_c) in (cameras, transforms).join() {
+			for (_, transform_c) in (&cameras, &transforms).join() {
 				let camera_chunk = map_c.map.point_chunk(&transform_c.position);
-				let mut cposs = map_c.map.chunks_sphere(camera_chunk, load_radius);
+				let mut cposs = map_c.map.chunks_sphere(camera_chunk, LOAD_RADIUS);
 				chunks_to_load.append(&mut cposs);				
 			}
 
 			let mut chunks_to_unload = Vec::new();
 			for chunk_position in map_c.chunk_models.keys() {
-				let should_remove = (cameras, transforms).join().any(|(_, transform)| {
+				let should_remove = (&cameras, &transforms).join().any(|(_, transform)| {
 					let camera_chunk = map_c.map.point_chunk(&transform.position);
-					!Map::within_chunks_sphere(*chunk_position, camera_chunk, load_radius+1)
+					!Map::within_chunks_sphere(*chunk_position, camera_chunk, LOAD_RADIUS+1)
 				});
 				if should_remove {
 					chunks_to_unload.push(*chunk_position)
@@ -157,25 +154,44 @@ impl MapSystem {
 				}
 			}
 		}
-		loading_st.elapsed()
+		let _loading_dur = loading_st.elapsed();
+		
+		// debug!("Map system: {}ms", map_dur.as_millis());
+		// debug!("\tLoading: {}ms ({:.2}%)", loading_dur.as_millis(), loading_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
+		// debug!("\tModel: {}ms ({:.2}%)", model_dur.as_millis(), model_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
+		// debug!("\tCollider: {}ms ({:.2}%)", collider_dur.as_millis(), collider_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
 	}
+}
 
-	fn load_models<'a>(
-		model_radius: i32,
-		gpu_resource: &mut GPUResource,
-		maps: &mut WriteStorage<'a, MapComponent>,
-		cameras: &ReadStorage<'a, CameraComponent>,
-		transforms: &ReadStorage<'a, TransformComponent>,
-	) -> Duration {
+
+
+const MODEL_RADIUS: i32 = 3;
+pub struct MapModelingSystem;
+impl<'a> System<'a> for MapModelingSystem {
+	type SystemData = (
+		WriteExpect<'a, GPUResource>,
+		WriteStorage<'a, MapComponent>,
+		ReadStorage<'a, CameraComponent>,
+		ReadStorage<'a, TransformComponent>,
+	);
+	fn run(
+		&mut self, 
+		(
+			gpu_resource,
+			mut maps,
+			cameras,
+			transforms,
+		): Self::SystemData,
+	) {
 		let model_st = Instant::now();
 
-		for map_c in (maps).join() {
+		for map_c in (&mut maps).join() {
 			
 			// Find all chunks which should be displayed
 			let mut chunks_to_display = Vec::new();
-			for (_, transform_c) in (cameras, transforms).join() {
+			for (_, transform_c) in (&cameras, &transforms).join() {
 				let camera_chunk = map_c.map.point_chunk(&transform_c.position);
-				let mut cposs = map_c.map.chunks_sphere(camera_chunk, model_radius);
+				let mut cposs = map_c.map.chunks_sphere(camera_chunk, MODEL_RADIUS);
 				chunks_to_display.append(&mut cposs);				
 			}
 
@@ -183,9 +199,9 @@ impl MapSystem {
 			let mut chunks_to_undisplay = Vec::new();
 			for chunk_position in map_c.chunk_models.keys() {
 				// If the chunk is not used for any camera
-				let should_remove = (cameras, transforms).join().any(|(_, transform)| {
+				let should_remove = (&cameras, &transforms).join().any(|(_, transform)| {
 					let camera_chunk = map_c.map.point_chunk(&transform.position);
-					!Map::within_chunks_sphere(*chunk_position, camera_chunk, model_radius+1)
+					!Map::within_chunks_sphere(*chunk_position, camera_chunk, MODEL_RADIUS+1)
 				});
 				if should_remove {
 					chunks_to_undisplay.push(*chunk_position)
@@ -262,18 +278,33 @@ impl MapSystem {
 			})
 		}
 		
-		model_st.elapsed()
+		let _model_dur = model_st.elapsed();
 	}
+}
 
-	fn load_colliders<'a>(
-		collider_radius: i32,
-		gpu_resource: &GPUResource,
-		physics_resource: &mut PhysicsResource,
-		maps: &mut WriteStorage<'a, MapComponent>,
-		static_objects: &mut WriteStorage<'a, StaticPhysicsComponent>,
-		cameras: &ReadStorage<'a, CameraComponent>,
-		transforms: &ReadStorage<'a, TransformComponent>,
-	) -> Duration {
+
+const COLLIDER_RADIUS: i32 = 2;
+pub struct MapColliderSystem;
+impl<'a> System<'a> for MapColliderSystem {
+	type SystemData = (
+		WriteExpect<'a, GPUResource>,
+		WriteExpect<'a, PhysicsResource>,
+		WriteStorage<'a, MapComponent>,
+		WriteStorage<'a, StaticPhysicsComponent>,
+		ReadStorage<'a, CameraComponent>,
+		ReadStorage<'a, TransformComponent>,
+	);
+	fn run(
+		&mut self, 
+		(
+			gpu_resource,
+			mut physics_resource,
+			mut maps,
+			mut static_objects,
+			cameras,
+			transforms,
+		): Self::SystemData,
+	) { 
 		let collider_st = std::time::Instant::now();
 
 		// I love closures! I love closures!
@@ -290,12 +321,12 @@ impl MapSystem {
 			}
 		};
 
-		for (map, spc) in (maps, static_objects).join() {
+		for (map, spc) in (&mut maps, &mut static_objects).join() {
 			// Find all chunks which should have colliders
 			let mut chunks_to_collide = Vec::new();
-			for (_, transform_c) in (cameras, transforms).join() {
+			for (_, transform_c) in (&cameras, &transforms).join() {
 				let camera_chunk = map.map.point_chunk(&transform_c.position);
-				let mut cposs = map.map.chunks_sphere(camera_chunk, collider_radius);
+				let mut cposs = map.map.chunks_sphere(camera_chunk, COLLIDER_RADIUS);
 				chunks_to_collide.append(&mut cposs);				
 			}
 
@@ -303,9 +334,9 @@ impl MapSystem {
 			let mut chunks_to_remove = Vec::new();
 			for chunk_position in map.chunk_models.keys() {
 				// If the chunk is not used for any camera
-				let should_remove = (cameras, transforms).join().any(|(_, transform)| {
+				let should_remove = (&cameras, &transforms).join().any(|(_, transform)| {
 					let camera_chunk = map.map.point_chunk(&transform.position);
-					!Map::within_chunks_sphere(*chunk_position, camera_chunk, collider_radius+1)
+					!Map::within_chunks_sphere(*chunk_position, camera_chunk, COLLIDER_RADIUS+1)
 				});
 				if should_remove {
 					chunks_to_remove.push(*chunk_position)
@@ -321,72 +352,13 @@ impl MapSystem {
 				if map.chunk_models.contains_key(&chunk_position) && !map.chunk_collider_handles.contains_key(&chunk_position) {
 					let entry = &map.chunk_models[&chunk_position];
 					if let Some(collider) = generate_chunk_collider(entry) {
-						let ch = spc.add_collider(physics_resource, collider);
+						let ch = spc.add_collider(&mut physics_resource, collider);
 						map.chunk_collider_handles.insert(chunk_position, ch);
 					}
 				}
 			}
 		}
-		collider_st.elapsed()
-	}
-}
-impl<'a> System<'a> for MapSystem {
-	type SystemData = (
-		WriteExpect<'a, GPUResource>,
-		WriteExpect<'a, PhysicsResource>,
-		WriteStorage<'a, MapComponent>,
-		WriteStorage<'a, StaticPhysicsComponent>,
-		ReadStorage<'a, CameraComponent>,
-		ReadStorage<'a, TransformComponent>,
-	);
-	fn run(
-		&mut self, 
-		(
-			mut gpu_resource,
-			mut physics_resource,
-			mut maps,
-			mut static_objects,
-			cameras,
-			transforms,
-		): Self::SystemData,
-	) { 
-		debug!("Begin map system");
-		let map_st = std::time::Instant::now();
-
-		let collider_radius = 3;
-		let model_radius = 4;
-		let load_radius = model_radius+1;
-
-		let loading_dur = Self::load_chunks(
-			load_radius, 
-			&mut maps, 
-			&cameras, 
-			&transforms,
-		);
-		let model_dur = Self::load_models(
-			model_radius, 
-			&mut gpu_resource, 
-			&mut maps, 
-			&cameras, 
-			&transforms,
-		);
-		let collider_dur = Self::load_colliders(
-			collider_radius, 
-			&gpu_resource, 
-			&mut physics_resource, 
-			&mut maps, 
-			&mut static_objects, 
-			&cameras, 
-			&transforms,
-		);
 		
-		let map_dur = map_st.elapsed();
-		
-		debug!("Map system: {}ms", map_dur.as_millis());
-		debug!("\tLoading: {}ms ({:.2}%)", loading_dur.as_millis(), loading_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
-		debug!("\tModel: {}ms ({:.2}%)", model_dur.as_millis(), model_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
-		debug!("\tCollider: {}ms ({:.2}%)", collider_dur.as_millis(), collider_dur.as_secs_f32()/map_dur.as_secs_f32()*100.0);
+		let _collider_dur = collider_st.elapsed();
 	}
-
-	
 }

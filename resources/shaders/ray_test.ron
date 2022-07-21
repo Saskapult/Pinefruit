@@ -1,0 +1,15 @@
+(
+    name: "ray test",
+    source: (
+        language: Glsl,
+        base: Compute((
+            path: "ray_test.comp",
+            entry: "main",
+        )),
+    ),
+    bind_groups: {
+		0: {
+			0: ("colour", StorageTexture(RGBA)),
+		},
+	},
+)

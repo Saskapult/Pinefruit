@@ -25,8 +25,6 @@ pub struct Game {
 	last_tick: Instant,
 	entity_names_map: HashMap<Entity, String>,
 
-	last_window_update: Instant,
-
 	marker_entity: Option<Entity>,
 	can_modify_block: bool,
 }
@@ -81,14 +79,9 @@ impl Game {
 		let physics_resource = PhysicsResource::new();
 		world.insert(physics_resource);
 
-		// Dispatcher(s?)
 		let tick_dispatcher = DispatcherBuilder::new()
 			.with(MovementSystem, "movement", &[])
-			.with(MarkerSystem::new(), "marker", &["movement"])
-			.with(MapSystem, "map", &["movement"])
-			.with(DynamicPhysicsSystem, "dynamic_physics", &["movement"])
-			.with(RenderDataSystem, "render_system", &["movement", "map", "dynamic_physics", "marker"])
-			.with(TraceShotSystem, "ts", &[])
+			.with(MapLoadingSystem, "map loading", &["movement"])
 			.build();
 
 		let window_manager = WindowManager::new(
@@ -107,14 +100,13 @@ impl Game {
 			entity_names_map: HashMap::new(),
 			marker_entity: None,
 			can_modify_block: true,
-			last_window_update: Instant::now(),
 		}
 	}
 
 	pub fn setup(&mut self) {
 		// Material loading
 		{
-			let gpu = self.world.write_resource::<GPUResource>();
+			let mut gpu = self.world.write_resource::<GPUResource>();
 
 			let mut matm = gpu.data.materials.data_manager.write().unwrap();
 			let mut texm = gpu.data.textures.data_manager.write().unwrap();
@@ -125,6 +117,12 @@ impl Game {
 				&mut texm,
 				&mut matm,
 			).unwrap();
+
+			// Load my thingy
+			drop(matm);
+			drop(texm);
+			gpu.data.shaders.register_path(&std::path::PathBuf::from("./resources/shaders/ray_test.ron"));
+			gpu.data.shaders.register_path(&std::path::PathBuf::from("./resources/shaders/blit.ron"));
 		}
 
 		// Block loading
@@ -143,105 +141,13 @@ impl Game {
 			).unwrap();
 		}
 
-		// Teapot loading
-		let teapot_mesh_idx = {
-			let gpu = self.world.write_resource::<GPUResource>();
-
-			let mut meshm = gpu.data.meshes.data_manager.write().unwrap();
-
-			let (obj_models, _) = tobj::load_obj(
-				"resources/not_for_git/arrow.obj", 
-				&tobj::LoadOptions {
-					triangulate: true,
-					single_index: true,
-					..Default::default()
-				},
-			).unwrap();
-			let test_mesh = Mesh::from_obj_model(obj_models[0].clone()).unwrap();
-			meshm.insert(test_mesh.clone())
-		};
-
-		// {
-		// 	let mut pr = self.world.write_resource::<PhysicsResource>();
-		// 	pr.add_ground()
-		// }
-
-		// Static and dynamic teapots
-		{
-			let collider_shape = {
-				let gpu = self.world.write_resource::<GPUResource>();
-				let mm = gpu.data.meshes.data_manager.read().unwrap();
-				mm.index(teapot_mesh_idx).make_trimesh().unwrap()
-			};
-
-			let tc = TransformComponent::new().with_position([0.0, 32.0, 0.0].into());
-			let spc = {
-				let mut pr = self.world.write_resource::<PhysicsResource>();
-				let mut spc = StaticPhysicsComponent::new(
-					&mut pr,
-				).with_transform(
-					&mut pr,
-					&tc,
-				);
-				spc.add_collider(
-					&mut pr, 
-					ColliderBuilder::new(collider_shape.clone()).density(100.0).build(),
-				);
-				spc
-			};
-			self.world.create_entity()
-				.with(tc)
-				.with(ModelComponent::new(teapot_mesh_idx, 0))
-				.with(spc)
-				.build();
-
-			// let tc = TransformComponent::new().with_position([5.0, 10.0, 0.0].into());
-			// let dpc = {
-			// 	let mut pr = self.world.write_resource::<PhysicsResource>();
-			// 	let mut dpc = DynamicPhysicsComponent::new(
-			// 		&mut pr,
-			// 	).with_transform(
-			// 		&mut pr,
-			// 		&tc,
-			// 	);
-			// 	dpc.add_collider(
-			// 		&mut pr, 
-			// 		ColliderBuilder::new(collider_shape.clone()).density(100.0).build(),
-			// 	);
-			// 	dpc
-			// };
-			// self.world.create_entity()
-			// 	.with(tc)
-			// 	.with(ModelComponent::new(teapot_mesh_idx, 0))
-			// 	.with(dpc)
-			// 	.build();
-		}
-
-		{
-			// Camera
-			self.world.create_entity()
-				.with(CameraComponent::new())
-				.with(
-					TransformComponent::new()
-					.with_position(Vector3::new(0.5, 5.5, 0.5))
-				)
-				.with(MovementComponent{speed: 4.0})
-				.with(MarkerComponent::new())
-				.build();
-			// Map
-			let spc = StaticPhysicsComponent::new(
-				&mut self.world.write_resource::<PhysicsResource>(),
-			);
-			self.world.create_entity()
-				.with(TransformComponent::new())
-				.with(MapComponent::new(&self.blocks_manager))
-				.with(spc)
-				.build();
-		}
 		
-
-		// Place testing faces
-		//self.make_testing_faces();
+		// Map
+		self.world.create_entity()
+			.with(TransformComponent::new())
+			.with(MapComponent::new(&self.blocks_manager))
+			.build();
+		
 	}
 
 	pub fn tick(&mut self) {
@@ -251,14 +157,30 @@ impl Game {
 			self.window_manager.update(&mut input_resource);
 		}
 
+		// Set up window cameras 
+		// PLEASE MAKE BETTER
+		for window in self.window_manager.windows.iter_mut() {
+			window.game_widget.tracked_entity.get_or_insert_with(|| {
+				self.world.create_entity()
+					.with(CameraComponent::new())
+					.with(
+						TransformComponent::new()
+						.with_position(Vector3::new(0.5, 5.5, 0.5))
+					)
+					.with(MovementComponent{speed: 4.0})
+					.build()
+			});
+		}
+
 		// Do ticking stuff
+		// self.tick_dispatcher.dispatch(&self.world);
 
 		// Show windows
 		{
 			let mut gpu_resource = self.world.write_resource::<GPUResource>();
 			// Update UI
 			for window in self.window_manager.windows.iter_mut() {
-				
+
 				window.update(
 					&mut gpu_resource,
 					&self.world,

@@ -1,4 +1,7 @@
+use std::time::Instant;
+
 use crate::render::*;
+use nalgebra::{Point3, Matrix4};
 use specs::prelude::*;
 use specs::{Component, VecStorage};
 use crate::ecs::*;
@@ -10,12 +13,6 @@ use crate::ecs::*;
 pub enum RenderTarget {
 	Window(usize),
 	Texture(usize),
-}
-
-
-
-pub trait RenderableComponent {
-	fn get_render_data(&self) -> Vec<(usize, usize)>;
 }
 
 
@@ -60,6 +57,44 @@ impl ModelComponent {
 		}
 	}
 }
+
+
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+pub struct SkeletonComponent {
+	pub index: usize,
+}
+
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+pub struct VVolumeComponent {
+	pub volume: bool,
+}
+
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+pub struct SkeletalVVolumeComponent {
+	pub bones: Vec<Matrix4<f32>>,
+	pub volumes: (bool, usize),
+}
+
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+/// A straight line between two points.
+/// Usually accompanied by a RenderMarkerComponent.
+/// Might be accompanied by a LifetimeComponent.
+pub struct SimpleLineComponent {
+	pub start: Point3<f32>,
+	pub end: Point3<f32>,
+}
+
+#[derive(Component, Debug)]
+#[storage(VecStorage)]
+/// A marker to remove this entity after a point in time.
+pub struct LifetimeComponent {
+	pub expiry: Instant,
+}
+
 
 
 

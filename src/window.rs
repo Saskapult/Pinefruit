@@ -13,7 +13,7 @@ use std::time::{Instant, Duration};
 use egui;
 use crate::ecs::*;
 use crate::gui::GameWidget;
-use crate::render::BoundTexture;
+use crate::render::*;
 
 
 
@@ -28,11 +28,13 @@ pub struct GameWindow {
 	pub game_draw_rate: Duration,
 	pub last_game_draw: Instant,
 	pub last_update: Instant,
-	reconfigure: bool,
+	size_changed: bool,
 
-	texture: Option<egui::TextureHandle>,
-	game_thing: GameWidget,
-	
+	test_texture: Option<egui::TextureHandle>,
+	pub game_widget: GameWidget,
+	game_render_texture: Option<BoundTexture>,
+	sampy: Option<wgpu::Sampler>,
+	fug_buffer: Option<wgpu::Buffer>,
 }
 impl GameWindow {
 	pub fn new(
@@ -87,17 +89,20 @@ impl GameWindow {
 			game_draw_rate: Duration::from_millis(10),
 			last_game_draw: Instant::now(),
 			last_update: Instant::now(),
-			reconfigure: true,
+			size_changed: true,
 
-			texture: None,
-			game_thing: GameWidget::new(None),
+			test_texture: None,
+			game_widget: GameWidget::new(None),
+			game_render_texture: None,
+			sampy: None,
+			fug_buffer: None,
 		}
 	}
 
 	pub fn resize(&mut self, width: u32, height: u32) {
 		self.surface_config.width = width;
 		self.surface_config.height = height;
-		self.reconfigure = true;
+		self.size_changed = true;
 	}
 
 	fn encode_ui(
@@ -114,27 +119,31 @@ impl GameWindow {
 		// let input = egui::RawInput::default();
 		let mut ctx = self.platform.context();
 
-		egui::SidePanel::left("info panel")
-			.min_width(300.0)
-			.resizable(false)
-			.show(&mut ctx, |ui| {
-				ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
+		egui::CentralPanel::default().show(&mut ctx, |ui| {
+			ui.horizontal(|ui| {
+				
+				ui.vertical(|ui| {
+					ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
+	
+					let texture: &egui::TextureHandle = self.test_texture.get_or_insert_with(|| {
+						// Load the texture only once.
+						ui.ctx().load_texture("my-image", egui::ColorImage::example())
+					});
+	
+					ui.label("TESTING TESTING TESTING");
+					ui.image(texture, texture.size_vec2());
+					if ui.button("click me!").clicked() {
+						println!("Hey!");
+					}
 
-				let texture: &egui::TextureHandle = self.texture.get_or_insert_with(|| {
-					// Load the texture only once.
-					ui.ctx().load_texture("my-image", egui::ColorImage::example())
+					for i in 0..14 {
+						ui.label(format!("{i}"));
+					}
 				});
-
-				ui.label("TESTING TESTING TESTING");
-				ui.image(texture, texture.size_vec2());
-				if ui.button("click me!").clicked() {
-					println!("Hey!");
-				}
-
-				self.game_thing.thing(ui);
-
-
+					
+				self.game_widget.display(ui);
 			});
+		});
 		
 		let full_output = self.platform.end_frame(Some(&self.window));
 
@@ -177,12 +186,112 @@ impl GameWindow {
 	fn encode_game<'b>(
 		&mut self,
 		encoder: &mut wgpu::CommandEncoder,
-		world: &specs::World,
+		_world: &specs::World,
 		gpu_resource: &mut GPUResource,
 	) {
-		use specs::WorldExt;
+		// use specs::WorldExt;
 
-		if let Some(entity) = self.game_thing.tracked_entity {
+		if let Some(_entity) = self.game_widget.tracked_entity {
+			let dest = self.game_widget.get_source(&gpu_resource.device);
+			// Does not resize, please make better
+			let intermediate = self.game_render_texture.get_or_insert_with(|| {
+				BoundTexture::new(
+					&gpu_resource.device,
+					TextureFormat::Rgba8Unorm,
+					dest.size.width,
+					dest.size.height,
+					"intermediate",
+				)
+			});
+			let fugg_buffer = self.fug_buffer.get_or_insert_with(|| {
+				use wgpu::util::DeviceExt;
+				gpu_resource.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+					label: Some("fugg Buffer"),
+					contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
+				})
+			});
+
+
+			let comp_shader = gpu_resource.data.shaders.index(0);
+			let cp_bind_group = gpu_resource.device.create_bind_group(&wgpu::BindGroupDescriptor {
+				label: Some("compute bind group"),
+				layout: gpu_resource.data.shaders.bind_group_layout_index(comp_shader.bind_groups[&0].layout_idx),
+				entries: &[
+					wgpu::BindGroupEntry {
+						binding: 0,
+						resource: wgpu::BindingResource::TextureView(&intermediate.view),
+					},
+				],
+			});
+			{
+				let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+					label: Some("compute pass"),
+				});
+				
+				match &comp_shader.pipeline {
+					crate::render::ShaderPipeline::Compute(pipeline) => cp.set_pipeline(pipeline),
+					_ => panic!("Weird shader things"),
+				}
+
+				cp.set_bind_group(0, &cp_bind_group, &[]);
+				
+				cp.dispatch_workgroups(dest.size.width / 16 + 1, dest.size.height / 16 + 1, 1);
+			}
+
+
+			let blit_shader = gpu_resource.data.shaders.index(1);
+			let bp_bind_group = gpu_resource.device.create_bind_group(&wgpu::BindGroupDescriptor {
+				label: Some("blit bind group"),
+				layout: gpu_resource.data.shaders.bind_group_layout_index(blit_shader.bind_groups[&0].layout_idx),
+				entries: &[
+					wgpu::BindGroupEntry {
+						binding: 0,
+						resource: wgpu::BindingResource::TextureView(&intermediate.view),
+					},
+					wgpu::BindGroupEntry {
+						binding: 1,
+						resource: wgpu::BindingResource::Sampler(&*self.sampy.get_or_insert_with(|| gpu_resource.device.create_sampler(&wgpu::SamplerDescriptor {
+							label: None,
+							address_mode_u: wgpu::AddressMode::ClampToEdge,
+							address_mode_v: wgpu::AddressMode::ClampToEdge,
+							address_mode_w: wgpu::AddressMode::ClampToEdge,
+							mag_filter: wgpu::FilterMode::Linear,
+							min_filter: wgpu::FilterMode::Linear,
+							mipmap_filter: wgpu::FilterMode::Nearest,
+							..Default::default()
+						}))),
+					},
+				],
+			});
+			{
+				let mut bp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+					label: None,
+					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+						view: &dest.view,
+						resolve_target: None,
+						ops: wgpu::Operations {
+							load: wgpu::LoadOp::Load,
+							store: true,
+						},
+					})],
+					depth_stencil_attachment: None,
+				});
+
+				match &blit_shader.pipeline {
+					crate::render::ShaderPipeline::Polygon{pipeline, ..} => bp.set_pipeline(pipeline),
+					_ => panic!("Weird shader things"),
+				}
+
+				bp.set_vertex_buffer(0, fugg_buffer.slice(..));
+				bp.set_vertex_buffer(1, fugg_buffer.slice(..));
+
+				bp.set_bind_group(0, &bp_bind_group, &[]);
+
+				bp.draw(0..3, 0..1);
+			}
+
+
 			// let ccs = world.read_component::<CameraComponent>();
 			// let camera = ccs.get(entity)
 			// 	.expect("Render point has no camera!");
@@ -220,7 +329,7 @@ impl GameWindow {
 			// );
 
 			// Update ui texture
-			self.game_thing.update_display(
+			self.game_widget.update_display(
 				&mut gpu_resource.egui_rpass, 
 				&gpu_resource.device, 
 			)
@@ -251,9 +360,9 @@ impl GameWindow {
 		}
 
 		// If size changed then reconfigure
-		if self.reconfigure {
+		if self.size_changed {
 			self.surface.configure(&gpu_resource.device, &self.surface_config);
-			self.reconfigure = false;
+			self.size_changed = false;
 		}		
 
 		let frame = match self.surface.get_current_texture() {
@@ -333,6 +442,10 @@ pub fn run_event_loop(
 					EventLoopEvent::CreateWindow => {
 						let window = WindowBuilder::new()
 							.with_title("window title")
+							.with_inner_size(winit::dpi::PhysicalSize {
+								width: 1280,
+								height: 720,
+							})
 							.build(event_loop)
 							.unwrap();
 						let ew = EventWhen {
