@@ -12,7 +12,7 @@ use std::thread;
 use std::time::{Instant, Duration};
 use egui;
 use crate::ecs::*;
-use crate::gui::GameWidget;
+use crate::gui::{GameWidget, MessageWidget};
 use crate::render::*;
 
 
@@ -31,10 +31,15 @@ pub struct GameWindow {
 	size_changed: bool,
 
 	test_texture: Option<egui::TextureHandle>,
+
 	pub game_widget: GameWidget,
 	game_render_texture: Option<BoundTexture>,
 	sampy: Option<wgpu::Sampler>,
 	fug_buffer: Option<wgpu::Buffer>,
+
+	message_widget: MessageWidget,
+
+	game_times: crate::util::DurationHolder,
 }
 impl GameWindow {
 	pub fn new(
@@ -92,10 +97,15 @@ impl GameWindow {
 			size_changed: true,
 
 			test_texture: None,
+
 			game_widget: GameWidget::new(None),
 			game_render_texture: None,
 			sampy: None,
 			fug_buffer: None,
+
+			message_widget: MessageWidget::new(),
+
+			game_times: crate::util::DurationHolder::new(30),
 		}
 	}
 
@@ -112,45 +122,65 @@ impl GameWindow {
 		destination_view: &wgpu::TextureView,
 		_world: &specs::World,
 	) -> egui::TexturesDelta {
+
 		self.platform.update_time(self.start_time.elapsed().as_secs_f64());
-
 		self.platform.begin_frame();
+		let ctx = self.platform.context();
 
-		// let input = egui::RawInput::default();
-		let mut ctx = self.platform.context();
+		egui::CentralPanel::default().show(&ctx, |ui| {
+			egui::SidePanel::left("left panel")
+				.resizable(true)
+				.default_width(200.0)
+				.show_inside(ui, |ui| {
+					ui.vertical(|ui| {
+						ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
 
-		egui::CentralPanel::default().show(&mut ctx, |ui| {
-			ui.horizontal(|ui| {
-				
-				ui.vertical(|ui| {
-					ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
-	
-					let texture: &egui::TextureHandle = self.test_texture.get_or_insert_with(|| {
-						// Load the texture only once.
-						ui.ctx().load_texture("my-image", egui::ColorImage::example())
+						ui.label(format!("~{}gf/s", (1.0 / self.game_times.average().unwrap_or(Duration::ZERO).as_secs_f32().round())));
+		
+						let texture: &egui::TextureHandle = self.test_texture.get_or_insert_with(|| {
+							// Load the texture only once.
+							ui.ctx().load_texture("my-image", egui::ColorImage::example())
+						});
+		
+						ui.label("TESTING TESTING TESTING");
+						ui.image(texture, texture.size_vec2());
+						if ui.button("click me!").clicked() {
+							println!("Hey!");
+							self.message_widget.add_message("Hey!".to_string(), Instant::now() + Duration::from_secs_f32(5.0));
+						}
+
+						for i in 0..14 {
+							ui.label(format!("{i}"));
+						}
 					});
-	
-					ui.label("TESTING TESTING TESTING");
-					ui.image(texture, texture.size_vec2());
-					if ui.button("click me!").clicked() {
-						println!("Hey!");
-					}
-
-					for i in 0..14 {
-						ui.label(format!("{i}"));
-					}
 				});
-					
-				self.game_widget.display(ui);
-			});
+			egui::SidePanel::right("right panel")
+				.resizable(true)
+				.default_width(200.0)
+				.show_inside(ui, |ui| {
+					ui.vertical(|ui| {
+						ui.label("Right panel");
+
+						self.message_widget.display(ui);
+
+						if ui.button("Refresh shaders").clicked() {
+							if let Err(e) = gpu_resource.data.shaders.check_reload() {
+								error!("Error in refresh shaders: {e:?}");
+								self.message_widget.add_message(e.to_string(), Instant::now() + Duration::from_secs_f32(5.0));
+							}
+						}
+					});
+				});
+			egui::CentralPanel::default()
+				.show_inside(ui, |ui| {
+					ui.vertical_centered_justified(|ui| {
+						self.game_widget.display(ui);
+					})
+				});
 		});
 		
 		let full_output = self.platform.end_frame(Some(&self.window));
-
 		let paint_jobs = self.platform.context().tessellate(full_output.shapes);
-
-		let device = gpu_resource.device.clone();
-		let queue = gpu_resource.queue.clone();
 
 		// GPU uploads
 		let screen_descriptor = egui_wgpu_backend::ScreenDescriptor {
@@ -160,11 +190,11 @@ impl GameWindow {
 		};
 		let tdelta = full_output.textures_delta;
 		gpu_resource.egui_rpass.add_textures(
-			&device, &queue, &tdelta,
+			&gpu_resource.device, &gpu_resource.queue, &tdelta,
 		).expect("Failed to add egui textures!");
 		gpu_resource.egui_rpass.update_buffers(
-			&device, 
-			&queue, 
+			&gpu_resource.device, 
+			&gpu_resource.queue, 
 			&paint_jobs, 
 			&screen_descriptor,
 		);
@@ -179,161 +209,6 @@ impl GameWindow {
 		).unwrap();
 
 		tdelta
-	}
-
-	/// The rendering part!
-	/// It should stay here and be invoked by the window.
-	fn encode_game<'b>(
-		&mut self,
-		encoder: &mut wgpu::CommandEncoder,
-		_world: &specs::World,
-		gpu_resource: &mut GPUResource,
-	) {
-		// use specs::WorldExt;
-
-		if let Some(_entity) = self.game_widget.tracked_entity {
-			let dest = self.game_widget.get_source(&gpu_resource.device);
-			// Does not resize, please make better
-			let intermediate = self.game_render_texture.get_or_insert_with(|| {
-				BoundTexture::new(
-					&gpu_resource.device,
-					TextureFormat::Rgba8Unorm,
-					dest.size.width,
-					dest.size.height,
-					"intermediate",
-				)
-			});
-			let fugg_buffer = self.fug_buffer.get_or_insert_with(|| {
-				use wgpu::util::DeviceExt;
-				gpu_resource.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-					label: Some("fugg Buffer"),
-					contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
-				})
-			});
-
-
-			let comp_shader = gpu_resource.data.shaders.index(0);
-			let cp_bind_group = gpu_resource.device.create_bind_group(&wgpu::BindGroupDescriptor {
-				label: Some("compute bind group"),
-				layout: gpu_resource.data.shaders.bind_group_layout_index(comp_shader.bind_groups[&0].layout_idx),
-				entries: &[
-					wgpu::BindGroupEntry {
-						binding: 0,
-						resource: wgpu::BindingResource::TextureView(&intermediate.view),
-					},
-				],
-			});
-			{
-				let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-					label: Some("compute pass"),
-				});
-				
-				match &comp_shader.pipeline {
-					crate::render::ShaderPipeline::Compute(pipeline) => cp.set_pipeline(pipeline),
-					_ => panic!("Weird shader things"),
-				}
-
-				cp.set_bind_group(0, &cp_bind_group, &[]);
-				
-				cp.dispatch_workgroups(dest.size.width / 16 + 1, dest.size.height / 16 + 1, 1);
-			}
-
-
-			let blit_shader = gpu_resource.data.shaders.index(1);
-			let bp_bind_group = gpu_resource.device.create_bind_group(&wgpu::BindGroupDescriptor {
-				label: Some("blit bind group"),
-				layout: gpu_resource.data.shaders.bind_group_layout_index(blit_shader.bind_groups[&0].layout_idx),
-				entries: &[
-					wgpu::BindGroupEntry {
-						binding: 0,
-						resource: wgpu::BindingResource::TextureView(&intermediate.view),
-					},
-					wgpu::BindGroupEntry {
-						binding: 1,
-						resource: wgpu::BindingResource::Sampler(&*self.sampy.get_or_insert_with(|| gpu_resource.device.create_sampler(&wgpu::SamplerDescriptor {
-							label: None,
-							address_mode_u: wgpu::AddressMode::ClampToEdge,
-							address_mode_v: wgpu::AddressMode::ClampToEdge,
-							address_mode_w: wgpu::AddressMode::ClampToEdge,
-							mag_filter: wgpu::FilterMode::Linear,
-							min_filter: wgpu::FilterMode::Linear,
-							mipmap_filter: wgpu::FilterMode::Nearest,
-							..Default::default()
-						}))),
-					},
-				],
-			});
-			{
-				let mut bp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-					label: None,
-					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-						view: &dest.view,
-						resolve_target: None,
-						ops: wgpu::Operations {
-							load: wgpu::LoadOp::Load,
-							store: true,
-						},
-					})],
-					depth_stencil_attachment: None,
-				});
-
-				match &blit_shader.pipeline {
-					crate::render::ShaderPipeline::Polygon{pipeline, ..} => bp.set_pipeline(pipeline),
-					_ => panic!("Weird shader things"),
-				}
-
-				bp.set_vertex_buffer(0, fugg_buffer.slice(..));
-				bp.set_vertex_buffer(1, fugg_buffer.slice(..));
-
-				bp.set_bind_group(0, &bp_bind_group, &[]);
-
-				bp.draw(0..3, 0..1);
-			}
-
-
-			// let ccs = world.read_component::<CameraComponent>();
-			// let camera = ccs.get(entity)
-			// 	.expect("Render point has no camera!");
-			// let tcs = world.read_component::<TransformComponent>();
-			// let camera_transform = tcs.get(entity)
-			// 	.expect("Render camera has no transform!");
-
-			// gpu_resource.set_data(camera.render_data.clone());
-			// let render_camera = crate::render::Camera {
-			// 	position: camera_transform.position,
-			// 	rotation: camera_transform.rotation,
-			// 	fovy: camera.fovy,
-			// 	znear: camera.znear,
-			// 	zfar: camera.zfar,
-			// };
-			// gpu_resource.encode_render(
-			// 	&mut encoder,
-			// 	&self.game_thing.get_source(&gpu_resource.device).texture, 
-			// 	self.surface_config.width, 
-			// 	self.surface_config.height, 
-			// 	&render_camera, 
-			// 	Instant::now(),
-			// );
-
-			// let cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-			// 	label: Some("CP"),
-			// });
-
-			// let bt = crate::render::BoundTexture::from_image(
-			// 	&gpu_resource.device, 
-			// 	&gpu_resource.queue, 
-			// 	img, 
-			// 	"Testyy", 
-			// 	true,
-			// );
-
-			// Update ui texture
-			self.game_widget.update_display(
-				&mut gpu_resource.egui_rpass, 
-				&gpu_resource.device, 
-			)
-		}
 	}
 
 	/// Encodes and executes an update to this window's display.
@@ -380,9 +255,8 @@ impl GameWindow {
 			label: Some("Window Encoder"),
 		});
 
-		if redraw_game {
-			// Redraw game texture			
-			self.encode_game(
+		if redraw_game {		
+			self.game_widget.encode_render(
 				&mut encoder,
 				world,
 				gpu_resource,
@@ -400,7 +274,11 @@ impl GameWindow {
 		// Submit
 		let submit_st = Instant::now();
 		gpu_resource.queue.submit(std::iter::once(encoder.finish()));
-		let _submit_en = Instant::now() - submit_st;
+		let submit_en = Instant::now() - submit_st;
+
+		if redraw_game {
+			self.game_times.record(submit_en);
+		}
 
 		// Show
 		frame.present();
@@ -772,8 +650,8 @@ impl WindowManager {
 							// Maybe add a timer and only capture after 5ms of in window time
 							// Otherwise just be faster?
 							window.cursor_inside = true;
-							window.window.set_cursor_grab(true).unwrap();
-							window.window.set_cursor_visible(false);
+							// window.window.set_cursor_grab(true).unwrap();
+							// window.window.set_cursor_visible(false);
 							self.capturing_cursor = true;
 						},
 						WindowEvent::CursorLeft {..} => {

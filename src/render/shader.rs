@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
+use std::time::{Instant, SystemTime};
 use std::{sync::Arc, num::NonZeroU32};
 use std::collections::{HashMap, BTreeMap};
 use wgpu;
@@ -370,6 +371,7 @@ pub struct ShaderManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
 	shaders: Vec<Shader>,
+	shaders_loaded_at: Vec<SystemTime>,
 	shaders_index_by_name: HashMap<String, usize>,
 	shaders_index_by_path: HashMap<PathBuf, usize>,
 	bind_group_layouts: Vec<wgpu::BindGroupLayout>,
@@ -384,11 +386,58 @@ impl ShaderManager {
 			device: device.clone(), 
 			queue: queue.clone(), 
 			shaders: Vec::new(), 
+			shaders_loaded_at: Vec::new(),
 			shaders_index_by_name: HashMap::new(), 
 			shaders_index_by_path: HashMap::new(),
 			bind_group_layouts: Vec::new(),
 			bind_group_layouts_bind_group_format: HashMap::new(),
 		}
+	}
+
+	pub fn check_reload(&mut self) -> anyhow::Result<()> {
+		info!("Running shader refresh");
+		for i in 0..self.shaders.len() {
+			let last_loaded = self.shaders_loaded_at[i];
+
+			let spec_path = self.index(i).specification_path.clone();
+			let specification = ShaderSpecification::from_path(&spec_path);
+			let spec_modified = std::fs::metadata(&spec_path)?.modified()?;
+			let spec_parent = spec_path.parent().unwrap();
+
+			// Find max of last modified in fs
+			let last_modified = match &specification.source.base {
+				ShaderSpecificationBase::Compute(c) => {
+					let c_path = spec_parent.join(&c.path);
+					let c_modified = std::fs::metadata(&c_path)?.modified()?;
+
+					[spec_modified, c_modified].iter().max().unwrap().clone()
+				},
+				ShaderSpecificationBase::Polygon { vertex, fragment, .. } => {
+					let v_path = spec_parent.join(&vertex.path);
+					let v_modified = std::fs::metadata(&v_path)?.modified()?;
+
+					if let Some(fragment) = fragment {
+						let f_path = spec_parent.join(&fragment.path);
+						let f_modified = std::fs::metadata(&f_path)?.modified()?;
+						[spec_modified, v_modified, f_modified].iter().max().unwrap().clone()
+					} else {
+						[spec_modified, v_modified].iter().max().unwrap().clone()
+					}					
+				}
+			};
+			
+			if last_modified > last_loaded {
+				info!("Reloading shader {spec_path:?}");
+
+				let specification = ShaderSpecification::from_path(&spec_path);
+				let new_shader = self.construct_shader(&specification, &spec_path);
+
+				self.shaders[i] = new_shader;
+				self.shaders_loaded_at[i] = last_modified;
+			}
+		}
+		
+		Ok(())
 	}
 
 	pub fn register_path(
@@ -400,6 +449,7 @@ impl ShaderManager {
 		let shader = self.construct_shader(&specification, path);
 
 		let idx = self.shaders.len();
+		self.shaders_loaded_at.push(SystemTime::now());
 		self.shaders_index_by_name.insert(shader.name.clone(), idx);
 		self.shaders_index_by_path.insert(shader.specification_path.clone(), idx);
 		self.shaders.push(shader);

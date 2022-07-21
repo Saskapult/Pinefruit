@@ -15,5 +15,6 @@ void main() {
 	// vec3 rayO = ubo.camera.pos;
 	// vec3 rayD = normalize(vec3((-1.0 + 2.0 * uv) * vec2(ubo.aspectRatio, 1.0), -1.0));
 
+	// imageStore(resultImage, ivec2(gl_GlobalInvocationID.xy), vec4(1.0, 1.0, 0.0, 0.0));
 	imageStore(resultImage, ivec2(gl_GlobalInvocationID.xy), vec4(uv, 0.0, 0.0));
 }
