@@ -1,10 +1,12 @@
 use serde::{Serialize, Deserialize};
+use thiserror::Error;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
 use std::{sync::Arc, num::NonZeroU32};
 use std::collections::{HashMap, BTreeMap};
 use wgpu;
 use crate::render::*;
+use anyhow::anyhow;
 
 
 
@@ -363,6 +365,16 @@ impl std::fmt::Display for BindGroupFormat {
 
 
 
+#[derive(Debug, Error)]
+pub enum ShaderError {
+	#[error("glslc error: {0}")]
+	CompilationGlslcError(String),
+	#[error("code format error: {0}")]
+	CompilationFormatError(String),
+	// Currently unused
+	#[error("failed to locate file: {0}")]
+	FileMissingError(PathBuf),
+}
 
 
 
@@ -394,7 +406,12 @@ impl ShaderManager {
 		}
 	}
 
-	pub fn check_reload(&mut self) -> anyhow::Result<()> {
+	/// Checks if shaders need to be reloaded.
+	/// Reloads them.
+	/// Returns a list of the reloaded shaders specification paths.
+	pub fn check_reload(&mut self) -> anyhow::Result<Vec<(PathBuf, anyhow::Result<()>)>> {
+		let mut reloaded = Vec::new();
+
 		info!("Running shader refresh");
 		for i in 0..self.shaders.len() {
 			let last_loaded = self.shaders_loaded_at[i];
@@ -430,14 +447,22 @@ impl ShaderManager {
 				info!("Reloading shader {spec_path:?}");
 
 				let specification = ShaderSpecification::from_path(&spec_path);
-				let new_shader = self.construct_shader(&specification, &spec_path);
+				match self.construct_shader(&specification, &spec_path) {
+					Ok(new_shader) => {
+						self.shaders[i] = new_shader;
+						self.shaders_loaded_at[i] = last_modified;
 
-				self.shaders[i] = new_shader;
-				self.shaders_loaded_at[i] = last_modified;
+						reloaded.push((spec_path, Ok(())));
+					}
+					Err(e) => {
+						error!("Failed to reload shader {spec_path:?}, {e}");
+						reloaded.push((spec_path, Err(anyhow!("{e}"))));
+					}
+				}
 			}
 		}
 		
-		Ok(())
+		Ok(reloaded)
 	}
 
 	pub fn register_path(
@@ -446,7 +471,7 @@ impl ShaderManager {
 	) -> usize {
 		info!("Registering shader from {:?}", path);
 		let specification = ShaderSpecification::from_path(path);
-		let shader = self.construct_shader(&specification, path);
+		let shader = self.construct_shader(&specification, path).unwrap();
 
 		let idx = self.shaders.len();
 		self.shaders_loaded_at.push(SystemTime::now());
@@ -521,7 +546,7 @@ impl ShaderManager {
 		&mut self, 
 		specification: &ShaderSpecification,
 		specification_path: &PathBuf, // Needed for relative file paths
-	) -> Shader {
+	) -> Result<Shader, ShaderError> {
 		let name = specification.name.clone();
 		let specification_path = specification_path.clone();
 
@@ -542,7 +567,7 @@ impl ShaderManager {
 				let specification_context = specification_path.parent().unwrap();
 				let g = specification_context.join(&source_file.path);
 
-				let module = self.make_shader_module(&g, specification.source.language);
+				let module = self.make_shader_module(&g, specification.source.language)?;
 
 				let pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
 					label: Some(&*format!("{name} compute pipeline")),
@@ -576,7 +601,7 @@ impl ShaderManager {
 					polygon_behaviour.clone(),
 					attachments.clone(),
 					&pipeline_layout,
-				);
+				)?;
 
 				ShaderPipeline::Polygon {
 					pipeline, 
@@ -586,27 +611,26 @@ impl ShaderManager {
 			},
 		};
 
-		Shader {
+		Ok(Shader {
 			name, specification_path, bind_groups, pipeline_layout, pipeline,
-		}
+		})
 	}
 
 	fn make_shader_module(
 		&self, 
 		source_path: &PathBuf, 
 		source_type: ShaderLanguage,
-	) -> wgpu::ShaderModule {
+	) -> Result<wgpu::ShaderModule, ShaderError> {
 		match source_type {
 			ShaderLanguage::Spirv => {
 				let source = std::fs::read(&source_path).expect("failed to read file");
 
-				unsafe { self.device.create_shader_module_spirv( &wgpu::ShaderModuleDescriptorSpirV { 
+				Ok(unsafe { self.device.create_shader_module_spirv( &wgpu::ShaderModuleDescriptorSpirV { 
 					label: source_path.to_str(), 
 					source: wgpu::util::make_spirv_raw(&source[..]), 
-				})}
+				})})
 			},
 			ShaderLanguage::Glsl => {
-				use std::io::{self, Write};
 				use std::process::Command;
 
 				warn!("Attempting to compile GLSL shaders to SPIRV using glslc");
@@ -615,10 +639,10 @@ impl ShaderManager {
 				match std::process::Command::new("glslc").arg("--version").status() {
 					Ok(exit_status) => {
 						if !exit_status.success() {
-							panic!("glslc seems wrong!")
+							return Err(ShaderError::CompilationGlslcError(format!("failed to run glslc, exit status {exit_status:?}")))
 						}
 					},
-					Err(_) => panic!("glslc cannot run!"),
+					Err(e) => return Err(ShaderError::CompilationGlslcError(format!("failed to run glslc, {e:?}"))),
 				}
 
 				let mut source_dest = source_path.clone().into_os_string();
@@ -629,30 +653,33 @@ impl ShaderManager {
 					.arg("-o")
 					.arg(&source_dest)
 					.output()
-					.expect("glslc command failed (vertex)");
+					.expect("glslc command failed somehow");
 				if !voutput.status.success() {
-					error!("Shader compilation terminated with code {}, output is as follows:", voutput.status.code().unwrap());
-					io::stdout().write_all(&voutput.stdout).unwrap();
-					io::stderr().write_all(&voutput.stderr).unwrap();
-					panic!("Try again if you dare");
+					let message = format!("Shader compilation terminated with code {}: {}", 
+						voutput.status.code().unwrap(),
+						// String::from_utf8_lossy(&voutput.stdout[..]),
+						String::from_utf8_lossy(&voutput.stderr[..]),
+					);
+					error!("{message}");
+					return Err(ShaderError::CompilationGlslcError(message))
 				}
 
 				let source = std::fs::read(&source_dest)
 					.expect("failed to read file");
 
-				unsafe { self.device.create_shader_module_spirv( &wgpu::ShaderModuleDescriptorSpirV { 
+				Ok(unsafe { self.device.create_shader_module_spirv( &wgpu::ShaderModuleDescriptorSpirV { 
 					label: source_path.to_str(), 
 					source: wgpu::util::make_spirv_raw(&source[..]), 
-				})}
+				})})
 			},
 			ShaderLanguage::Wgsl => {
 				let source = std::fs::read_to_string(&source_path)
 					.expect("failed to read file");
 				
-				self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+				Ok(self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
 					label: source_path.to_str(),
 					source: wgpu::ShaderSource::Wgsl(source.into()),
-				})
+				}))
 			},
 			_ => {
 				error!("Unimplemented shader language: {source_type:?}");
@@ -672,7 +699,7 @@ impl ShaderManager {
 		polygon_behaviour: Option<PolygonBehaviour>,
 		attachments: Vec<ShaderAttatchmentSpecification>,
 		layout: &wgpu::PipelineLayout,
-	) -> wgpu::RenderPipeline {
+	) -> Result<wgpu::RenderPipeline, ShaderError> {
 		let pipeline_label = format!("{spec_name} pipeline");
 
 		// Mesh input
@@ -772,25 +799,29 @@ impl ShaderManager {
 		
 		let vertex_entry = &*vertex.entry;
 		let vpath = specification_context.join(&vertex.path);
-		let vertex_module = self.make_shader_module(&vpath, language);
+		let vertex_module = self.make_shader_module(&vpath, language)?;
 		let vertex = wgpu::VertexState {
 			module: &vertex_module,
 			entry_point: vertex_entry,
 			buffers: vertex_buffer_layouts,
 		};
 
-		let fragment_data = fragment.and_then(|stuff| {
-			let fragment_entry = stuff.entry;
-			let fpath = specification_context.join(&stuff.path);
-			let fragment_module = if vpath == fpath {
-				info!("Fragment shader is in same file, saving work");
-				None
-			} else {
-				Some(self.make_shader_module(&fpath, language))
-			};
+		// Is more elegant with and_then but that messes with the Result
+		let fragment_data = match fragment {
+			Some(stuff) => {
+				let fragment_entry = stuff.entry;
+				let fpath = specification_context.join(&stuff.path);
+				let fragment_module = if vpath == fpath {
+					info!("Fragment shader is in same file, saving work");
+					None
+				} else {
+					Some(self.make_shader_module(&fpath, language)?)
+				};
 
-			Some((fragment_entry, fpath, fragment_module))
-		});
+				Ok(Some((fragment_entry, fpath, fragment_module)))
+			}	
+			None => Ok(None),
+		}?;
 		let fragment = fragment_data.as_ref().and_then(|(entry, _, module)| {
 
 			Some(wgpu::FragmentState {
@@ -800,7 +831,7 @@ impl ShaderManager {
 			})
 		});
 
-		self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+		Ok(self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
 			label: Some(&*pipeline_label),
 			layout: Some(layout),
 			vertex,
@@ -823,6 +854,6 @@ impl ShaderManager {
 				alpha_to_coverage_enabled: false,
 			},
 			multiview: None,
-		})
+		}))
 	}
 }

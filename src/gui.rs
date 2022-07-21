@@ -306,6 +306,7 @@ impl MessageWidget {
 			ui.visuals_mut().override_text_color = Some(egui::Color32::RED);
 			ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
   			ui.style_mut().wrap = Some(false);
+			ui.style_mut().text_styles.iter_mut().for_each(|(_, font_id)| font_id.size = 8.0);
 			
 			ui.vertical(|ui| {
 				self.messages.iter().for_each(|(message, _)| {
