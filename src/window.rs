@@ -1,4 +1,3 @@
-use specs::Entity;
 use winit::{
 	event::*,
 	event_loop::*,
@@ -120,8 +119,10 @@ impl GameWindow {
 		mut encoder: &mut wgpu::CommandEncoder,
 		gpu_resource: &mut GPUResource,
 		destination_view: &wgpu::TextureView,
-		_world: &specs::World,
+		world: &specs::World,
 	) -> egui::TexturesDelta {
+
+		use specs::WorldExt;
 
 		self.platform.update_time(self.start_time.elapsed().as_secs_f64());
 		self.platform.begin_frame();
@@ -136,6 +137,18 @@ impl GameWindow {
 						ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
 
 						ui.label(format!("~{}gf/s", (1.0 / self.game_times.average().unwrap_or(Duration::ZERO).as_secs_f32().round())));
+
+						if let Some(entity) = self.game_widget.tracked_entity {
+							ui.label(format!("Entity: {entity:?}"));
+							let tcs = world.read_component::<TransformComponent>();
+							if let Some(tc) = tcs.get(entity) {
+								ui.label(format!("Position: [{:.1}, {:.1}, {:.1}]", tc.position[0], tc.position[1], tc.position[2]));
+								let (r, p, y) = tc.rotation.euler_angles();
+								ui.label(format!("Rotation: [{:.1}, {:.1}, {:.1}]", r, p, y));
+							}
+						} else {
+							ui.label("Tracked entity not set!");
+						}
 		
 						let texture: &egui::TextureHandle = self.test_texture.get_or_insert_with(|| {
 							// Load the texture only once.

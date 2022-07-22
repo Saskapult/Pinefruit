@@ -1,4 +1,5 @@
 use std::{time::Instant, sync::mpsc::{Receiver, SyncSender}};
+use bytemuck::{Pod, Zeroable};
 use egui;
 use specs::Entity;
 use std::sync::mpsc::sync_channel;
@@ -10,6 +11,17 @@ use crate::{render::*, ecs::GPUResource};
 // use egui::Widget;
 
 
+
+#[repr(C)]
+#[derive(Debug, Pod, Zeroable, Clone, Copy)]
+struct Camera {
+	position: [f32; 4],
+	rotation: [[f32; 4]; 4],
+	near: f32,
+}
+
+
+
 #[derive(Debug)]
 pub struct GameWidget {
 	pub tracked_entity: Option<Entity>,
@@ -18,7 +30,9 @@ pub struct GameWidget {
 	display_texture: Option<egui::TextureId>,
 	last_size: [f32; 2],
 	conversion_sampler: Option<wgpu::Sampler>,
-	fug_buffer: Option<wgpu::Buffer>,
+	fugg_buffer: Option<wgpu::Buffer>,
+
+	camera_buffer: Option<wgpu::Buffer>,
 }
 impl GameWidget {
 	pub fn new(
@@ -31,31 +45,52 @@ impl GameWidget {
 			display_texture: None,
 			last_size: [400.0; 2],
 			conversion_sampler: None,
-			fug_buffer: None,
+			fugg_buffer: None,
+
+			camera_buffer: None,
 		}
 	}
 
 	pub fn encode_render(
 		&mut self,
 		encoder: &mut wgpu::CommandEncoder,
-		_world: &specs::World,
+		world: &specs::World,
 		gpu_resource: &mut GPUResource,
 	) {
-		// use specs::WorldExt;
-		if let Some(_entity) = self.tracked_entity {
+		use specs::WorldExt;
+		use crate::ecs::*;
+		use wgpu::util::DeviceExt;
+
+		if let Some(entity) = self.tracked_entity {
+
+			// Camera
+			let ccs = world.read_component::<CameraComponent>();
+			let _camera = ccs.get(entity)
+				.expect("Render point has no camera!");
+			let tcs = world.read_component::<TransformComponent>();
+			let camera_transform = tcs.get(entity)
+				.expect("Render camera has no transform!");
+			let camera_data = Camera {
+				position: camera_transform.position.to_homogeneous().into(),
+				rotation: camera_transform.rotation.to_homogeneous().into(),
+				near: 1.0 / (90.0_f32.to_radians() / 2.0).tan(),
+			};
+
+
+			// Textures and stuff
 			self.update_size(&gpu_resource.device);
 			let rgba = self.rgba_texture.as_ref().unwrap();
 			let srgba = self.srgba_texture.as_ref().unwrap();
-			
-			let fugg_buffer = self.fug_buffer.get_or_insert_with(|| {
-				use wgpu::util::DeviceExt;
+			let fugg_buffer = self.fugg_buffer.get_or_insert_with(|| {
+				info!("Making fugg buffer");
 				gpu_resource.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-					label: Some("fugg Buffer"),
+					label: Some("fugg buffer"),
 					contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
 					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
 				})
 			});
 			let conversion_sampler = self.conversion_sampler.get_or_insert_with(|| {
+				info!("Making conversion sampler");
 				gpu_resource.device.create_sampler(&wgpu::SamplerDescriptor {
 					label: Some("conversion sampler"),
 					address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -69,6 +104,19 @@ impl GameWidget {
 			});
 
 
+			// Camera
+			let camera_buffer = self.camera_buffer.get_or_insert_with(|| {
+				info!("Making camera buffer");
+				println!("{:#?}", camera_data.rotation);
+				gpu_resource.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+					label: Some("camera buffer"),
+					contents: bytemuck::bytes_of(&camera_data),
+					usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+				})
+			});
+			gpu_resource.queue.write_buffer(&*camera_buffer, 0, bytemuck::bytes_of(&camera_data));
+
+
 			let comp_shader = gpu_resource.data.shaders.index(0);
 			let cp_bind_group = gpu_resource.device.create_bind_group(&wgpu::BindGroupDescriptor {
 				label: Some("compute bind group"),
@@ -77,6 +125,10 @@ impl GameWidget {
 					wgpu::BindGroupEntry {
 						binding: 0,
 						resource: wgpu::BindingResource::TextureView(&rgba.view),
+					},
+					wgpu::BindGroupEntry {
+						binding: 1,
+						resource: wgpu::BindingResource::Buffer(camera_buffer.as_entire_buffer_binding()),
 					},
 				],
 			});
@@ -138,48 +190,24 @@ impl GameWidget {
 				bp.draw(0..3, 0..1);
 			}
 
+			match self.display_texture {
+				Some(id) => {
+					gpu_resource.egui_rpass.update_egui_texture_from_wgpu_texture(
+						&gpu_resource.device, 
+						&srgba.view, 
+						wgpu::FilterMode::Nearest, 
+						id,
+					).unwrap();
+				},
+				None => {
+					self.display_texture = Some(gpu_resource.egui_rpass.egui_texture_from_wgpu_texture(
+						&gpu_resource.device,
+						&srgba.view,
+						wgpu::FilterMode::Nearest, 
+					));
+				},
+			};
 
-			// let ccs = world.read_component::<CameraComponent>();
-			// let camera = ccs.get(entity)
-			// 	.expect("Render point has no camera!");
-			// let tcs = world.read_component::<TransformComponent>();
-			// let camera_transform = tcs.get(entity)
-			// 	.expect("Render camera has no transform!");
-
-			// gpu_resource.set_data(camera.render_data.clone());
-			// let render_camera = crate::render::Camera {
-			// 	position: camera_transform.position,
-			// 	rotation: camera_transform.rotation,
-			// 	fovy: camera.fovy,
-			// 	znear: camera.znear,
-			// 	zfar: camera.zfar,
-			// };
-			// gpu_resource.encode_render(
-			// 	&mut encoder,
-			// 	&self.game_thing.get_source(&gpu_resource.device).texture, 
-			// 	self.surface_config.width, 
-			// 	self.surface_config.height, 
-			// 	&render_camera, 
-			// 	Instant::now(),
-			// );
-
-			// let cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-			// 	label: Some("CP"),
-			// });
-
-			// let bt = crate::render::BoundTexture::from_image(
-			// 	&gpu_resource.device, 
-			// 	&gpu_resource.queue, 
-			// 	img, 
-			// 	"Testyy", 
-			// 	true,
-			// );
-
-			self.display_texture = Some(gpu_resource.egui_rpass.egui_texture_from_wgpu_texture(
-				&gpu_resource.device,
-				&srgba.view,
-				wgpu::FilterMode::Nearest, 
-			));
 		}
 	}
 
@@ -197,7 +225,7 @@ impl GameWidget {
 					return false;
 				}
 			}
-			texture.insert(BoundTexture::new(
+			texture.replace(BoundTexture::new(
 				device, 
 				format,
 				intended_size[0], 
@@ -213,27 +241,6 @@ impl GameWidget {
 		update_size_internal(device, &mut self.srgba_texture, intended_size, TextureFormat::Rgba8UnormSrgb);
 	}
 	
-
-	pub fn get_source<'a>(&'a mut self, device: &wgpu::Device) -> &'a BoundTexture {
-		let intended_size = self.last_size.map(|f| f.round() as u32);
-		if self.srgba_texture.is_some() {
-			let source = self.srgba_texture.as_ref().unwrap();
-			let source_size = [source.size.width, source.size.height];
-			if intended_size == source_size {
-				return self.srgba_texture.as_ref().unwrap()
-			}
-			info!("Resizing GameWidget source texture ({source_size:?} -> {intended_size:?})")
-		} 
-		self.srgba_texture = Some(BoundTexture::new(
-			device, 
-			TextureFormat::Rgba8UnormSrgb,
-			intended_size[0], 
-			intended_size[1], 
-			"GameWidgetSource",
-		));
-		self.srgba_texture.as_ref().unwrap()
-	}
-
 	pub fn update_display(
 		&mut self,
 		rpass: &mut egui_wgpu_backend::RenderPass, 

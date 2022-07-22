@@ -2,7 +2,7 @@ use specs::prelude::*;
 use winit::event_loop::*;
 use nalgebra::*;
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::sync::{Arc, Mutex, RwLock};
 use rapier3d::prelude::*;
 use crate::ecs::*;
@@ -142,11 +142,11 @@ impl Game {
 		}
 
 		
-		// Map
-		self.world.create_entity()
-			.with(TransformComponent::new())
-			.with(MapComponent::new(&self.blocks_manager))
-			.build();
+		// // Map
+		// self.world.create_entity()
+		// 	.with(TransformComponent::new())
+		// 	.with(MapComponent::new(&self.blocks_manager))
+		// 	.build();
 		
 	}
 
@@ -165,7 +165,7 @@ impl Game {
 					.with(CameraComponent::new())
 					.with(
 						TransformComponent::new()
-						.with_position(Vector3::new(0.5, 5.5, 0.5))
+						.with_position(Vector3::new(0.5, 0.5, 0.5))
 					)
 					.with(MovementComponent{speed: 4.0})
 					.build()
@@ -173,7 +173,13 @@ impl Game {
 		}
 
 		// Do ticking stuff
-		// self.tick_dispatcher.dispatch(&self.world);
+		if self.last_tick.elapsed() > Duration::from_secs_f32(1.0 / 30.0) {
+			self.last_tick = Instant::now();
+			self.tick_dispatcher.dispatch(&self.world);
+			let mut input_resource = self.world.write_resource::<InputResource>();
+			input_resource.last_read = Instant::now();
+		}
+		
 
 		// Show windows
 		{

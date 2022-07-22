@@ -20,10 +20,18 @@ pub enum RenderTarget {
 #[derive(Component, Debug, Clone)]
 #[storage(VecStorage)]
 pub struct CameraComponent {
+	// Old and bad
 	pub target: RenderTarget,
+
 	pub fovy: f32,
 	pub znear: f32,
+
+	// Rename to render distance or something like that
+	// Can be used as ray distance or far plane distance.
 	pub zfar: f32,
+	
+	// Also old, also bad
+	// Should be stored in a mesh rendering component based on camera entity
 	pub render_data: Vec<ModelInstance>, // All the models visible to this camera
 }
 impl CameraComponent {
@@ -35,6 +43,11 @@ impl CameraComponent {
 			zfar: 100.0,
 			render_data: Vec::new(),
 		}
+	}
+
+	pub fn set_fovy(&mut self, degrees: f32) {
+		self.fovy = degrees.to_radians();
+		self.znear = 1.0 / (degrees.to_radians() / 2.0).tan();
 	}
 }
 
