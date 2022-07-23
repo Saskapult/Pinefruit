@@ -4,6 +4,7 @@ use egui;
 use specs::Entity;
 use std::sync::mpsc::sync_channel;
 use crate::{render::*, ecs::GPUResource};
+use crate::window::WindowSettings;
 
 
 
@@ -255,7 +256,7 @@ impl GameWidget {
 		});
 	}
 
-	pub fn display(&mut self, ui: &mut egui::Ui) {
+	pub fn display(&mut self, ui: &mut egui::Ui, window_settings: &mut WindowSettings) {
 
 		if self.tracked_entity.is_none() {
 			ui.label("Tracked entity not set!");
@@ -267,7 +268,16 @@ impl GameWidget {
 		
 		if let Some(tid) = self.display_texture {
 			self.last_size = ui.available_size().into();
-			ui.image(tid, ui.available_size());
+			let g = ui.image(tid, ui.available_size());
+			let f = g.interact(egui::Sense::click());
+			if f.clicked() {
+				println!("cap");
+				window_settings.capture_mouse = true;
+			};
+			if f.secondary_clicked() {
+				println!("decap");
+				window_settings.capture_mouse = false;
+			};
 		}
 	}
 }

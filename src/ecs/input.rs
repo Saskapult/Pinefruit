@@ -3,7 +3,18 @@ use winit::{
 	event::*,
 };
 
+/*
+on mouse moved apply to all windows with mouse inside
 
+
+	GLOBAL
+mouse movement
+mouse wheel
+
+	PER-WINDOW
+keys
+cursor inside
+*/
 
 
 // Holds input data

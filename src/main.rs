@@ -19,6 +19,12 @@ mod gui;
 
 use window::*;
 use std::thread;
+use std::sync::mpsc::channel;
+use winit::{
+	event::*,
+	event_loop::*,
+	window::*,
+};
 
 
 #[macro_use]
@@ -40,30 +46,15 @@ fn main() {
     warn!("some warning log");
     error!("some error log");		// High priority
 
-	// let mut scm = lua::ScriptManager::new();
-	// scm.init_bindings().unwrap();
-	// scm.repl_loop().unwrap();
+	let (game_sender, game_receiver) = channel();
 
-	// let img = image::DynamicImage::ImageRgb8(
-	// 	image::ImageBuffer::from_fn(100, 100, |_, _| {
-	// 		let u = rand::random::<u8>();
-	// 		image::Rgb([u; 3])
-	// 	})
-	// );
-	// crate::util::show_image(img).unwrap();
-	
-	// return;
-
-	let event_loop = new_event_loop();
+	let event_loop = EventLoop::<EventLoopEvent>::with_user_event();
 	let event_loop_proxy = event_loop.create_proxy();
 
-	let event_queue = new_queue();
-
-	let game_thread_event_queue = event_queue.clone();
 	let game_thread = thread::Builder::new()
 		.name("game thread".into())
 		.spawn(move || {
-			let mut game = game::Game::new(event_loop_proxy, game_thread_event_queue);
+			let mut game = game::Game::new(event_loop_proxy, game_receiver);
 			game.setup();
 			game.new_window();
 			loop {
@@ -72,7 +63,7 @@ fn main() {
 		})
 		.expect("Failed to spawn game thread!");
 
-	run_event_loop(event_loop, event_queue);
+	run_event_loop(event_loop, game_sender);
 
 	game_thread.join().expect("huh?");
 }

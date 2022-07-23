@@ -55,6 +55,7 @@ egui_extras = "0.18.0"
 splines = { version = "4.0.3", features = ["serde"] }
 rayon = "1.5.1"
 viuer = "0.6.1"
+generational-arena = "0.2.8"
 
 [build-dependencies]
 anyhow = "1.0"

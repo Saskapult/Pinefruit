@@ -5,6 +5,7 @@ use crate::ecs::*;
 use nalgebra::*;
 use specs::prelude::*;
 use specs::{Component, VecStorage};
+use crate::window::WindowInput;
 
 
 
@@ -20,6 +21,7 @@ impl MovementComponent {
 			speed: 1.0,
 		}
 	}
+
 	pub fn with_speed(self, speed: f32) -> Self {
 		Self {
 			speed,
@@ -86,4 +88,45 @@ impl<'a> System<'a> for MovementSystem {
 			transform_c.position += transform_c.rotation * displacement * movement_c.speed * apply_duration_secs;
 		}
 	}
+}
+
+
+
+pub fn apply_input(input: &WindowInput, transform_c: &mut TransformComponent, movement_c: &MovementComponent) {
+	let rx = input.mdx as f32 * 0.001;
+	let ry = input.mdy as f32 * 0.001;
+
+	let mut displacement = Vector3::from_element(0.0);
+	for (key, &kp) in &input.board_keys {
+		match key {
+			VirtualKeyCode::W => {
+				displacement.z += kp.as_secs_f32();
+			},
+			VirtualKeyCode::S => {
+				displacement.z -= kp.as_secs_f32();
+			},
+			VirtualKeyCode::D => {
+				displacement.x += kp.as_secs_f32();
+			},
+			VirtualKeyCode::A => {
+				displacement.x -= kp.as_secs_f32();
+			},
+			VirtualKeyCode::Space => {
+				displacement.y += kp.as_secs_f32();
+			},
+			VirtualKeyCode::LShift => {
+				displacement.y -= kp.as_secs_f32();
+			},
+			_ => {},
+		}
+	}
+
+	// movement_c.speed = f32::max(movement_c.speed + input.dscrolly * 4.0, 1.0);
+
+	let quat_ry = UnitQuaternion::from_euler_angles(ry, 0.0, 0.0);
+	let quat_rx = UnitQuaternion::from_euler_angles(0.0, rx, 0.0);
+	transform_c.rotation = quat_rx * transform_c.rotation * quat_ry;
+
+	transform_c.position += transform_c.rotation * displacement * movement_c.speed;
+	
 }

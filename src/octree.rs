@@ -1,6 +1,148 @@
 use nalgebra::*;
 
 
+#[derive(Debug, Clone)]
+struct AABB {
+	p0: Vector3<f32>,
+	p1: Vector3<f32>,
+	centre: Vector3<f32>,
+}
+impl AABB {
+	pub fn new(
+		p0: Vector3<f32>,
+		p1: Vector3<f32>,
+	) -> Self {
+		Self {
+			p0, p1,
+			centre: p0 + p1,
+		}
+	}
+
+	// Todo: handle div by nzero
+	// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection
+	#[inline]
+	pub fn ray_intersect(
+		&self, 
+		origin: Vector3<f32>,
+		direction: Vector3<f32>,
+		position: Vector3<f32>, 
+		t0: f32, // Min distance
+		t1: f32, // Max distance
+	) -> Option<(f32, f32)> {
+		let v_max = self.p1 + position;
+		let v_min = self.p0 + position;
+
+		let (mut t_min, mut t_max) = {
+			let t_min = (v_min[0] - origin[0]) / direction[0];
+			let t_max = (v_max[0] - origin[0]) / direction[0];
+
+			if t_min < t_max {
+				(t_min, t_max)
+			} else {
+				(t_max, t_min)
+			}
+		};
+
+		let (ty_min, ty_max) = {
+			let ty_min = (v_min[1] - origin[1]) / direction[1];
+			let ty_max = (v_max[1] - origin[1]) / direction[1];
+
+			if ty_min < ty_max {
+				(ty_min, ty_max)
+			} else {
+				(ty_max, ty_min)
+			}
+		};
+
+		if t_min > ty_max || ty_min > t_max {
+			return None
+		}
+
+		if ty_min > t_min {
+			t_min = ty_min;
+		}
+		if ty_max < t_max {
+			t_max = ty_max;
+		}
+
+		let (tz_min, tz_max) = {
+			let tz_min = (v_min[2] - origin[2]) / direction[2];
+			let tz_max = (v_max[2] - origin[2]) / direction[2];
+
+			if tz_min < tz_max {
+				(tz_min, tz_max)
+			} else {
+				(tz_max, tz_min)
+			}
+		};
+
+		if t_min > tz_max || tz_min > t_max {
+			return None
+		}
+
+		if tz_min > t_min {
+			t_min = tz_min;
+		}
+		if tz_max < t_max {
+			t_max = tz_max;
+		}
+		
+		if (t_min < t1) && (t_max > t0) {
+			Some((t_min, t_max))
+		} else {
+			None
+		}
+	}
+
+	pub fn contains(&self, point: Vector3<f32>) -> bool {
+		point >= self.p0 && point <= self.p1
+
+		// point[0] >= self.p0[0] &&
+		// point[1] >= self.p0[1] &&
+		// point[2] >= self.p0[2] &&
+		// point[0] <= self.p1[0] &&
+		// point[1] <= self.p1[1] &&
+		// point[2] <= self.p1[2]
+	}
+
+	pub fn mid_planes(&self) -> [Plane; 3] {
+		[
+			Plane {
+				normal: *Vector3::z_axis(),
+				distance: self.centre[2],
+			},
+			Plane {
+				normal: *Vector3::y_axis(),
+				distance: self.centre[1],
+			},
+			Plane {
+				normal: *Vector3::x_axis(),
+				distance: self.centre[1],
+			},
+		]
+	}
+}
+
+
+#[derive(Debug, Clone)]
+struct Plane {
+	pub normal: Vector3<f32>,
+	pub distance: f32,
+}
+impl Plane {
+	// Restricted to along positive line direction
+	pub fn ray_intersect_positive(
+		&self, 
+		origin: Vector3<f32>,
+		direction: Vector3<f32>,
+		position: Vector3<f32>, 
+		t0: f32, // Min distance
+		t1: f32, // Max distance
+	) -> Option<f32> {
+		todo!()
+	}
+}
+
 
 /// This octree implmentation is meant to be built upward.
 /// 
@@ -33,20 +175,20 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 
 	/// Combines a bunch of octrees into a bigger octree
 	// This function uses too many clone()s, please make it better-er
-	// https://i.all3dp.com/wp-content/uploads/2016/11/27020139/octants.png
 	pub fn combine(
-		ppp: Octree<T>, // 0
-		npp: Octree<T>, // 1
+		nnn: Octree<T>, // 6
 		nnp: Octree<T>, // 2
+		npn: Octree<T>, // 5
+		npp: Octree<T>, // 1
+		pnn: Octree<T>, // 7
 		pnp: Octree<T>, // 3
 		ppn: Octree<T>, // 4
-		npn: Octree<T>, // 5
-		nnn: Octree<T>, // 6
-		pnn: Octree<T>, // 7
+		ppp: Octree<T>, // 0
+		mix_fn: &dyn Fn(&[&T]) -> T
 	) -> Self {
 		
 		let octant_depth = ppp.depth;
-		let mut octants = vec![ppp,npp,nnp,pnp,ppn,npn,nnn,pnn];
+		let mut octants = vec![nnn,nnp, npn, npp, pnn, pnp, ppn, ppp];
 
 		// Test that same depth for all
 		assert!(octants.iter().all(|g| g.depth == octant_depth), "Octants are of differing depth!");
@@ -137,13 +279,19 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 			new_nodes.extend(o.nodes.into_iter())
 		});
 
+		// Todo: optionally search for existing value
+		let contents = octant_indices.iter().map(|&i| &new_data[i as usize]).collect::<Vec<_>>();
+		let new_content = mix_fn(&contents[..]);
+		let content = new_data.len() as u16;
+		new_data.push(new_content);
+
 		Self {
 			data: new_data,
 			nodes: new_nodes,
 
 			root: OctreeNode {
 				octants: octant_indices.try_into().unwrap(),
-				content: 0,	// Find average? Pass a function for this!
+				content,
 			},
 			depth: octant_depth + 1,
 		}
@@ -194,70 +342,86 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 		let side_length = 2_u32.pow(self.depth as u32);
 		let oct_max = side_length as f32;
 		let oct_min = 0.0;
-		let v_max = position + Vector3::new(oct_max, oct_max, oct_max);
-		let v_min = position + Vector3::new(oct_min, oct_min, oct_min);
-
-		let (mut t_min, mut t_max) = {
-			let t_min = (v_min[0] - origin[0]) / direction[0];
-			let t_max = (v_max[0] - origin[0]) / direction[0];
-
-			if t_min < t_max {
-				(t_min, t_max)
-			} else {
-				(t_max, t_min)
-			}
-		};
-
-		let (ty_min, ty_max) = {
-			let ty_min = (v_min[1] - origin[1]) / direction[1];
-			let ty_max = (v_max[1] - origin[1]) / direction[1];
-
-			if ty_min < ty_max {
-				(ty_min, ty_max)
-			} else {
-				(ty_max, ty_min)
-			}
-		};
-
-		if t_min > ty_max || ty_min > t_max {
-			return None
-		}
-
-		if ty_min > t_min {
-			t_min = ty_min;
-		}
-		if ty_max < t_max {
-			t_max = ty_max;
-		}
-
-		let (tz_min, tz_max) = {
-			let tz_min = (v_min[2] - origin[2]) / direction[2];
-			let tz_max = (v_max[2] - origin[2]) / direction[2];
-
-			if tz_min < tz_max {
-				(tz_min, tz_max)
-			} else {
-				(tz_max, tz_min)
-			}
-		};
-
-		if t_min > tz_max || tz_min > t_max {
-			return None
-		}
-
-		if tz_min > t_min {
-			t_min = tz_min;
-		}
-		if tz_max < t_max {
-			t_max = tz_max;
-		}
-		
-		if (t_min < t1) && (t_max > t0) {
-			Some((t_min, t_max))
-		} else {
-			None
-		}
+		let aabb = AABB::new(
+			Vector3::new(oct_min, oct_min, oct_min),
+			Vector3::new(oct_max, oct_max, oct_max),
+		);
+		aabb.ray_intersect(origin, direction, position, t0, t1)
 	}
+
+	// // https://daeken.svbtle.com/a-stupidly-simple-fast-octree-traversal-for-ray-intersection
+	// // Not limited to standard octrees, maybe not the best here
+	// #[inline]
+	// pub fn stupid_ray(
+	// 	&self, 
+	// 	origin: Vector3<f32>,
+	// 	direction: Vector3<f32>,
+	// 	position: Vector3<f32>, 
+	// ) -> Option<()> {
+	// 	// if empty return null
+	// 	// if have content return content
+
+	// 	let mut octant = self.root;
+
+
+	// 	let side_length = 2_u32.pow(self.depth as u32);
+	// 	let oct_max = side_length as f32;
+	// 	let oct_min = 0.0;
+	// 	let aabb = AABB::new(
+	// 		Vector3::new(oct_min, oct_min, oct_min),
+	// 		Vector3::new(oct_max, oct_max, oct_max),
+	// 	);
+	// 	let [pz, py, px] = aabb.mid_planes();
+	// 	let mut side = [
+	// 		origin.dot(&px.normal) - px.distance >= 0.0,
+	// 		origin.dot(&py.normal) - py.distance >= 0.0,
+	// 		origin.dot(&pz.normal) - pz.distance >= 0.0,
+	// 	];
+
+	// 	let mut xdist = if side[0] == (direction[0] < 0.0) {
+	// 		px.ray_intersect_positive(origin, direction, position, 0.0, 100.0).unwrap()
+	// 	} else {
+	// 		f32::INFINITY
+	// 	};
+	// 	let mut ydist = if side[1] == (direction[1] < 0.0) {
+	// 		py.ray_intersect_positive(origin, direction, position, 0.0, 100.0).unwrap()
+	// 	} else {
+	// 		f32::INFINITY
+	// 	};
+	// 	let mut zdist = if side[2] == (direction[2] < 0.0) {
+	// 		pz.ray_intersect_positive(origin, direction, position, 0.0, 100.0).unwrap()
+	// 	} else {
+	// 		f32::INFINITY
+	// 	};
+
+	// 	for _ in 0..3 {
+	// 		let idx = if side[2] { 1 } else { 0 } |
+	// 			if side[1] { 2 } else { 0 } |
+	// 			if side[0] { 4 } else { 0 };
+			
+	// 		// let ret = recurse on indexed octant
+	// 		// if not none return ret
+
+	// 		let min_dist = f32::min(f32::min(xdist, ydist), zdist);
+
+	// 		let hitpos = origin + direction * min_dist;
+	// 		if !aabb.contains(hitpos) {
+	// 			return None;
+	// 		}
+	// 		if min_dist == xdist {
+	// 			side[0] = !side[0];
+	// 			xdist = f32::INFINITY;
+	// 		} else if min_dist == ydist {
+	// 			side[1] = !side[1];
+	// 			ydist = f32::INFINITY;
+	// 		} else if min_dist == zdist {
+	// 			side[2] = !side[2];
+	// 			zdist = f32::INFINITY;
+	// 		}
+	// 	}
+
+	// 	None
+	// }
 
 	// // https://lsi2.ugr.es/curena/inves/wscg00/revelles-wscg00.pdf
 	// pub fn jr_ray_thing(
@@ -268,27 +432,29 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 
 	// 	direction = direction.normalize();
 		
-	// 	let octree_size = 2_u32.pow(self.depth);
+	// 	let octree_size = 2_u32.pow(self.depth as u32);
+	// 	let oct_max = (octree_size / 2) as i32;
+	// 	let oct_min = -oct_max;
 
-	// 	let a = 0;
+	// 	// What is this?
+	// 	let mut a = 0_u32;
+
+	// 	// Fix negative direction
 	// 	if direction[0] < 0.0 {
 	// 		origin[0] = octree_size as f32 - origin[0];
 	// 		direction[0] = -direction[0];
-	// 		a |= 0b100;
+	// 		a |= 4;
 	// 	}
 	// 	if direction[1] < 0.0 {
 	// 		origin[1] = octree_size as f32 - origin[1];
 	// 		direction[1] = -direction[1];
-	// 		a |= 0b010;
+	// 		a |= 2;
 	// 	}
 	// 	if direction[2] < 0.0 {
 	// 		origin[2] = octree_size as f32 - origin[2];
 	// 		direction[2] = -direction[2];
-	// 		a |= 0b001;
+	// 		a |= 1;
 	// 	}
-
-	// 	let oct_max = (octree_size / 2) as i32;
-	// 	let oct_min = -oct_max;
 
 	// 	let tx0 = (oct_min as f32 - origin[0]) / direction[0];
 	// 	let tx1 = (oct_max as f32 - origin[0]) / direction[0];
@@ -297,10 +463,44 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 	// 	let tz0 = (oct_min as f32 - origin[2]) / direction[2];
 	// 	let tz1 = (oct_max as f32 - origin[2]) / direction[2];
 
-	// 	if f32::max(tx0, f32::max(ty0, tz0)) < f32::min(tx1, f32::min(ty1, tz1)) {
+	// 	if f32::max(f32::max(tx0, ty0), tz0) < f32::min(f32::min(tx1, ty1), tz1) {
 	// 		self.proc_subtree(tx0, ty0, tz0, tx1, ty1, tz1, &self.root);
 	// 	}
 
+	// }
+	// fn first_node(&self, tx0: f32, ty0: f32, tz0: f32, txm: f32, tym: f32, tzm: f32) -> u32 {
+	// 	let mut answer = 0_u32;
+	// 	if tx0 > ty0 {
+	// 		if tx0 > tz0 {
+	// 			// YZ
+	// 			if tym < tx0 { answer |= 2; }
+	// 			if tzm < tx0 { answer |= 1; }
+	// 			return answer
+	// 		}
+	// 	} else {
+	// 		if ty0 > tz0 {
+	// 			// XZ
+	// 			if txm < ty0 { answer |= 4; }
+	// 			if tzm < ty0 { answer |= 1; }
+	// 			return answer
+	// 		}
+	// 	}
+	// 	// XY
+	// 	if txm < tz0 { answer |= 4; }
+	// 	if tym < tz0 { answer |= 2; }
+	// 	return answer
+	// }
+	// fn new_node(&self, txm: f32, x: u32, tym: f32, y: u32, tzm: f32, z: u32) -> u32 {
+	// 	if txm < tym {
+	// 		if txm < tzm {
+	// 			return x // YZ
+	// 		}
+	// 	} else {
+	// 		if tym < tzm {
+	// 			return y // XZ
+	// 		}
+	// 	}
+	// 	z // XY
 	// }
 	// fn proc_subtree(
 	// 	&self,
@@ -311,30 +511,107 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 	// 	ty1: f32, 
 	// 	tz1: f32, 
 	// 	node: &OctreeNode,
-	// ) {
+	// ) -> u16 {
 	// 	if tx1 < 0.0 || ty1 < 0.0 || tz1 < 0.0 {
-	// 		return
+	// 		return 0;
 	// 	}
 
 	// 	if node.octants.iter().all(|&o| o == 0) {
-	// 		// self.proc_terminal(n)
-	// 		return
+	// 		return node.content;
 	// 	}
 
 	// 	let txm = 0.5 * (tx0 + tx1);
 	// 	let tym = 0.5 * (ty0 + ty1);
 	// 	let tzm = 0.5 * (tz0 + tz1);
 
-	// 	let mut curr_node = first_node(tx0, ty0, tz0, txm, tym, tzm);
-	// 	while curr_node < 8 {
+	// 	let mut curr_node = self.first_node(tx0, ty0, tz0, txm, tym, tzm);
+	// 	loop {
 	// 		match curr_node {
 	// 			0 => {
-	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, &self.nodes[node.octants[0]]);
-	// 				curr_node = new_node(txm, 4, tym, 2, txm, 1);
+	// 				let node_content = node.octants[0] as usize;
+	// 				if node_content == 0 {
+	// 					return 0
+	// 				}
+	// 				let node = &self.nodes[node_content-1];
+	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, node);
+	// 				curr_node = self.new_node(txm, 4, tym, 2, txm, 1);
+	// 				break
+	// 			},
+	// 			1 => {
+	// 				let node_content = node.octants[0] as usize;
+	// 				if node_content == 0 {
+	// 					return 0
+	// 				}
+	// 				let node = &self.nodes[node_content-1];
+	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, node);
+	// 				curr_node = self.new_node(txm, 4, tym, 2, txm, 1);
+	// 				break
+	// 			},
+	// 			2 => {
+	// 				let node_content = node.octants[0] as usize;
+	// 				if node_content == 0 {
+	// 					return 0
+	// 				}
+	// 				let node = &self.nodes[node_content-1];
+	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, node);
+	// 				curr_node = self.new_node(txm, 4, tym, 2, txm, 1);
+	// 				break
+	// 			},
+	// 			3 => {
+	// 				let node_content = node.octants[0] as usize;
+	// 				if node_content == 0 {
+	// 					return 0
+	// 				}
+	// 				let node = &self.nodes[node_content-1];
+	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, node);
+	// 				curr_node = self.new_node(txm, 4, tym, 2, txm, 1);
+	// 				break
+	// 			},
+	// 			4 => {
+	// 				let node_content = node.octants[0] as usize;
+	// 				if node_content == 0 {
+	// 					return 0
+	// 				}
+	// 				let node = &self.nodes[node_content-1];
+	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, node);
+	// 				curr_node = self.new_node(txm, 4, tym, 2, txm, 1);
+	// 				break
+	// 			},
+	// 			5 => {
+	// 				let node_content = node.octants[0] as usize;
+	// 				if node_content == 0 {
+	// 					return 0
+	// 				}
+	// 				let node = &self.nodes[node_content-1];
+	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, node);
+	// 				curr_node = self.new_node(txm, 4, tym, 2, txm, 1);
+	// 				break
+	// 			},
+	// 			6 => {
+	// 				let node_content = node.octants[0] as usize;
+	// 				if node_content == 0 {
+	// 					return 0
+	// 				}
+	// 				let node = &self.nodes[node_content-1];
+	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, node);
+	// 				curr_node = self.new_node(txm, 4, tym, 2, txm, 1);
+	// 				break
+	// 			},
+	// 			7 => {
+	// 				let node_content = node.octants[0] as usize;
+	// 				if node_content == 0 {
+	// 					return 0
+	// 				}
+	// 				let node = &self.nodes[node_content-1];
+	// 				self.proc_subtree(tx0, ty0, tz0, txm, tym, tzm, node);
+	// 				curr_node = self.new_node(txm, 4, tym, 2, txm, 1);
 	// 				break
 	// 			},
 	// 			_ => panic!(),
 	// 		}
+	// 		if !(curr_node < 8) {
+	// 			break
+	// 		} 
 	// 	}
 
 	// }
@@ -378,22 +655,22 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 						cz -= half_edge_len;
 						// xp, yp, zp
 						// println!("ppp");
-						curr_node = &self.nodes[curr_node.octants[0] as usize - 1];
+						curr_node = &self.nodes[curr_node.octants[7] as usize - 1];
 					} else {
 						// xp, yp, zn
 						// println!("ppn");
-						curr_node = &self.nodes[curr_node.octants[4] as usize - 1];
+						curr_node = &self.nodes[curr_node.octants[6] as usize - 1];
 					}
 				} else {
 					if zp {
 						cz -= half_edge_len;
 						// xp, yn, zp
 						// println!("pnp");
-						curr_node = &self.nodes[curr_node.octants[3] as usize - 1];
+						curr_node = &self.nodes[curr_node.octants[5] as usize - 1];
 					} else {
 						// xp, yn, zn
 						// println!("pnn");
-						curr_node = &self.nodes[curr_node.octants[7] as usize - 1];
+						curr_node = &self.nodes[curr_node.octants[4] as usize - 1];
 					}
 				}
 			} else {
@@ -403,22 +680,22 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 						cz -= half_edge_len;
 						// xn, yp, zp
 						// println!("npp");
-						curr_node = &self.nodes[curr_node.octants[1] as usize - 1];
+						curr_node = &self.nodes[curr_node.octants[3] as usize - 1];
 					} else {
 						// xn, yp, zn
 						// println!("npn");
-						curr_node = &self.nodes[curr_node.octants[5] as usize - 1];
+						curr_node = &self.nodes[curr_node.octants[2] as usize - 1];
 					}
 				} else {
 					if zp {
 						cz -= half_edge_len;
 						// xn, yn, zp
 						// println!("nnp");
-						curr_node = &self.nodes[curr_node.octants[2] as usize - 1];
+						curr_node = &self.nodes[curr_node.octants[1] as usize - 1];
 					} else {
 						// xn, yn, zn
 						// println!("nnn");
-						curr_node = &self.nodes[curr_node.octants[6] as usize - 1];
+						curr_node = &self.nodes[curr_node.octants[0] as usize - 1];
 					}
 				}
 			}
@@ -439,6 +716,15 @@ impl<T: PartialEq + Clone + std::fmt::Debug> Octree<T> {
 
 #[derive(Clone, Copy, Debug)]
 struct OctreeNode {
+	// Order is described by 'An Efficient Parametric Algorithm for Octree Traversal'
+	// 0 - nnn
+	// 1 - nnp
+	// 2 - npn
+	// 3 - npp
+	// 4 - pnn
+	// 5 - pnp
+	// 6 - ppn
+	// 7 - ppp
 	// Index to (blah) is ( if i == 0 { None } else { Some(i-1) } )
 	pub octants: [u32; 8],	// Empty if 0 in this case
 	pub content: u16,	// Empty if 0 in this case too!
@@ -534,16 +820,17 @@ pub fn chunk_to_octree(chunk: &crate::world::Chunk) -> Option<Octree<usize>> {
 					let zn = z;
 					let zp = z+1;
 
-					let ppp = trees[(xp + yp + zp) as usize].clone();
-					let npp = trees[(xn + yp + zp) as usize].clone();
+					let nnn = trees[(xn + yn + zn) as usize].clone();
 					let nnp = trees[(xn + yn + zp) as usize].clone();
+					let npn = trees[(xn + yp + zn) as usize].clone();
+					let npp = trees[(xn + yp + zp) as usize].clone();
+					let pnn = trees[(xp + yn + zn) as usize].clone();
 					let pnp = trees[(xp + yn + zp) as usize].clone();
 					let ppn = trees[(xp + yp + zn) as usize].clone();
-					let npn = trees[(xn + yp + zn) as usize].clone();
-					let nnn = trees[(xn + yn + zn) as usize].clone();
-					let pnn = trees[(xp + yn + zn) as usize].clone();
-
-					reduced_trees.push(Octree::combine(ppp,npp,nnp,pnp,ppn,npn,nnn,pnn));
+					let ppp = trees[(xp + yp + zp) as usize].clone();
+					let mixfn = |_: &[&usize]| 1_usize;
+					
+					reduced_trees.push(Octree::combine(nnn, nnp, npn, npp, pnn, pnp, ppn, ppp, &mixfn));
 				}
 			}
 		}
@@ -569,101 +856,101 @@ mod tests {
 	// use std::mem::size_of;
 	use super::*;
 
-	#[test]
-	fn test_octree_print() {
-		let octree = Octree::base(Some(4_i32), 0);
-		println!("{}", octree.print_test());
+	// #[test]
+	// fn test_octree_print() {
+	// 	let octree = Octree::base(Some(4_i32), 0);
+	// 	println!("{}", octree.print_test());
 
-		let octree2 = Octree {
-			data: vec![4_i32, 5_i32],
-			nodes: vec![
-				OctreeNode {
-					octants: [0, 0, 0, 0, 0, 0, 0, 0], 
-					content: 2, 
-				},
-				OctreeNode {
-					octants: [0, 0, 3, 0, 0, 0, 0, 0], 
-					content: 1, 
-				},
-				OctreeNode {
-					octants: [0, 0, 0, 0, 0, 0, 0, 0], 
-					content: 0, 
-				},
-			],
-			root: OctreeNode { 
-				octants: [0, 1, 0, 0, 0, 2, 0, 0], 
-				content: 1, 
-			},
-			depth: 2,
-		};
-		println!("{}", octree2.print_test());
+	// 	let octree2 = Octree {
+	// 		data: vec![4_i32, 5_i32],
+	// 		nodes: vec![
+	// 			OctreeNode {
+	// 				octants: [0, 0, 0, 0, 0, 0, 0, 0], 
+	// 				content: 2, 
+	// 			},
+	// 			OctreeNode {
+	// 				octants: [0, 0, 3, 0, 0, 0, 0, 0], 
+	// 				content: 1, 
+	// 			},
+	// 			OctreeNode {
+	// 				octants: [0, 0, 0, 0, 0, 0, 0, 0], 
+	// 				content: 0, 
+	// 			},
+	// 		],
+	// 		root: OctreeNode { 
+	// 			octants: [0, 1, 0, 0, 0, 2, 0, 0], 
+	// 			content: 1, 
+	// 		},
+	// 		depth: 2,
+	// 	};
+	// 	println!("{}", octree2.print_test());
 
-		let octree3 = Octree::combine(
-			Octree::base(Some(1_i32), 0), 
-			Octree::base(Some(2_i32), 0),
-			Octree::base(Some(3_i32), 0), 
-			Octree::base(Some(4_i32), 0),
-			Octree::base(Some(5_i32), 0), 
-			Octree::base(Some(6_i32), 0),
-			Octree::base(Some(7_i32), 0), 
-			Octree::base(Some(8_i32), 0),
-		);
-		println!("{}", octree3.print_test());
+	// 	let octree3 = Octree::combine(
+	// 		Octree::base(Some(1_i32), 0), 
+	// 		Octree::base(Some(2_i32), 0),
+	// 		Octree::base(Some(3_i32), 0), 
+	// 		Octree::base(Some(4_i32), 0),
+	// 		Octree::base(Some(5_i32), 0), 
+	// 		Octree::base(Some(6_i32), 0),
+	// 		Octree::base(Some(7_i32), 0), 
+	// 		Octree::base(Some(8_i32), 0),
+	// 	);
+	// 	println!("{}", octree3.print_test());
 
-		let coords = [0,0,0];
-		println!("Octree 3 {coords:?} is {:?}", octree3.get(coords));
-		// should be 7
+	// 	let coords = [0,0,0];
+	// 	println!("Octree 3 {coords:?} is {:?}", octree3.get(coords));
+	// 	// should be 7
 
-		let octree5 = Octree::combine(
-			Octree::base(Some(2_i32), 0),
-			Octree::base(Some(2_i32), 0),
-			Octree::base(Some(2_i32), 0), 
-			Octree::base(Some(2_i32), 0),
-			Octree::base(Some(2_i32), 0), 
-			Octree::base(Some(2_i32), 0),
-			Octree::base(Some(2_i32), 0), 
-			Octree::base(Some(2_i32), 0),
-		);
-		println!("{}", octree5.print_test());
+	// 	let octree5 = Octree::combine(
+	// 		Octree::base(Some(2_i32), 0),
+	// 		Octree::base(Some(2_i32), 0),
+	// 		Octree::base(Some(2_i32), 0), 
+	// 		Octree::base(Some(2_i32), 0),
+	// 		Octree::base(Some(2_i32), 0), 
+	// 		Octree::base(Some(2_i32), 0),
+	// 		Octree::base(Some(2_i32), 0), 
+	// 		Octree::base(Some(2_i32), 0),
+	// 	);
+	// 	println!("{}", octree5.print_test());
 
-		let octree4 = Octree::combine(
-			octree3.clone(),
-			Octree::base(Some(2_i32), 1),
-			Octree::base(Some(3_i32), 1), 
-			Octree::base(Some(4_i32), 1),
-			Octree::base(Some(5_i32), 1), 
-			Octree::base(Some(6_i32), 1),
-			Octree::base(None, 1), 
-			octree5,
-		);
-		// println!("Constructed o4");
-		// println!("o4 :{:#?}\n", octree4);
-		println!("{}", octree4.print_test());
+	// 	let octree4 = Octree::combine(
+	// 		octree3.clone(),
+	// 		Octree::base(Some(2_i32), 1),
+	// 		Octree::base(Some(3_i32), 1), 
+	// 		Octree::base(Some(4_i32), 1),
+	// 		Octree::base(Some(5_i32), 1), 
+	// 		Octree::base(Some(6_i32), 1),
+	// 		Octree::base(None, 1), 
+	// 		octree5,
+	// 	);
+	// 	// println!("Constructed o4");
+	// 	// println!("o4 :{:#?}\n", octree4);
+	// 	println!("{}", octree4.print_test());
 
-		let octree6 = Octree::combine(
-			octree3.clone(),
-			octree3.clone(),
-			octree3.clone(),
-			octree3.clone(),
-			octree3.clone(),
-			octree3.clone(),
-			Octree::base(None, 1),
-			octree3.clone(),
-		);
-		// println!("Constructed o4");
-		// println!("o4 :{:#?}\n", octree4);
-		println!("{}", octree6.print_test());
+	// 	let octree6 = Octree::combine(
+	// 		octree3.clone(),
+	// 		octree3.clone(),
+	// 		octree3.clone(),
+	// 		octree3.clone(),
+	// 		octree3.clone(),
+	// 		octree3.clone(),
+	// 		Octree::base(None, 1),
+	// 		octree3.clone(),
+	// 	);
+	// 	// println!("Constructed o4");
+	// 	// println!("o4 :{:#?}\n", octree4);
+	// 	println!("{}", octree6.print_test());
 
-		let coords = [0,0,0];
-		println!("Octree 6 {coords:?} is {:?}", octree6.get(coords));
-		let coords = [1,1,0];
-		println!("Octree 6 {coords:?} is {:?}", octree6.get(coords));
-		let coords = [2,1,0];
-		println!("Octree 6 {coords:?} is {:?}", octree6.get(coords));
+	// 	let coords = [0,0,0];
+	// 	println!("Octree 6 {coords:?} is {:?}", octree6.get(coords));
+	// 	let coords = [1,1,0];
+	// 	println!("Octree 6 {coords:?} is {:?}", octree6.get(coords));
+	// 	let coords = [2,1,0];
+	// 	println!("Octree 6 {coords:?} is {:?}", octree6.get(coords));
 
 
-		assert!(true);
-	}
+	// 	assert!(true);
+	// }
 
 	#[test]
 	fn test_octree_chunk_sizes() {

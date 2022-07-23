@@ -2,8 +2,9 @@ use specs::prelude::*;
 use winit::event_loop::*;
 use nalgebra::*;
 use std::collections::HashMap;
+use std::sync::mpsc::Receiver;
 use std::time::{Instant, Duration};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use rapier3d::prelude::*;
 use crate::ecs::*;
 use crate::window::*;
@@ -31,7 +32,7 @@ pub struct Game {
 impl Game {
 	pub fn new(
 		event_loop_proxy: EventLoopProxy<EventLoopEvent>, 
-		event_queue: Arc<Mutex<Vec<EventWhen>>>,
+		event_loop_receiver: Receiver<ResponseFeed>,
 	) -> Self {
 		let instance = wgpu::Instance::new(wgpu::Backends::all());
 		let adapter = pollster::block_on(instance.request_adapter(
@@ -80,15 +81,15 @@ impl Game {
 		world.insert(physics_resource);
 
 		let tick_dispatcher = DispatcherBuilder::new()
-			.with(MovementSystem, "movement", &[])
-			.with(MapLoadingSystem, "map loading", &["movement"])
+			// .with(MovementSystem, "movement", &[])
+			.with(MapLoadingSystem, "map loading", &[])
 			.build();
 
 		let window_manager = WindowManager::new(
-			event_loop_proxy,
 			instance,
 			adapter,
-			event_queue,
+			event_loop_proxy,
+			event_loop_receiver,
 		);
 
 		Self {
@@ -152,24 +153,31 @@ impl Game {
 
 	pub fn tick(&mut self) {
 		// Run window update
-		{
-			let mut input_resource = self.world.write_resource::<InputResource>();
-			self.window_manager.update(&mut input_resource);
-		}
-
-		// Set up window cameras 
-		// PLEASE MAKE BETTER
-		for window in self.window_manager.windows.iter_mut() {
+		self.window_manager.read_input();
+		for (_, window) in self.window_manager.windows.iter_mut() {
 			window.game_widget.tracked_entity.get_or_insert_with(|| {
 				self.world.create_entity()
 					.with(CameraComponent::new())
 					.with(
 						TransformComponent::new()
-						.with_position(Vector3::new(0.5, 0.5, 0.5))
+						.with_position(Vector3::new(0.5, 0.5, -10.5))
 					)
 					.with(MovementComponent{speed: 4.0})
 					.build()
 			});
+
+			window.game_input.end();
+
+			// Move things
+			let mut tcs = self.world.write_component::<TransformComponent>();
+			let mcs = self.world.read_component::<MovementComponent>();
+			if let Some(entity) = window.game_widget.tracked_entity {
+				if let Some(mv) = mcs.get(entity) {
+					if let Some(tc) = tcs.get_mut(entity) {
+						crate::ecs::apply_input(&window.game_input, tc, mv);
+					}
+				}
+			}
 		}
 
 		// Do ticking stuff
@@ -180,13 +188,11 @@ impl Game {
 			input_resource.last_read = Instant::now();
 		}
 		
-
 		// Show windows
 		{
 			let mut gpu_resource = self.world.write_resource::<GPUResource>();
-			// Update UI
-			for window in self.window_manager.windows.iter_mut() {
-
+			for (_, window) in self.window_manager.windows.iter_mut() {
+				window.game_input.reset();
 				window.update(
 					&mut gpu_resource,
 					&self.world,
@@ -195,10 +201,12 @@ impl Game {
 		}
 	}
 
+	
+
 	pub fn new_window(&mut self) {
 		info!("Requesting new game window");
 
-		self.window_manager.request_window();
+		self.window_manager.request_new_window();
 	}
 }
 
