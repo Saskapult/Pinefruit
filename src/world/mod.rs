@@ -3,6 +3,9 @@ pub mod chunk;
 pub mod map;
 pub mod terrain;
 
+pub mod acceleration;
+pub use acceleration::*;
+
 pub use blocks::*;
 pub use chunk::*;
 pub use map::*;

@@ -1,0 +1,21 @@
+(
+    name: "acceleration test",
+    source: (
+        language: Glsl,
+        base: Compute((
+            path: "acceleration_test.comp",
+            entry: "main",
+        )),
+    ),
+    bind_groups: {
+		0: {
+			0: ("colour", StorageTexture(RGBA)),
+            1: ("camera", Buffer),
+		},
+        1: {
+            0: ("chunk_accel_info", Buffer),
+            1: ("chunk_accel_data", StorageBuffer),
+            2: ("array_volumes", StorageBuffer),
+        }
+	},
+)

@@ -127,6 +127,14 @@ pub enum ShaderPipeline {
 		attachments: Vec<ShaderAttatchmentSpecification>,
 	},
 }
+impl ShaderPipeline {
+	pub fn unwrap_compute(&self) -> &wgpu::ComputePipeline {
+		match self {
+			Self::Compute(g) => g,
+			_ => panic!("fugg"),
+		}
+	}
+}
 
 #[derive(Debug)]
 pub struct ShaderMeshFormat {
@@ -233,9 +241,9 @@ impl BindGroupEntryFormat {
 			BindingType::StorageBuffer => {
 				wgpu::BindGroupLayoutEntry {
 					binding: i,
-					visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+					visibility: wgpu::ShaderStages::COMPUTE,
 					ty: wgpu::BindingType::Buffer {
-						ty: wgpu::BufferBindingType::Storage { read_only: false },
+						ty: wgpu::BufferBindingType::Storage { read_only: true },
 						has_dynamic_offset: false,
 						min_binding_size: None,
 					},
@@ -467,8 +475,10 @@ impl ShaderManager {
 
 	pub fn register_path(
 		&mut self,
-		path: &PathBuf,
+		path: impl AsRef<std::path::Path>,
 	) -> usize {
+		let path = path.as_ref();
+		let path = &PathBuf::from(path);
 		info!("Registering shader from {:?}", path);
 		let specification = ShaderSpecification::from_path(path);
 		let shader = self.construct_shader(&specification, path).unwrap();
@@ -635,6 +645,29 @@ impl ShaderManager {
 
 				warn!("Attempting to compile GLSL shaders to SPIRV using glslc");
 
+				let mut source_dest = source_path.clone().into_os_string();
+				source_dest.push(".spv");
+
+				// Check if recompilation is not needed
+				if let Ok(source_meta) = std::fs::metadata(&source_path) {
+					if let Ok(dest_meta) = std::fs::metadata(&source_dest) {
+						let source_modified = source_meta.modified().unwrap();
+						let dest_modified = dest_meta.modified().unwrap();
+
+						if dest_modified > source_modified {
+							info!("Never mind that, found up to date {source_dest:?}");
+
+							let source = std::fs::read(&source_dest)
+								.expect("failed to read file");
+
+							return Ok(unsafe { self.device.create_shader_module_spirv( &wgpu::ShaderModuleDescriptorSpirV { 
+									label: source_path.to_str(), 
+									source: wgpu::util::make_spirv_raw(&source[..]), 
+							})})
+						}
+					}
+				}
+
 				// Test if glslc is accessible
 				match std::process::Command::new("glslc").arg("--version").status() {
 					Ok(exit_status) => {
@@ -644,9 +677,6 @@ impl ShaderManager {
 					},
 					Err(e) => return Err(ShaderError::CompilationGlslcError(format!("failed to run glslc, {e:?}"))),
 				}
-
-				let mut source_dest = source_path.clone().into_os_string();
-				source_dest.push(".spv");
 
 				let voutput = Command::new("glslc")
 					.arg(&source_path)

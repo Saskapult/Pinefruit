@@ -1,4 +1,5 @@
-// use crate::world::*;
+use crate::world::BlockManager;
+use std::path::Path;
 
 
 
@@ -124,6 +125,35 @@ impl Chunk {
 			});
 		});
 		self
+	}
+
+	pub fn from_compressed_mapped_rle(
+		path: impl AsRef<Path>, 
+		chunk_size: [u32; 3], 
+		blocks: &BlockManager,
+	) -> anyhow::Result<Self> {
+		use std::io::Read;
+		use lz4_flex::decompress_size_prepended;
+
+		let path = path.as_ref();
+		let mut reader = std::fs::File::open(path)?;
+		let mut compressed_bytes = Vec::new();
+		reader.read_to_end(&mut compressed_bytes)?;
+		let bytes = decompress_size_prepended(&compressed_bytes[..])?;
+		let (name_map, mapped_rle) = bincode::deserialize::<(Vec<String>, Vec<(usize, u32)>)>(&bytes[..])?;
+		let rle = mapped_rle.iter().map(|&(name_idx, l)| {
+			if name_idx == 0 {
+				(name_idx, l)
+			} else {
+				let corrected_name_idx = name_idx - 1;
+				let name = &name_map[corrected_name_idx];
+				let id = blocks.index_name(name).unwrap() + 1;
+				(id, l)
+			}	
+		}).collect::<Vec<_>>();
+		let c = Chunk::new(chunk_size).rld(&rle);
+
+		Ok(c)
 	}
 }
 

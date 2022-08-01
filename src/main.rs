@@ -1,4 +1,4 @@
-#![feature(drain_filter)]
+#![feature(drain_filter, int_roundings)]
 #![allow(dead_code)]
 #![feature(int_log)]
 
@@ -15,6 +15,8 @@ mod noise;
 mod lua;
 mod octree;
 mod gui;
+mod simulation;
+mod voxelvolume;
 
 
 use window::*;

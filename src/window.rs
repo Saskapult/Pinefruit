@@ -10,7 +10,6 @@ use std::time::{Instant, Duration};
 use egui;
 use crate::ecs::*;
 use crate::gui::{GameWidget, MessageWidget};
-use crate::render::*;
 use generational_arena::{Arena, Index};
 
 
@@ -160,9 +159,6 @@ pub struct GameWindow {
 	test_texture: Option<egui::TextureHandle>,
 
 	pub game_widget: GameWidget,
-	game_render_texture: Option<BoundTexture>,
-	sampy: Option<wgpu::Sampler>,
-	fug_buffer: Option<wgpu::Buffer>,
 
 	message_widget: MessageWidget,
 
@@ -194,6 +190,9 @@ impl GameWindow {
 			present_mode: wgpu::PresentMode::Fifo,
 		};
 		info!("Created new game window with format {:?}", &surface_config.format);
+
+		window.set_title("kkraft time");
+		window.set_window_icon(None);
 
 		let platform = egui_winit_platform::Platform::new(egui_winit_platform::PlatformDescriptor {
 			physical_width: size.width as u32,
@@ -234,10 +233,6 @@ impl GameWindow {
 			test_texture: None,
 
 			game_widget: GameWidget::new(None),
-			game_render_texture: None,
-			sampy: None,
-			fug_buffer: None,
-
 			message_widget: MessageWidget::new(),
 
 			game_times: crate::util::DurationHolder::new(30),
@@ -297,6 +292,9 @@ impl GameWindow {
 								ui.label(format!("Position: [{:.1}, {:.1}, {:.1}]", tc.position[0], tc.position[1], tc.position[2]));
 								let (r, p, y) = tc.rotation.euler_angles();
 								ui.label(format!("Rotation: [{:.1}, {:.1}, {:.1}]", r, p, y));
+								
+								let c = tc.position / 16.0;
+								ui.label(format!("Chunk: [{}, {}, {}]", c[0].floor() as i32, c[1].floor() as i32, c[2].floor() as i32));
 							}
 						} else {
 							ui.label("Tracked entity not set!");
@@ -318,9 +316,6 @@ impl GameWindow {
 							self.message_widget.add_message("Hey!".to_string(), Instant::now() + Duration::from_secs_f32(5.0));
 						}
 
-						for i in 0..14 {
-							ui.label(format!("{i}"));
-						}
 					});
 				});
 			egui::SidePanel::right("right panel")

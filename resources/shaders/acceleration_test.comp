@@ -1,0 +1,221 @@
+#version 450
+
+layout(local_size_x=16, local_size_y=16) in;
+layout(set=0, binding=0, rgba8) uniform writeonly image2D resultImage;
+
+layout(set=0, binding=1) uniform Camera {
+	vec4 position; // Never ever ever use a vec3, it is a cursed type
+	mat4 rotation_matrix;
+	float near;
+} camera;
+
+
+layout(set=1, binding=0) uniform ChunkAcceleratorInfo {
+	ivec4 centre;
+	uint edge_len;
+	uint chunk_size;
+} info;
+layout(set=1, binding=1) readonly buffer ChunkAcceleratorData {
+	uint chunk_indices[];
+} hlas;
+layout(set=1, binding=2) readonly buffer ArrayVolumeData {
+	uint contents[];
+} blas;
+
+
+// https://www.shadertoy.com/view/wtSyRd
+// vec3(is_hit, t_max, t_min)
+vec3 aabb_intersect(vec3 origin, vec3 direction, vec3 bmin, vec3 bmax) {
+	vec3 inverse_direction = 1.0 / direction;
+	vec3 tbot = inverse_direction * (bmin - origin);
+	vec3 ttop = inverse_direction * (bmax - origin);
+	vec3 tmin = min(ttop, tbot);
+	vec3 tmax = max(ttop, tbot);
+	vec2 traverse = max(tmin.xx, tmin.yz);
+	float traverselow = max(traverse.x, traverse.y);
+	traverse = min(tmax.xx, tmax.yz);
+	float traversehi = min(traverse.x, traverse.y);
+	return vec3(float(traversehi > max(traverselow, 0.0)), traversehi, traverselow);
+}
+
+
+vec3 bl_ray(uint index, vec3 origin, vec3 direction, float tlimit, out float hit, out float t, inout vec3 normal) {
+	ivec3 vpos = ivec3(floor(origin));
+
+	ivec3 vstep = ivec3(sign(direction));
+	vec3 tdelta = abs(vec3(1.0 / direction));
+
+	vec3 tmax;
+	tmax.x = direction.x < 0 ? origin.x - floor(origin.x) : 1.0 - origin.x + floor(origin.x);
+	tmax.y = direction.y < 0 ? origin.y - floor(origin.y) : 1.0 - origin.y + floor(origin.y);
+	tmax.z = direction.z < 0 ? origin.z - floor(origin.z) : 1.0 - origin.z + floor(origin.z);
+	tmax *= tdelta;
+
+	vec3 col = vec3(0.5);
+	t = 0.0;
+	hit = 0.0;
+	int iters = 0;
+	while (true) {
+		if (iters >= 50) return vec3(0.0, 0.86, 1.0);
+		if (t >= tlimit) return vec3(0.0, 0.0, 1.0);
+		iters += 1;
+
+		bool inbounds = all(lessThanEqual(vpos, ivec3(15))) && all(greaterThanEqual(vpos, ivec3(0)));
+		// if (!inbounds) col = vec3(0.0, 1.0, 0.0);
+		
+		// if (inbounds) {
+		// 	hit = 1.0;
+		// 	return vec3(1.0);
+		// }
+		// else {
+		// 	return vec3(0.0);
+		// }
+
+		uint offset = vpos.x * info.chunk_size * info.chunk_size + vpos.y * info.chunk_size + vpos.z;
+		uint v_content = blas.contents[index + offset];
+
+		if (inbounds && v_content != 0) {
+			hit = 1.0;
+			return col;
+		}
+
+		if (tmax.x < tmax.y) {
+			if (tmax.x < tmax.z) {
+				normal = vec3(-vstep.x, 0.0, 0.0);
+				vpos.x += vstep.x;
+				t = tmax.x;
+				tmax.x += tdelta.x;
+			}
+			else {
+				normal = vec3(0.0, 0.0, -vstep.z);
+				vpos.z += vstep.z;
+				t = tmax.z;
+				tmax.z += tdelta.z;
+			}
+		}
+		else {
+			if (tmax.y < tmax.z) {
+				normal = vec3(0.0, -vstep.y, 0.0);
+				vpos.y += vstep.y;
+				t = tmax.y;
+				tmax.y += tdelta.y;
+			}
+			else {
+				normal = vec3(0.0, 0.0, -vstep.z);
+				vpos.z += vstep.z;
+				t = tmax.z;
+				tmax.z += tdelta.z;
+			}
+		}
+	}
+	return vec3(0.0);
+}
+
+
+// If not hit index is 0
+// If hit then index is not 0 and real index is index - 1 and t is valid
+vec3 hl_ray(vec3 origin, vec3 direction, float tlimit, out uint index, out float t) {
+	float vscale = float(info.chunk_size);
+	ivec3 vpos = ivec3(floor(origin / vscale));
+	ivec3 vstep = ivec3(sign(direction));
+	vec3 tdelta = abs(vec3(vscale / direction));
+
+	vec3 tmax; // (fract or 1-fract depending on direction) * vscale / abs(dir)
+	vec3 o = origin / vscale;
+	tmax.x = direction.x < 0 ? o.x - floor(o.x) : 1.0 - o.x + floor(o.x);
+	tmax.y = direction.y < 0 ? o.y - floor(o.y) : 1.0 - o.y + floor(o.y);
+	tmax.z = direction.z < 0 ? o.z - floor(o.z) : 1.0 - o.z + floor(o.z);
+	tmax *= tdelta;
+
+	t = 0.0;
+	vec3 normal = vec3(0.0);
+	float hitany = 0.0;
+	int iters = 0;
+	while (true) {
+		if (iters >= 100) return vec3(1.0, 0.0, 0.86);	// Debug purple
+		if (t >= tlimit) return vec3(1.0, 0.0, 0.0);	// Red
+		iters += 1;
+		
+		ivec3 cr_pos = vpos - ivec3(info.centre); // Position relative to centre
+		bool inbounds = all(lessThanEqual(abs(cr_pos), ivec3(info.edge_len / 2)));
+		ivec3 zero = ivec3(info.centre) - ivec3(info.edge_len / 2);
+		
+		uvec3 array_position = uvec3(vpos - zero);
+		uint i = array_position.x * info.edge_len * info.edge_len + array_position.y * info.edge_len + array_position.z;
+
+		if (inbounds && hlas.chunk_indices[i] != 0) {
+			index = hlas.chunk_indices[i];
+			uint real_index = index - 1;
+
+			// Hit position relative to voxel origin
+			vec3 bl_origin = origin + direction * (t + 0.001) - vec3(vpos) * vscale;
+			float bl_hit;
+			float bl_t;
+			vec3 bl_normal = normal;
+			vec3 bl_result = bl_ray(real_index, bl_origin, direction, 30.0, bl_hit, bl_t, bl_normal);
+
+			if (bl_hit > 0.1) {
+				// return mix(bl_result, vec3(0.5), 0.5);
+				return mix(vec3(1.0), vec3(0.5), abs(bl_normal));
+				// return bl_result;
+			}
+
+			// vec3 o = mix(vec3(1.0), vec3(0.5), abs(bl_normal));
+			
+			// return bl_result;
+		};
+
+		if (tmax.x < tmax.y) {
+			if (tmax.x < tmax.z) {
+				normal = vec3(-vstep.x, 0.0, 0.0);
+				vpos.x += vstep.x;
+				t = tmax.x;
+				tmax.x += tdelta.x;
+			}
+			else {
+				normal = vec3(0.0, 0.0, -vstep.z);
+				vpos.z += vstep.z;
+				t = tmax.z;
+				tmax.z += tdelta.z;
+			}
+		}
+		else {
+			if (tmax.y < tmax.z) {
+				normal = vec3(0.0, -vstep.y, 0.0);
+				vpos.y += vstep.y;
+				t = tmax.y;
+				tmax.y += tdelta.y;
+			}
+			else {
+				normal = vec3(0.0, 0.0, -vstep.z);
+				vpos.z += vstep.z;
+				t = tmax.z;
+				tmax.z += tdelta.z;
+			}
+		}
+	}
+}
+
+ 
+void main() {
+
+	ivec2 dim = imageSize(resultImage);
+	vec2 uv = vec2(gl_GlobalInvocationID.xy) / dim;
+
+	vec3 origin = camera.position.xyz;
+
+	vec2 uv_11space = (uv * 2.0 - vec2(1.0)) * vec2(1.0, -1.0);
+	vec3 base_direction = normalize(vec3(uv_11space, camera.near));
+	vec3 direction = normalize((camera.rotation_matrix * vec4(base_direction, 1.0)).xyz);
+
+
+	uint index;
+	float t;
+	vec3 proto_result = hl_ray(origin, direction, 1000.0, index, t);
+	vec4 result = vec4(proto_result, 1.0);
+	// vec4 result = vec4(mix(vec3(0.0), proto_result, float(index != 0)), 1.0);
+	// vec4 result = vec4(vec3(1.0), 1.0);
+
+	
+	imageStore(resultImage, ivec2(gl_GlobalInvocationID.xy), result);
+}

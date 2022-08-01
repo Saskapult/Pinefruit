@@ -122,8 +122,8 @@ impl Game {
 			// Load my thingy
 			drop(matm);
 			drop(texm);
-			gpu.data.shaders.register_path(&std::path::PathBuf::from("./resources/shaders/ray_test.ron"));
-			gpu.data.shaders.register_path(&std::path::PathBuf::from("./resources/shaders/blit.ron"));
+			gpu.data.shaders.register_path("./resources/shaders/acceleration_test.ron");
+			gpu.data.shaders.register_path("./resources/shaders/blit.ron");
 		}
 
 		// Block loading
@@ -160,7 +160,7 @@ impl Game {
 					.with(CameraComponent::new())
 					.with(
 						TransformComponent::new()
-						.with_position(Vector3::new(0.5, 0.5, -10.5))
+						.with_position(Vector3::new(0.5, 0.5, 0.5))
 					)
 					.with(MovementComponent{speed: 4.0})
 					.build()

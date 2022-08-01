@@ -19,6 +19,20 @@ pub struct BlockSpecification {
 }
 
 
+/// It's just for testing, do not use this
+pub fn load_blocks_file_messy(
+	path: impl AsRef<Path>,
+	bm: &mut BlockManager,
+) {
+	let path  = path.as_ref();
+	let f = std::fs::File::open(path).unwrap();
+	let block_specs: Vec<BlockSpecification> = ron::de::from_reader(f).unwrap();
+	for spec in block_specs {
+		let block = Block::new(&spec.name);
+		bm.insert(block);
+	}
+}
+
 
 pub fn load_blocks_file(
 	path: impl AsRef<Path>,

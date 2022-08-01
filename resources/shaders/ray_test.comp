@@ -12,11 +12,18 @@ layout(set=0, binding=1) uniform Camera {
 	float near;
 } camera;
 
-// layout(set=0, binding=2) uniform Chunk {
-// 	vec4 position; // Never ever ever use a vec3, it is a cursed type
-// 	unsigned char indices[4096]; // 16^3 = 4096, 32^3 = 32768
-// 	vec4 colours[128];
-// } chunk;
+
+// layout(set=1, binding=0) uniform ChunkAcceleratorInfo {
+// 	ivec4 centre;
+// 	uint edge_len;
+// 	uint chunk_size;
+// } info;
+// layout(set=1, binding=1) buffer ChunkAcceleratorData {
+// 	uint chunk_thing[];
+// } hlas;
+// layout(set=1, binding=2) buffer ChunkData {
+// 	uint chunks[];
+// } blas;
 
 
 // https://www.shadertoy.com/view/wtSyRd
@@ -173,6 +180,39 @@ vec3 aw_ray(vec3 origin, vec3 direction, float tlimit) {
 	vec3 o = mix(vec3(1.0), vec3(0.5), abs(normal));
 	return mix(vec3(0.0), o, hitany);
 	// return vec3(1.0);
+}
+
+
+
+// https://theses.liacs.nl/pdf/2018-2019-VoetterRF.pdf
+vec3 better_ray(vec3 origin, vec3 direction, vec3 bmin, vec3 bmax, float t_limit) {
+
+	vec3 aabbresult = aabb_intersect(origin, direction, bmin, bmax);
+	float is_box_hit = aabbresult.x;
+	float tmin = max(aabbresult.z, 0.0);
+	float tmax = aabbresult.y;
+	if (!(is_box_hit > 0.1) || tmin > t_limit) {
+		return vec3(0.0);
+	}
+
+	vec3 v = origin + direction * tmin;
+	vec3 dt = 1.0 / direction;
+	vec3 s = (sign(direction) * (floor(v) - v + 0.5) + 0.5) * dt;
+	vec3 c = vec3(0.0); // Accumulator?
+	float t = 0; // distance (relative to tmin) of the entry of a voxel
+	while (t < tmax - tmin) {
+		vec3 mask = s <= min(s.yzx, s.zxy);
+		float u = min(s.x, s.y, s.z); // distance (relative to tmin) of the exit of a voxel
+		float stepp = u - t; // distance moved inside of this voxel cell
+		t = u;
+		
+		c = c + 0.0; // c + texture at floor(v) * stepp
+
+		s = s + dt * mask;
+		v = v * sign(direction) * mask;
+	}
+
+	return c;
 }
 
  

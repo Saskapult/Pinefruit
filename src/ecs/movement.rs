@@ -10,6 +10,20 @@ use crate::window::WindowInput;
 
 
 
+// pub struct InputComponent {
+// 	input_receiver: std::sync::mpsc::Receiver<crate::window::WindowInput>,
+// }
+// impl InputComponent {
+// 	pub fn update(&mut self) {
+// 		let mut inp = crate::window::WindowInput::new();
+// 		for x in self.input_receiver.try_iter() {
+// 			inp.apply(&x);
+// 		}
+// 	}
+// }
+
+
+
 #[derive(Component, Debug)]
 #[storage(VecStorage)]
 pub struct MovementComponent {

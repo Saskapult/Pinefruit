@@ -1,5 +1,6 @@
 use nalgebra::*;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use crate::world::*;
 use crate::render::*;
@@ -438,6 +439,55 @@ impl Map {
 		}
 
 		None
+	}
+
+	/// Encodes run length, maps blocks with name, compresses with lz4.
+	pub fn save_chunk(&self, chunk_position: [i32; 3]) -> anyhow::Result<()> {
+		use lz4_flex::compress_prepend_size;
+		use std::io::Write;
+
+		let c = self.chunk(chunk_position)?;
+		let rle = c.rle();
+
+		let (name_idx_map, name_map) = self.blocks.read().unwrap().encoding_maps(&rle);
+
+		let mapped_rle = rle.iter().map(|&(id, l)| {
+			if id == 0 {
+				(id, l)
+			} else {
+				(name_idx_map[&id]+1, l)
+			}
+		}).collect::<Vec<_>>();
+
+		let seed = 0;
+		let [cx, cy, cz] = chunk_position;
+		
+		let save_path = PathBuf::from(format!("map_saved/{seed}/{cx}.{cy}.{cz}.cmrle"));
+		std::fs::create_dir_all(save_path.parent().unwrap())?;
+		let mut writer = std::fs::File::create(&save_path)?;
+
+		let bytes = bincode::serialize(&(name_map, mapped_rle))?;
+		let compressed_bytes = compress_prepend_size(&bytes[..]);
+
+		writer.write_all(&compressed_bytes[..])?;
+
+		// ron::ser::to_writer(writer, &(name_map, mapped_rle))?;
+
+		Ok(())
+	}
+
+	pub fn read_chunk(&mut self, chunk_position: [i32; 3]) -> anyhow::Result<()> {
+
+		let seed = 0;
+		let [cx, cy, cz] = chunk_position;
+		let save_path = format!("map_saved/{seed}/{cx}.{cy}.{cz}.cmrle");
+
+		let blocks = self.blocks.read().unwrap();
+		let c = Chunk::from_compressed_mapped_rle(save_path, self.chunk_size, &blocks)?;
+
+		self.chunks.insert(chunk_position, MapChunkEntry::Complete(c));
+		
+		Ok(())
 	}
 
 	// Returns the positions of all chunks that should be rendered from this camera
@@ -1029,81 +1079,155 @@ const REVERSE_QUAD_INDICES: [u16; 6] = [
 ];
 
 
-/*
+
 #[cfg(test)]
 mod tests {
 	use super::*;
 
-	// Tests that parallel chunk meshing is faster than non-parallel chunk meshing
-    #[test]
-    fn test_mesh_rayon() {
-		const CHUNKSIZE: [u32; 3] = [32; 3];
+	// // Tests that parallel chunk meshing is faster than non-parallel chunk meshing
+    // #[test]
+    // fn test_mesh_rayon() {
+	// 	const CHUNKSIZE: [u32; 3] = [32; 3];
 
-		let bm = Arc::new(RwLock::new({
+	// 	let bm = Arc::new(RwLock::new({
+	// 		let mut bm = BlockManager::new();
+
+	// 		bm.insert(Block::new(
+	// 			&format!("stone")
+	// 		));
+	// 		bm.insert(Block::new(
+	// 			&format!("grass")
+	// 		));
+	// 		bm.insert(Block::new(
+	// 			&format!("dirt")
+	// 		));
+
+	// 		bm
+	// 	}));
+
+	// 	println!("Generating world");
+	// 	let mapgen_st = Instant::now();
+	// 	let mut map = Map::new(CHUNKSIZE, &bm);
+	// 	map.generate();
+	// 	println!("Generated map in {}ms", (Instant::now() - mapgen_st).as_millis());
+
+	// 	println!("Begin meshing");
+	// 	let start_t = Instant::now();
+
+	// 	let mut queue = Vec::new();
+	// 	for cx in -4..4 {
+	// 		for cy in -1..2 {
+	// 			for cz in -4..4 {
+	// 				queue.push((
+	// 					[cx,cy,cz], 
+	// 					Instant::now(), 
+	// 					map.mesh_chunk_rayon([cx, cy, cz]),
+	// 				));
+	// 			}
+	// 		}
+	// 	}
+
+	// 	let mut mesh_times = Vec::new();
+	// 	while queue.len() > 0 {
+	// 		queue.drain_filter(|(cpos, st, result)| {
+	// 			let content = result.lock().unwrap();
+	// 			if content.is_some() {
+	// 				mesh_times.push((*cpos, Instant::now() - *st));
+	// 				true
+	// 			} else {
+	// 				false
+	// 			}
+	// 		});
+	// 		// Don't lock all the time
+	// 		std::thread::sleep(Duration::from_millis(2));
+	// 	}
+
+	// 	let total_duration = Instant::now() - start_t;
+
+	// 	// Display results
+	// 	for (cpos, cdur) in &mesh_times {
+	// 		println!("chunk {:?} meshed in {}ms", cpos, cdur.as_millis());
+	// 	}
+	// 	println!("{} chunks meshed in {}ms", mesh_times.len(), total_duration.as_millis());
+
+	// 	let duration_sum: Duration = mesh_times.drain(..).map(|(_, d)| d).sum();
+	// 	println!("Duration sum is {}ms", duration_sum.as_millis());
+
+    //     assert!(duration_sum > total_duration);
+    // }
+
+	#[test]
+	fn test_map_save_load() {
+		use crate::texture::TextureManager;
+		use crate::material::{MaterialManager, load_materials_file};
+
+		let xs = 3;
+		let zs = 3;
+		let ys = 3;
+
+		let mut tm = TextureManager::new();
+		let mut mm = MaterialManager::new();
+		load_materials_file(
+			"resources/materials/kmaterials.ron",
+			&mut tm,
+			&mut mm,
+		).unwrap();
+		let bm = {
 			let mut bm = BlockManager::new();
 
-			bm.insert(Block::new(
-				&format!("stone")
-			));
-			bm.insert(Block::new(
-				&format!("grass")
-			));
-			bm.insert(Block::new(
-				&format!("dirt")
-			));
-
-			bm
-		}));
-
-		println!("Generating world");
-		let mapgen_st = Instant::now();
-		let mut map = Map::new(CHUNKSIZE, &bm);
-		map.generate();
-		println!("Generated map in {}ms", (Instant::now() - mapgen_st).as_millis());
-
-		println!("Begin meshing");
-		let start_t = Instant::now();
-
-		let mut queue = Vec::new();
-		for cx in -4..4 {
-			for cy in -1..2 {
-				for cz in -4..4 {
-					queue.push((
-						[cx,cy,cz], 
-						Instant::now(), 
-						map.mesh_chunk_rayon([cx, cy, cz]),
-					));
+			crate::world::blocks::load_blocks_file(
+				"resources/kblocks.ron",
+				&mut bm,
+				&mut tm,
+				&mut mm,
+			).unwrap();
+			
+			Arc::new(RwLock::new(bm))
+		};
+		
+		let mut map = Map::new([16; 3], &bm);
+		for cx in -xs..=xs {
+			for cz in -zs..=zs {
+				for cy in -ys..=ys {
+					map.begin_chunk_generation([cx, cy, cz]);
 				}
 			}
 		}
-
-		let mut mesh_times = Vec::new();
-		while queue.len() > 0 {
-			queue.drain_filter(|(cpos, st, result)| {
-				let content = result.lock().unwrap();
-				if content.is_some() {
-					mesh_times.push((*cpos, Instant::now() - *st));
-					true
-				} else {
-					false
+		println!("Waiting for map generation");
+		let mut done = false;
+		while !done {
+			done = true;
+			for cx in -xs..=xs {
+				for cz in -zs..=zs {
+					for cy in -ys..=ys {
+						if !map.check_chunk_available([cx, cy, cz]) {
+							done = false;
+						}
+					}
 				}
-			});
-			// Don't lock all the time
-			std::thread::sleep(Duration::from_millis(2));
+			}
 		}
+		println!("Done that, saving");
 
-		let total_duration = Instant::now() - start_t;
-
-		// Display results
-		for (cpos, cdur) in &mesh_times {
-			println!("chunk {:?} meshed in {}ms", cpos, cdur.as_millis());
+		for cx in -xs..=xs {
+			for cz in -zs..=zs {
+				for cy in -ys..=ys {
+					map.save_chunk([cx, cy, cz]).unwrap();
+				}
+			}
 		}
-		println!("{} chunks meshed in {}ms", mesh_times.len(), total_duration.as_millis());
+		println!("Done that, loading");
 
-		let duration_sum: Duration = mesh_times.drain(..).map(|(_, d)| d).sum();
-		println!("Duration sum is {}ms", duration_sum.as_millis());
-
-        assert!(duration_sum > total_duration);
-    }
+		for cx in -xs..=xs {
+			for cz in -zs..=zs {
+				for cy in -ys..=ys {
+					let old = map.chunk([cx,cy,cz]).unwrap().clone();
+					map.read_chunk([cx,cy,cz]).unwrap();
+					assert_eq!(old, *map.chunk([cx,cy,cz]).unwrap());
+				}
+			}
+		}
+		
+	}
 }
-*/
+

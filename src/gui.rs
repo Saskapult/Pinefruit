@@ -3,14 +3,13 @@ use bytemuck::{Pod, Zeroable};
 use egui;
 use specs::Entity;
 use std::sync::mpsc::sync_channel;
-use crate::{render::*, ecs::GPUResource};
+use crate::{render::*, ecs::GPUResource, world::{TracingChunkManager, BlockManager, load_blocks_file_messy, Chunk}};
 use crate::window::WindowSettings;
 
 
 
 
 // use egui::Widget;
-
 
 
 #[repr(C)]
@@ -32,6 +31,11 @@ pub struct GameWidget {
 	last_size: [f32; 2],
 	conversion_sampler: Option<wgpu::Sampler>,
 	fugg_buffer: Option<wgpu::Buffer>,
+	
+	bm: BlockManager,
+	tcm: Option<TracingChunkManager>,
+
+	aspect: Option<f32>, // Aspect ratio for the widget (4.0 / 3.0, 16.0 / 9.0, and so on)
 
 	camera_buffer: Option<wgpu::Buffer>,
 }
@@ -39,6 +43,13 @@ impl GameWidget {
 	pub fn new(
 		tracked_entity: Option<Entity>,
 	) -> Self {
+
+		let mut bm = BlockManager::new();
+		load_blocks_file_messy(
+			"./resources/kblocks.ron",
+			&mut bm,
+		);
+
 		Self {
 			tracked_entity,
 			rgba_texture: None,
@@ -47,6 +58,11 @@ impl GameWidget {
 			last_size: [400.0; 2],
 			conversion_sampler: None,
 			fugg_buffer: None,
+
+			aspect: None,
+
+			bm,
+			tcm: None,
 
 			camera_buffer: None,
 		}
@@ -133,17 +149,41 @@ impl GameWidget {
 					},
 				],
 			});
+			let tcm = self.tcm.get_or_insert_with(|| {
+				let mut tcm = TracingChunkManager::new(&gpu_resource.device);
+				
+				let chunk = Chunk::from_compressed_mapped_rle(
+					"./map_saved/0/-3.-2.1.cmrle", 
+					[16; 3], &mut self.bm
+				).unwrap();
+				// let mut chunk = Chunk::new([16;3]);
+				// for x in 0..16 {
+				// 	for y in 0..16 {
+				// 		for z in 0..16 {
+				// 			if x % 3 == 0 {
+				// 				chunk.set_voxel([x,y,z], crate::world::Voxel::Block(0));
+				// 			}
+				// 		}
+				// 	}
+				// }
+				
+				tcm.insert_chunk(&gpu_resource.queue, [0,0,2], &chunk);
+				
+				tcm
+			});
+			// tcm.chunks.insert([0,1,1], (0, 0));
+			// tcm.chunks.insert([0,0,1], (0, 0));
+			tcm.rebuild(&gpu_resource.queue, [0,0,0]);
+			let tcmbg = tcm.make_bg(&gpu_resource.device, gpu_resource.data.shaders.bind_group_layout_index(comp_shader.bind_groups[&1].layout_idx));
 			{
 				let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
 					label: Some("compute pass"),
 				});
 				
-				match &comp_shader.pipeline {
-					crate::render::ShaderPipeline::Compute(pipeline) => cp.set_pipeline(pipeline),
-					_ => panic!("Weird shader things"),
-				}
+				cp.set_pipeline(comp_shader.pipeline.unwrap_compute());
 
 				cp.set_bind_group(0, &cp_bind_group, &[]);
+				cp.set_bind_group(1, &tcmbg, &[]);
 				
 				cp.dispatch_workgroups(rgba.size.width / 16 + 1, rgba.size.height / 16 + 1, 1);
 			}
@@ -236,7 +276,10 @@ impl GameWidget {
 			true
 		}
 
+		// let indended_width = self.last_size[0].round() as u32;
+		// let height = (self.last_size[0] * 9.0 / 16.0).round() as u32;
 		let intended_size = self.last_size.map(|f| f.round() as u32);
+		// let intended_size = [indended_width, height];
 
 		update_size_internal(device, &mut self.rgba_texture, intended_size, TextureFormat::Rgba8Unorm);
 		update_size_internal(device, &mut self.srgba_texture, intended_size, TextureFormat::Rgba8UnormSrgb);
@@ -267,8 +310,13 @@ impl GameWidget {
 		}
 		
 		if let Some(tid) = self.display_texture {
-			self.last_size = ui.available_size().into();
-			let g = ui.image(tid, ui.available_size());
+			let mut size = ui.available_size();
+			if let Some(a) = self.aspect {
+				size.y = size.x / a; 
+			}
+			self.last_size = size.into();
+			
+			let g = ui.image(tid, size);
 			let f = g.interact(egui::Sense::click());
 			if f.clicked() {
 				println!("cap");

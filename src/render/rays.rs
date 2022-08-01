@@ -444,7 +444,7 @@ impl AWIter {
 	pub fn new(
 		origin: Vector3<f32>,
 		direction: Vector3<f32>,
-		_t_min: f32, 
+		_t_min: f32, // Could do origin = origin + direction * t_min but that loses normal data
 		t_max: f32,
 		voxel_scale: f32,
 	) -> Self {
