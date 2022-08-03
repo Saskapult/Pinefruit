@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use thiserror::Error;
 use std::path::PathBuf;
-use std::time::{Instant, SystemTime};
+use std::time::SystemTime;
 use std::{sync::Arc, num::NonZeroU32};
 use std::collections::{HashMap, BTreeMap};
 use wgpu;
@@ -610,6 +610,7 @@ impl ShaderManager {
 					fragment.clone(),
 					polygon_behaviour.clone(),
 					attachments.clone(),
+					*multisample_count,
 					&pipeline_layout,
 				)?;
 
@@ -728,6 +729,7 @@ impl ShaderManager {
 		fragment: Option<ShaderSourceFile>,
 		polygon_behaviour: Option<PolygonBehaviour>,
 		attachments: Vec<ShaderAttatchmentSpecification>,
+		multisample_count: u32,
 		layout: &wgpu::PipelineLayout,
 	) -> Result<wgpu::RenderPipeline, ShaderError> {
 		let pipeline_label = format!("{spec_name} pipeline");
@@ -879,7 +881,7 @@ impl ShaderManager {
 			},
 			depth_stencil,
 			multisample: wgpu::MultisampleState {
-				count: 1,
+				count: multisample_count,
 				mask: !0,
 				alpha_to_coverage_enabled: false,
 			},

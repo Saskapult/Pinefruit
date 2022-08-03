@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
-use crate::world::*;
+use crate::{world::*, octree::Octree};
 use serde::Serialize;
 use std::{ops::Range, collections::HashMap};
 
@@ -15,8 +15,22 @@ pub struct SlabBuffer {
 	pub buffer: wgpu::Buffer,
 }
 impl SlabBuffer {
+	const ENFORCE_ALIGN_FOUR: bool = true;
+
 	pub fn new(device: &wgpu::Device, slab_size: usize, slab_count: usize, usages: wgpu::BufferUsages) -> Self {
 		info!("Creating slab buffer with {slab_count} slabs of size {slab_size} ({} bytes)", slab_count * slab_size);
+
+		if slab_size % 4 != 0 {
+			if Self::ENFORCE_ALIGN_FOUR {
+				let message = "Slab size is not a multiple of 4, which is not allowed with current settings";
+				error!("{message}");
+				panic!("{message}");
+			} else {
+				warn!("buffer start offsets will not be 4 multiples, be sure to account for this in shaders");
+			}
+		}
+		
+
 		let buffer = device.create_buffer(&wgpu::BufferDescriptor {
 			label: None,
 			size: slab_size as u64 * slab_count as u64,
@@ -30,8 +44,26 @@ impl SlabBuffer {
 		}
 	}
 
+	/// Storage space in the buffer.
+	pub fn size(&self) -> usize {
+		self.slab_size * self.slabs.len()
+	}
+
+	/// Remaining size in bytes.
+	/// Does NOT imply that things that are more than slab size can be fit into this space.
+	pub fn remaining_size(&self) -> usize {
+		self.slabs.iter()
+			.map(|&filled| if filled {0} else {self.slab_size})
+			.fold(0, |a, v| a + v)
+	}
+
+	/// Fraction of storage space used.
+	pub fn capacity_frac(&self) -> f32 {
+		1.0 - self.remaining_size() as f32 / self.size() as f32
+	}
+
 	/// Returns start and end byte offsets.
-	/// Item must be repr(C) to be read in shader.
+	/// Item must be repr(C) to not mess stuff up in shader.
 	pub fn insert<T: Serialize>(&mut self, queue: &wgpu::Queue, item: &T) -> [usize; 2] {
 		let data = bincode::serialize(item).unwrap();
 		self.insert_direct(queue, &data[..])
@@ -54,7 +86,7 @@ impl SlabBuffer {
 		let mut st = 0;
 		let mut free_slabs = 0;
 		for (i, slab) in self.slabs.iter().enumerate() {
-			if !slab {
+			if !slab { // Slab free
 				if free_slabs == slabs_needed {
 					return Some(st)
 				}
@@ -182,9 +214,6 @@ impl ChunkAccelerator {
 			}
 		}
 
-		// data.iter().enumerate().for_each(|(i, &v)| println!("{i} -> {v}"));
-		// panic!();
-
 		queue.write_buffer(&self.data_buffer, 0, bytemuck::cast_slice(&data[..]));
 
 		self.info.centre = [centre[0], centre[1], centre[2], 0];
@@ -203,15 +232,18 @@ pub struct TracingChunkManager {
 	pub chunks: HashMap<[i32; 3], (usize, usize)>,
 }
 impl TracingChunkManager {
-	const BUFFER_SIZE: usize = 65536;
-	const SLAB_COUNT: usize = 64;
+	// 1GB is 1073741824B
+	// 1MB is 1048576B
+	const BUFFER_SIZE: usize = 1048576 * 64;
+	const SLAB_SIZE: usize = 256; // 64 uints
 
 	pub fn new(device: &wgpu::Device) -> Self {
-		let slab_size = Self::BUFFER_SIZE / Self::SLAB_COUNT;
-		let slab_count = Self::SLAB_COUNT;
+		let slab_count = Self::BUFFER_SIZE.div_ceil(Self::SLAB_SIZE);
+
+		assert!(Self::BUFFER_SIZE < u32::MAX as usize, "Buffer is too large to be addressed by u32!");
 		
 		Self {
-			storage: SlabBuffer::new(device, slab_size, slab_count, wgpu::BufferUsages::STORAGE),
+			storage: SlabBuffer::new(device, Self::SLAB_SIZE, slab_count, wgpu::BufferUsages::STORAGE),
 			accelerator: ChunkAccelerator::new(device, 5, 16),
 			chunks: HashMap::new(),
 		}
@@ -311,6 +343,29 @@ impl TracingChunkManager {
 		self.chunks.insert(position, (st, en));
 	}
 
+	pub fn insert_octree(
+		&mut self, 
+		queue: &wgpu::Queue,
+		position: [i32; 3],
+		octree: &Octree<usize>, // Octree holding block indices
+	) {
+		if let Some((st, en)) = self.chunks.remove(&position) {
+			warn!("Replacing chunk {position:?} in accelerator");
+			self.storage.remove(st..en);
+		}
+
+		let nodes = octree.nodes.iter()
+			.map(|n| AccelOctreeNode {
+				octants: n.octants,
+				content: n.content as u32,
+			})
+			.collect::<Vec<_>>();
+
+		let data = bytemuck::cast_slice(&nodes[..]);
+		let [st, en] = self.storage.insert_direct(queue, data);
+		self.chunks.insert(position, (st, en));
+	}
+
 	pub fn discard_chunk(
 		&mut self,
 		chunk_position: [i32; 3],
@@ -319,4 +374,13 @@ impl TracingChunkManager {
 			self.storage.remove(st..en);
 		}
 	}
+}
+
+
+/// Octree node as seen by the shader.
+#[repr(C)]
+#[derive(Pod, Zeroable, Clone, Copy)]
+struct AccelOctreeNode {
+	octants: [u32; 8],
+	content: u32,
 }

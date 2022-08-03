@@ -3,7 +3,7 @@ use bytemuck::{Pod, Zeroable};
 use egui;
 use specs::Entity;
 use std::sync::mpsc::sync_channel;
-use crate::{render::*, ecs::GPUResource, world::{TracingChunkManager, BlockManager, load_blocks_file_messy, Chunk}};
+use crate::{render::*, ecs::GPUResource, world::{TracingChunkManager, BlockManager, load_blocks_file_messy, Chunk}, octree::chunk_to_octree};
 use crate::window::WindowSettings;
 
 
@@ -156,18 +156,16 @@ impl GameWidget {
 					"./map_saved/0/-3.-2.1.cmrle", 
 					[16; 3], &mut self.bm
 				).unwrap();
-				// let mut chunk = Chunk::new([16;3]);
-				// for x in 0..16 {
-				// 	for y in 0..16 {
-				// 		for z in 0..16 {
-				// 			if x % 3 == 0 {
-				// 				chunk.set_voxel([x,y,z], crate::world::Voxel::Block(0));
-				// 			}
-				// 		}
-				// 	}
-				// }
+				let octree = chunk_to_octree(&chunk).unwrap();
 				
-				tcm.insert_chunk(&gpu_resource.queue, [0,0,2], &chunk);
+				warn!("Chunk uses  {} bytes", chunk.size());
+				warn!("Octree uses {} bytes", octree.get_size());
+
+				tcm.insert_octree(&gpu_resource.queue, [0,0,2], &octree);
+				warn!("Buffer is at {:.2}% capacity", tcm.storage.capacity_frac() * 100.0);
+				tcm.insert_octree(&gpu_resource.queue, [1,0,2], &octree);
+				warn!("Buffer is at {:.2}% capacity", tcm.storage.capacity_frac() * 100.0);
+				
 				
 				tcm
 			});

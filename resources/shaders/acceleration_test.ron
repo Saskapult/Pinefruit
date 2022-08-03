@@ -3,7 +3,7 @@
     source: (
         language: Glsl,
         base: Compute((
-            path: "acceleration_test.comp",
+            path: "accelerated_octree.comp",
             entry: "main",
         )),
     ),

@@ -73,6 +73,10 @@ impl Chunk {
 		(x < self.size[0] as i32 && y < self.size[1] as i32 && z < self.size[2] as i32) && (x >= 0 && y >= 0 && z >= 0)
 	}
 
+	pub fn size(&self) -> usize {
+		self.size.iter().fold(1, |a, &v| a * v) as usize * std::mem::size_of::<Voxel>()
+	}
+
 	// To be used for meshing voxel models
 	pub fn mesh() {
 		todo!()

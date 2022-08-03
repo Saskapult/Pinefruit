@@ -1,0 +1,261 @@
+#version 450
+
+layout(local_size_x=16, local_size_y=16) in;
+layout(set=0, binding=0, rgba8) uniform writeonly image2D resultImage;
+
+layout(set=0, binding=1) uniform Camera {
+	vec4 position; // Never ever ever use a vec3, it is a cursed type
+	mat4 rotation_matrix;
+	float near;
+} camera;
+
+layout(set=1, binding=0) uniform ChunkAcceleratorInfo {
+	ivec4 centre;
+	uint edge_len;
+	uint chunk_size;
+} info;
+layout(set=1, binding=1) readonly buffer ChunkAcceleratorData {
+	uint chunk_indices[]; // Byte offset of starting byte
+} hlas;
+layout(set=1, binding=2) readonly buffer OctreeVolumeData {
+	uint contents[];
+} ovd;
+
+// layout(set=1, binding=3) readonly buffer OctreeDataData {
+// 	uint block_type;
+// } odd;
+
+
+uint get_byte(uint byte_index) {
+	uint contained_in = byte_index / 4;
+	uint segment = byte_index % 4;
+	uint bit_offset = segment * 8;
+	uint mask = 0xFF << bit_offset;
+	return (ovd.contents[contained_in] & mask) >> bit_offset;
+}
+uint get_4byte(uint byte_index) {
+	return (get_byte(byte_index+3) << 24) + (get_byte(byte_index+2) << 16) + (get_byte(byte_index+1) << 8) + get_byte(byte_index);
+}
+
+
+const uint NODE_NBYTES = 4 * 9;
+struct OctreeNode {
+	uint[8] octants;
+	uint content;
+};
+OctreeNode node_at_byte(uint byte_index) {
+	OctreeNode n;
+	for (int i = 0; i < 8; i++) {
+		n.octants[i] = get_4byte(byte_index + i * 4);
+	}
+	n.content = get_4byte(byte_index + 4 * 8);
+	return n;
+}
+// Byte offset for node at index
+uint node_index_byte_index(uint node_index) {
+	return node_index * NODE_NBYTES;
+}
+
+
+vec3 read_rgb8(uint byte_index) {
+	vec3 colour;
+	colour.x = float(get_byte(byte_index+0));
+	colour.y = float(get_byte(byte_index+1));
+	colour.z = float(get_byte(byte_index+2));
+	colour /= 255.0;
+	return colour;
+}
+
+
+
+uint octree_get(uint byte_index, ivec3 vpos) {
+	// bool in_bounds = all(lessThanEqual(ivec3(info.chunk_size / 2), abs(vpos - ivec3(info.chunk_size))));
+	bool in_bounds = (all(lessThanEqual(vpos, ivec3(15))) && all(greaterThanEqual(vpos, ivec3(0))));
+	if (!in_bounds) return 0;
+
+	OctreeNode curr = node_at_byte(byte_index);
+
+	uint hel = info.chunk_size / 2;
+	int iters = 0;
+	while(true) {
+		// if (iters >= 50) return 0;
+		iters += 1;
+
+		bvec3 octant_mask = greaterThanEqual(vpos, ivec3(hel));
+		uint octant_idx = uint(octant_mask.x) * 4 + uint(octant_mask.y) * 2 + uint(octant_mask.z);
+		uint node_index = curr.octants[octant_idx];
+
+		if (node_index == 0) break; // If octant does not exist then we are in a leaf
+
+		uint new_byte_index = byte_index + node_index_byte_index(node_index - 1);
+		curr = node_at_byte(new_byte_index);
+		vpos -= ivec3(octant_mask) * ivec3(hel);
+		hel /= 2;
+	}
+
+	return curr.content;
+}
+
+
+vec3 bl_ray(uint byte_index, vec3 origin, vec3 direction, float tlimit, out float hit, out float t, inout vec3 normal) {
+	ivec3 vpos = ivec3(floor(origin));
+
+	ivec3 vstep = ivec3(sign(direction));
+	vec3 tdelta = abs(vec3(1.0 / direction));
+
+	vec3 tmax;
+	tmax.x = direction.x < 0 ? origin.x - floor(origin.x) : 1.0 - origin.x + floor(origin.x);
+	tmax.y = direction.y < 0 ? origin.y - floor(origin.y) : 1.0 - origin.y + floor(origin.y);
+	tmax.z = direction.z < 0 ? origin.z - floor(origin.z) : 1.0 - origin.z + floor(origin.z);
+	tmax *= tdelta;
+
+	vec3 col = vec3(0.5);
+	t = 0.0;
+	hit = 0.0;
+	int iters = 0;
+	while (true) {
+		if (iters >= 50) return vec3(0.0, 0.86, 1.0);
+		if (t >= tlimit) return vec3(0.0, 0.0, 1.0);
+		iters += 1;
+
+		bool inbounds = all(lessThanEqual(vpos, ivec3(15))) && all(greaterThanEqual(vpos, ivec3(0)));
+
+		uint v_content = octree_get(byte_index, vpos);
+
+		if (inbounds && v_content != 0) {
+			hit = 1.0;
+			return col;
+		}
+
+		if (tmax.x < tmax.y) {
+			if (tmax.x < tmax.z) {
+				normal = vec3(-vstep.x, 0.0, 0.0);
+				vpos.x += vstep.x;
+				t = tmax.x;
+				tmax.x += tdelta.x;
+			}
+			else {
+				normal = vec3(0.0, 0.0, -vstep.z);
+				vpos.z += vstep.z;
+				t = tmax.z;
+				tmax.z += tdelta.z;
+			}
+		}
+		else {
+			if (tmax.y < tmax.z) {
+				normal = vec3(0.0, -vstep.y, 0.0);
+				vpos.y += vstep.y;
+				t = tmax.y;
+				tmax.y += tdelta.y;
+			}
+			else {
+				normal = vec3(0.0, 0.0, -vstep.z);
+				vpos.z += vstep.z;
+				t = tmax.z;
+				tmax.z += tdelta.z;
+			}
+		}
+	}
+	return vec3(0.0);
+}
+
+
+// If not hit index is 0
+// If hit then index is not 0 and real index is index - 1 and t is valid
+vec3 hl_ray(vec3 origin, vec3 direction, float tlimit, out uint index, out float t) {
+	float vscale = float(info.chunk_size);
+	ivec3 vpos = ivec3(floor(origin / vscale));
+	ivec3 vstep = ivec3(sign(direction));
+	vec3 tdelta = abs(vec3(vscale / direction));
+
+	vec3 tmax; // (fract or 1-fract depending on direction) * vscale / abs(dir)
+	vec3 o = origin / vscale;
+	tmax.x = direction.x < 0 ? o.x - floor(o.x) : 1.0 - o.x + floor(o.x);
+	tmax.y = direction.y < 0 ? o.y - floor(o.y) : 1.0 - o.y + floor(o.y);
+	tmax.z = direction.z < 0 ? o.z - floor(o.z) : 1.0 - o.z + floor(o.z);
+	tmax *= tdelta;
+
+	t = 0.0;
+	vec3 normal = vec3(0.0);
+	float hitany = 0.0;
+	int iters = 0;
+	while (true) {
+		if (iters >= 100) return vec3(1.0, 0.0, 0.86);	// Debug purple
+		if (t >= tlimit) return vec3(1.0, 0.0, 0.0);	// Red
+		iters += 1;
+		
+		ivec3 cr_pos = vpos - ivec3(info.centre); // Position relative to centre
+		bool inbounds = all(lessThanEqual(abs(cr_pos), ivec3(info.edge_len / 2)));
+		ivec3 zero = ivec3(info.centre) - ivec3(info.edge_len / 2);
+		
+		uvec3 array_position = uvec3(vpos - zero);
+		uint i = array_position.x * info.edge_len * info.edge_len + array_position.y * info.edge_len + array_position.z;
+
+		if (inbounds && hlas.chunk_indices[i] != 0) {
+			index = hlas.chunk_indices[i];
+			uint real_index = index - 1;
+
+			// Hit position relative to voxel origin
+			vec3 bl_origin = origin + direction * (t + 0.001) - vec3(vpos) * vscale;
+			float bl_hit;
+			float bl_t;
+			vec3 bl_normal = normal;
+			vec3 bl_result = bl_ray(real_index, bl_origin, direction, 30.0, bl_hit, bl_t, bl_normal);
+
+			if (bl_hit > 0.1) {
+				return mix(vec3(1.0), vec3(0.5), abs(bl_normal));
+			}
+		};
+
+		if (tmax.x < tmax.y) {
+			if (tmax.x < tmax.z) {
+				normal = vec3(-vstep.x, 0.0, 0.0);
+				vpos.x += vstep.x;
+				t = tmax.x;
+				tmax.x += tdelta.x;
+			}
+			else {
+				normal = vec3(0.0, 0.0, -vstep.z);
+				vpos.z += vstep.z;
+				t = tmax.z;
+				tmax.z += tdelta.z;
+			}
+		}
+		else {
+			if (tmax.y < tmax.z) {
+				normal = vec3(0.0, -vstep.y, 0.0);
+				vpos.y += vstep.y;
+				t = tmax.y;
+				tmax.y += tdelta.y;
+			}
+			else {
+				normal = vec3(0.0, 0.0, -vstep.z);
+				vpos.z += vstep.z;
+				t = tmax.z;
+				tmax.z += tdelta.z;
+			}
+		}
+	}
+}
+
+ 
+void main() {
+
+	ivec2 dim = imageSize(resultImage);
+	vec2 uv = vec2(gl_GlobalInvocationID.xy) / dim;
+
+	vec3 origin = camera.position.xyz;
+
+	vec2 uv_11space = (uv * 2.0 - vec2(1.0)) * vec2(1.0, -1.0);
+	vec3 base_direction = normalize(vec3(uv_11space, camera.near));
+	vec3 direction = normalize((camera.rotation_matrix * vec4(base_direction, 1.0)).xyz);
+
+
+	uint index;
+	float t;
+	vec3 proto_result = hl_ray(origin, direction, 1000.0, index, t);
+	vec4 result = vec4(proto_result, 1.0);
+
+	
+	imageStore(resultImage, ivec2(gl_GlobalInvocationID.xy), result);
+}
