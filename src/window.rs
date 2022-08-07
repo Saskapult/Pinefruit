@@ -173,6 +173,9 @@ pub struct GameWindow {
 	// Game input is consumed by the simulation 
 	pub ui_input: WindowInput,
 	pub game_input: WindowInput,
+
+	capture: bool,
+	capture_position: winit::dpi::PhysicalPosition<f64>,
 }
 impl GameWindow {
 	pub fn new(
@@ -243,6 +246,9 @@ impl GameWindow {
 			settings: WindowSettings::new(),
 			ui_input: WindowInput::new(),
 			game_input: WindowInput::new(),
+
+			capture: false,
+			capture_position: winit::dpi::PhysicalPosition::new(0.0, 0.0),
 		}
 	}
 
@@ -442,9 +448,17 @@ impl GameWindow {
 		);
 
 		if self.settings.capture_mouse {
+			if !self.capture {
+				self.capture = true;
+				self.capture_position = winit::dpi::PhysicalPosition::new(self.ui_input.mx as f64, self.ui_input.my as f64);
+			} else {
+				self.window.set_cursor_position(self.capture_position)
+					.expect("Failed to set cursor position!");
+			}
 			self.window.set_cursor_grab(true).unwrap();
 			self.window.set_cursor_visible(false);
 		} else {
+			self.capture = false;
 			self.window.set_cursor_grab(false).unwrap();
 			self.window.set_cursor_visible(true);
 		}
