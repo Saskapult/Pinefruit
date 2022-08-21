@@ -38,10 +38,11 @@ uint get_4byte(uint byte_index) {
 }
 
 
-const uint NODE_NBYTES = 4 * 9;
+const uint NODE_NBYTES = 4 * 10;
 struct OctreeNode {
 	uint[8] octants;
 	uint content;
+	uint leaf_mask;
 };
 OctreeNode node_at_byte(uint byte_index) {
 	OctreeNode n;
@@ -49,6 +50,7 @@ OctreeNode node_at_byte(uint byte_index) {
 		n.octants[i] = get_4byte(byte_index + i * 4);
 	}
 	n.content = get_4byte(byte_index + 4 * 8);
+	n.leaf_mask = get_4byte(byte_index + 4 * 9);
 	return n;
 }
 // Byte offset for node at index
@@ -76,24 +78,32 @@ uint octree_get(uint byte_index, ivec3 vpos) {
 	OctreeNode curr = node_at_byte(byte_index);
 
 	uint hel = info.chunk_size / 2;
-	int iters = 0;
 	while(true) {
-		// if (iters >= 50) return 0;
-		iters += 1;
-
 		bvec3 octant_mask = greaterThanEqual(vpos, ivec3(hel));
 		uint octant_idx = uint(octant_mask.x) * 4 + uint(octant_mask.y) * 2 + uint(octant_mask.z);
 		uint node_index = curr.octants[octant_idx];
 
-		if (node_index == 0) break; // If octant does not exist then we are in a leaf
+		uint is_leaf_mask = 1 << octant_idx;
+		// If is leaf (points to content)
+		if ((curr.leaf_mask & is_leaf_mask) > 0) {
+			// return node_index;
+			if (node_index != 0) {
+				return 1;
+			}
+			else {
+				return 0;
+			}
+		}
+		// If points to no new node return empty
+		if (node_index == 0) {
+			return 2;
+		} 
 
 		uint new_byte_index = byte_index + node_index_byte_index(node_index - 1);
 		curr = node_at_byte(new_byte_index);
 		vpos -= ivec3(octant_mask) * ivec3(hel);
 		hel /= 2;
 	}
-
-	return curr.content;
 }
 
 
@@ -124,6 +134,12 @@ vec3 bl_ray(uint byte_index, vec3 origin, vec3 direction, float tlimit, out floa
 
 		if (inbounds && v_content != 0) {
 			hit = 1.0;
+			if (v_content == 1) {
+				return vec3(1.0, 0.0, 0.0);
+			}
+			if (v_content == 2) {
+				return vec3(0.0, 0.0, 1.0);
+			}
 			return col;
 		}
 
@@ -203,7 +219,7 @@ vec3 hl_ray(vec3 origin, vec3 direction, float tlimit, out uint index, out float
 			vec3 bl_result = bl_ray(real_index, bl_origin, direction, 30.0, bl_hit, bl_t, bl_normal);
 
 			if (bl_hit > 0.1) {
-				return mix(vec3(1.0), vec3(0.5), abs(bl_normal));
+				return mix(bl_result, vec3(0.5), abs(bl_normal));
 			}
 		};
 

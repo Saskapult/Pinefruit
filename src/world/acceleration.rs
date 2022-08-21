@@ -357,7 +357,8 @@ impl TracingChunkManager {
 		let nodes = octree.nodes.iter()
 			.map(|n| AccelOctreeNode {
 				octants: n.octants,
-				content: n.content as u32,
+				content: n.content,
+				leaf_mask: n.leaf_mask as u32,
 			})
 			.collect::<Vec<_>>();
 
@@ -383,4 +384,5 @@ impl TracingChunkManager {
 struct AccelOctreeNode {
 	octants: [u32; 8],
 	content: u32,
+	leaf_mask: u32, // Should be u8 but I'm paranoid
 }
