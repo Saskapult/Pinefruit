@@ -11,21 +11,32 @@ pub enum Voxel {
 }
 impl Voxel {
 	pub fn is_empty(&self) -> bool {
-		match self {
-			Voxel::Empty => true,
-			_ => false,
-		}
+		self == &Voxel::Empty
 	}
 	pub fn unwrap_id(&self) -> usize {
 		match self {
-			Voxel::Block(id) => *id,
+			&Voxel::Block(id) => id,
 			_ => panic!("Tried to unwrap an empty voxel!"),
 		}
 	}
 	pub fn id(&self) -> Option<usize> {
 		match self {
-			Voxel::Block(id) => Some(*id),
+			&Voxel::Block(id) => Some(id),
 			_ => None,
+		}
+	}
+	/// Returns some usize if the voxel is empty or a block.
+	pub fn block_encode(&self) -> Option<usize> {
+		match self {
+			Voxel::Empty => Some(0),
+			&Voxel::Block(id) => Some(id+1),
+		}
+	}
+	pub fn from_block_encode(e: usize) -> Self {
+		if e == 0 {
+			Voxel::Empty
+		} else {
+			Voxel::Block(e-1)
 		}
 	}
 }

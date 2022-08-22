@@ -1,3 +1,4 @@
+use generational_arena::Index;
 use nalgebra::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -159,7 +160,7 @@ impl Map {
 
 	// Mesh a chunk with respect to those around it
 	// This will look bad if seen from an side without a chunk before it
-	pub fn mesh_chunk(&self, position: [i32; 3]) -> Vec<(usize, Mesh)> {
+	pub fn mesh_chunk(&self, position: [i32; 3]) -> Vec<(Index, Mesh)> {
 		let [px, py, pz] = position;
 		
 		let main_chunk = self.chunk(position).expect("Tried to mesh unloaded chunk!");
@@ -219,7 +220,7 @@ impl Map {
 		);
 
 		segments.drain(..).map(|(material_idx, segment)| {
-			let mesh = Mesh::new(&format!("mesh of chunk {:?} material {}", position, material_idx))
+			let mesh = Mesh::new(&format!("mesh of chunk {:?} material {:?}", position, material_idx))
 				.with_positions(segment.positions)
 				.with_uvs(segment.uvs)
 				.with_normals(segment.normals)
@@ -232,7 +233,7 @@ impl Map {
 	pub fn mesh_chunk_rayon(
 		&self, 
 		position: [i32; 3],
-	) -> Result<PTCT<Vec<(usize, Mesh)>>, MapError> {
+	) -> Result<PTCT<Vec<(Index, Mesh)>>, MapError> {
 		let [px, py, pz] = position;
 		
 		let main_chunk = self.chunk(position).expect("Tried to mesh unloaded chunk!");
@@ -297,7 +298,7 @@ impl Map {
 			);
 	
 			let output = segments.drain(..).map(|(material_idx, segment)| {
-				let mesh = Mesh::new(&format!("mesh of chunk {:?} material {}", position, material_idx))
+				let mesh = Mesh::new(&format!("mesh of chunk {:?} material {:?}", position, material_idx))
 					.with_positions(segment.positions)
 					.with_uvs(segment.uvs)
 					.with_normals(segment.normals)
@@ -367,7 +368,7 @@ impl Map {
 		assert_eq!(self.chunk_size[0], self.chunk_size[2]);
 		let chunk_size = self.chunk_size[0] as f32;
 
-		let mut c_iter = crate::render::rays::AWIter::new(
+		let mut c_iter = crate::rays::AWIter::new(
 			origin,
 			direction,
 			0.0,
@@ -398,7 +399,7 @@ impl Map {
 					// Point of entry into chunk relative to chunk
 					let rel_entry = point_chunk_offset(entry, chunk_size);
 					// println!("Relative entry is {:?}", rel_entry.data);
-					let mut v_iter = crate::render::rays::AWIter::new(
+					let mut v_iter = crate::rays::AWIter::new(
 						rel_entry,
 						direction,
 						0.0,
@@ -829,7 +830,7 @@ fn map_mesh(
 	blockmap: Arc<RwLock<BlockManager>>,
 	_collect_transparent: bool,
 ) -> (
-	Vec<(usize, ChunkMeshSegment)>, 	// Vec<(material idx, mesh data)>
+	Vec<(Index, ChunkMeshSegment)>, 	// Vec<(material idx, mesh data)>
 	Vec<ModelInstance>,
 ) {
 	#[inline]

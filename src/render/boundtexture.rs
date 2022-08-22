@@ -2,39 +2,13 @@ use image::imageops::FilterType;
 use image::{GenericImageView, DynamicImage};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::sync::Arc;
 use std::sync::RwLock;
 use serde::{Serialize, Deserialize};
 use crate::texture::*;
+use generational_arena::{Arena, Index};
 
-
-
-
-/// Format for loaded textures (not rendering things!)
-#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Copy, Clone)]
-pub enum TextureType {
-	RGBA,
-	SRGBA, // Best format, love it
-	DEPTH,
-}
-impl TextureType {
-	pub fn translate(&self) -> wgpu::TextureFormat {
-		match self {
-			TextureType::SRGBA => wgpu::TextureFormat::Rgba8UnormSrgb,
-			TextureType::RGBA => wgpu::TextureFormat::Rgba8Unorm,
-			TextureType::DEPTH => wgpu::TextureFormat::Depth32Float,
-		}
-	}
-	// Format and bytes per pixel
-	pub fn get_info(&self) -> (wgpu::TextureFormat, u32) {
-		match self {
-			TextureType::RGBA => (wgpu::TextureFormat::Rgba8Unorm, 4),
-			TextureType::SRGBA => (wgpu::TextureFormat::Rgba8UnormSrgb, 4),
-			_ => todo!(),
-		}
-	}
-}
 
 
 
@@ -48,7 +22,34 @@ pub enum TextureFormat {
 	R8Unorm,
 }
 impl TextureFormat {
-	pub fn translate(&self) -> wgpu::TextureFormat {
+	pub fn translate(self) -> wgpu::TextureFormat {
+		self.into()
+	}
+	pub fn is_depth(&self) -> bool {
+		match self {
+			TextureFormat::Depth32Float => true,
+			_ => false,
+		}
+	}
+	pub fn bytes_per_element(&self) -> u32 {
+		match self {
+			TextureFormat::Rgba8Unorm => 4,
+			TextureFormat::Rgba8UnormSrgb => 4,
+			TextureFormat::Bgra8UnormSrgb => 4,
+			TextureFormat::Depth32Float => 4,
+			TextureFormat::R8Unorm => 1,
+		}
+	}
+	pub fn image_bytes(&self, image: &DynamicImage) -> Vec<u8> {
+		match self {
+			TextureFormat::Rgba8Unorm => image.to_rgba8(),
+			TextureFormat::Rgba8UnormSrgb => image.to_rgba8(),
+			_ => todo!("Figure out how to make slices of non-rgb(a) data"),
+		}.into_raw()
+	}
+}
+impl Into<wgpu::TextureFormat> for TextureFormat {
+	fn into(self) -> wgpu::TextureFormat {
 		match self {
 			TextureFormat::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
 			TextureFormat::Rgba8UnormSrgb => wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -57,10 +58,16 @@ impl TextureFormat {
 			TextureFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
 		}
 	}
-	pub fn is_depth(&self) -> bool {
-		match self {
-			TextureFormat::Depth32Float => true,
-			_ => false,
+}
+impl From<wgpu::TextureFormat> for TextureFormat {
+	fn from(fmt: wgpu::TextureFormat) -> TextureFormat {
+		match fmt {
+			wgpu::TextureFormat::Rgba8Unorm => TextureFormat::Rgba8Unorm,
+			wgpu::TextureFormat::Rgba8UnormSrgb => TextureFormat::Rgba8UnormSrgb,
+			wgpu::TextureFormat::Bgra8UnormSrgb => TextureFormat::Bgra8UnormSrgb,
+			wgpu::TextureFormat::Depth32Float => TextureFormat::Depth32Float,
+			wgpu::TextureFormat::R8Unorm => TextureFormat::R8Unorm,
+			_ => panic!("No conversion!"),
 		}
 	}
 }
@@ -74,151 +81,162 @@ pub struct BoundTexture {
 	pub view: wgpu::TextureView,
 	pub size: wgpu::Extent3d,
 	pub mip_count: u32,
+	pub mipped_yet: bool, // Have mipmaps been generated yet
 }
 impl BoundTexture {
-	pub const SRGB_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb; 
-	pub const OTHER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm; 
-	pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;    
+	const DEFAULT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm; 
+	const DEFAULT_FORMAT_SRGB: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb; 
+	pub const DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32Float;    
+	// Usages needed to create a non-blank texture
+	const NONBLANK_USAGES: wgpu::TextureUsages = wgpu::TextureUsages::COPY_DST;
+	// Texture usages needed for mipmapping
+	const MIP_USAGES: wgpu::TextureUsages = wgpu::TextureUsages::TEXTURE_BINDING;
 
-	pub fn new(device: &wgpu::Device, format: TextureFormat, width: u32, height: u32, label: &str) -> Self {
+	pub fn new(
+		device: &wgpu::Device, 
+		format: TextureFormat, 
+		width: u32, 
+		height: u32, 
+		mip_count: u32, // Should not be zero
+		label: impl AsRef<str>,
+		mut usages: wgpu::TextureUsages,
+	) -> Self {
+		let label = label.as_ref();
+
+		let mipped = mip_count > 1;
+		if mipped {
+			warn!("entering untested mip code stuff, ye be warned");
+			let missing_usages = (usages & Self::MIP_USAGES) ^ wgpu::TextureUsages::all();
+
+			if missing_usages == wgpu::TextureUsages::empty() {
+				warn!("Texture {label} is missing usages required for mipmapping, adding usages {missing_usages:?}");
+				usages = usages | Self::MIP_USAGES
+			}
+		}
 		let size = wgpu::Extent3d {
 			width,
 			height,
 			depth_or_array_layers: 1,
 		};
-		let mip_count = 1;
 		let desc = wgpu::TextureDescriptor {
 			label: Some(label),
 			size,
 			mip_level_count: mip_count,
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
-			format: format.translate(),
-			// Hacky and bad
-			usage: match format {
-				TextureFormat::Rgba8Unorm => wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::STORAGE_BINDING,
-				_ => wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST,
-			},
+			format: format.into(),
+			usage: usages,
 		};
 		let texture = device.create_texture(&desc);
 
 		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-		let name = format!("Texture {}, width {} height {}", &label, width, height);
-
-		Self { name, texture, view, size, mip_count }
+		Self { 
+			name: label.into(), 
+			texture, 
+			view, 
+			size, 
+			mip_count,
+			mipped_yet: !mipped,
+		}
 	}
 	
-	pub fn create_depth_texture(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
-		let size = wgpu::Extent3d {
-			width,
+	pub fn create_depth_texture(
+		device: &wgpu::Device, 
+		width: u32, 
+		height: u32, 
+		label: impl AsRef<str>,
+		usages: wgpu::TextureUsages, // wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+	) -> Self {
+		Self::new(
+			device,
+			Self::DEPTH_FORMAT,
+			width, 
 			height,
-			depth_or_array_layers: 1,
-		};
-		let mip_count = 1;
-		let desc = wgpu::TextureDescriptor {
-			label: Some(label),
-			size,
-			mip_level_count: mip_count,
-			sample_count: 1,
-			dimension: wgpu::TextureDimension::D2,
-			format: Self::DEPTH_FORMAT,
-			usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-		};
-		let texture = device.create_texture(&desc);
-
-		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-		let name = format!("Depth texture {}, width {} height {}", &label, width, height);
-
-		Self { name, texture, view, size, mip_count }
+			1,
+			label,
+			usages,
+		)
 	}
 
 	pub fn from_path(
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
-		path: &PathBuf,
-		name: &String,
-		srgb: bool,
+		path: impl AsRef<Path>,
+		mip_count: u32, 
+		label: impl AsRef<str>,
+		format: TextureFormat,
+		usages: wgpu::TextureUsages
 	) -> Self {
 		let image = image::open(path).expect("Failed to open file");
-		BoundTexture::from_image(device, queue, &image, name, srgb)
+		BoundTexture::from_image(device, queue, &image, mip_count, label, format, usages)
 	}
 
 	pub fn from_image(
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
-		img: &image::DynamicImage,
-		name: &String,
-		srgb: bool,
+		image: &image::DynamicImage,
+		mip_count: u32, 
+		label: impl AsRef<str>,
+		format: TextureFormat,
+		mut usages: wgpu::TextureUsages,
 	) -> Self {
-		let name = name.clone();
+		let label = label.as_ref();
 
-		let rgba = img.to_rgba8();
-		let (width, height) = img.dimensions();
-		let size = wgpu::Extent3d {
+		let data = format.image_bytes(&image);
+		let (width, height) = image.dimensions();
+
+		usages = usages | Self::NONBLANK_USAGES;
+
+		let texture = Self::new(
+			device,
+			format,
 			width,
 			height,
-			depth_or_array_layers: 1,
-		};
-		
-		let format= if srgb {
-			BoundTexture::SRGB_FORMAT
-		} else {
-			BoundTexture::OTHER_FORMAT
-		};
-
-		let mip_count = 1;
-
-		let texture = device.create_texture(
-			&wgpu::TextureDescriptor {
-				label: Some(name.as_str()),
-				size,
-				mip_level_count: mip_count,
-				sample_count: 1,
-				dimension: wgpu::TextureDimension::D2,
-				format,
-				usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-			}
+			mip_count,
+			label,
+			usages,
 		);
-		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
 		queue.write_texture(
 			wgpu::ImageCopyTexture {
 				aspect: wgpu::TextureAspect::All,
-				texture: &texture,
+				texture: &texture.texture,
 				mip_level: 0,
 				origin: wgpu::Origin3d::ZERO,
 			},
-			&rgba,
+			&data[..],
 			wgpu::ImageDataLayout {
 				offset: 0,
-				bytes_per_row: std::num::NonZeroU32::new(4 * width), // r8,g8,b8,a8
+				bytes_per_row: std::num::NonZeroU32::new(format.bytes_per_element() * width),
 				rows_per_image: std::num::NonZeroU32::new(height),
 			},
-			size,
+			texture.size,
 		);
 
-		Self { name, texture, view, size, mip_count }
+		texture
 	}
 
 	pub fn from_images(
-		device: &wgpu::Device, 
-		queue: &wgpu::Queue, 
+		device: &wgpu::Device,
+		queue: &wgpu::Queue,
 		images: &Vec<DynamicImage>,
-		name: &String,
-		srgb: bool,
-		width: u32,
-		height: u32,
+		width: u32, 
+		height: u32, 
+		mip_count: u32, 
+		label: impl AsRef<str>,
+		format: TextureFormat,
+		usages: wgpu::TextureUsages,
 	) -> BoundTexture {
-		let name = name.clone();
-		// Make rgba8 copies with the specified size
-		let rgba8 = images.iter().map(|t| {
-			if t.dimensions() == (width, height) {
-				t.to_rgba8()
+		let label = label.as_ref();
+
+		let data = images.iter().flat_map(|i| {
+			if i.dimensions() == (width, height) {
+				format.image_bytes(i)
 			} else {
-				t.resize(width, height, FilterType::Triangle).to_rgba8()
-			}
+				let g = i.resize(width, height, FilterType::Triangle);
+				format.image_bytes(&g)
+			}.to_vec()
 		}).collect::<Vec<_>>();
 	
 		let size = wgpu::Extent3d {
@@ -226,61 +244,32 @@ impl BoundTexture {
 			height,
 			depth_or_array_layers: images.len() as u32,
 		};
-
-		let format= if srgb {
-			BoundTexture::SRGB_FORMAT
-		} else {
-			BoundTexture::OTHER_FORMAT
-		};
-
-		let mip_count = 1;
 	
-		// Create the texture stuff
 		let texture = device.create_texture(&wgpu::TextureDescriptor {
-			label: Some(name.as_str()),
+			label: Some(label),
 			size,
 			mip_level_count: mip_count,
 			sample_count: 1,
 			dimension: wgpu::TextureDimension::D2,
-			format,
-			usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
+			format: format.into(),
+			usage: usages,
 		});
-		let view = texture.create_view(&wgpu::TextureViewDescriptor {
+		let _view = texture.create_view(&wgpu::TextureViewDescriptor {
 			dimension: Some(wgpu::TextureViewDimension::D2Array),
 			..Default::default()
 		});
-	
-		// Concatenate raw texture data
-		let mut collected_rgba = Vec::new();
-		for image_data in rgba8 {
-			collected_rgba.append(&mut image_data.into_raw());
-		}
-	
-		// Pass the texture data to the gpu
+
 		queue.write_texture(
 			texture.as_image_copy(),
-			&collected_rgba[..], // &[u8]
+			&data[..],
 			wgpu::ImageDataLayout {
 				offset: 0,
-				bytes_per_row: Some(NonZeroU32::new(4*width).unwrap()),
-				rows_per_image: Some(NonZeroU32::new(height).unwrap()),
+				bytes_per_row: NonZeroU32::new(format.bytes_per_element() * width),
+				rows_per_image: NonZeroU32::new(height),
 			},
 			size,
 		);
 	
-		BoundTexture { name, texture, view, size, mip_count }
-	}
-
-	/// Bytes will repeat if not big enough
-	pub fn from_bytes(
-		_device: &wgpu::Device,
-		_queue: &wgpu::Queue,
-		_name: &String, 
-		_width: u32,
-		_height: u32,
-		_bytes: &[u8], 
-		_srgb: bool,
-	) -> Self {
 		todo!()
 	}
 
@@ -301,51 +290,21 @@ impl BoundTexture {
 			self.size,
 		);
 	}
-
-	pub fn new_with_format(
-		device: &wgpu::Device,
-		name: &String,
-		format: wgpu::TextureFormat,
-		width: u32,
-		height: u32,
-	) -> Self {
-		let name = name.clone();
-		let size = wgpu::Extent3d {
-			width,
-			height,
-			depth_or_array_layers: 1,
-		};
-		let mip_count = 1;
-		let texture = device.create_texture(
-			&wgpu::TextureDescriptor {
-				label: Some(name.as_str()),
-				size,
-				mip_level_count: mip_count,
-				sample_count: 1,
-				dimension: wgpu::TextureDimension::D2,
-				format,
-				usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-			}
-		);
-		let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-		Self { name, texture, view, size, mip_count }
-	}
 }
 
 
 
-// In order to unload a texture from the gpu we must be sure that it is not used in any active materials, but I don't know how to do that
+// Maybe hold arena of samplers identified by a sampler descriptor?
 #[derive(Debug)]
 pub struct BoundTextureManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
 	// Textures, array textures, yum yum
 	// Texture arrays are not textures, they can go sit in a corner
-	// To support unloading this should use a generational arena
-	textures: Vec<BoundTexture>, 
-	textures_index_name: HashMap<String, usize>,
-	textures_index_path: HashMap<PathBuf, usize>,
+	textures: Arena<BoundTexture>, 
+	textures_index_name: HashMap<String, Index>,
+	textures_index_path: HashMap<PathBuf, Index>,
+	textures_unmipped: Vec<Index>,
 	pub data_manager: Arc<RwLock<TextureManager>>,
 }
 impl BoundTextureManager {
@@ -357,20 +316,25 @@ impl BoundTextureManager {
 		Self {
 			device: device.clone(), 
 			queue: queue.clone(),
-			textures: Vec::new(), 
+			textures: Arena::new(), 
 			textures_index_name: HashMap::new(), 
 			textures_index_path: HashMap::new(),
+			textures_unmipped: Vec::new(),
 			data_manager: data_manager.clone(),
 		}
 	}
 
-	fn bind(&mut self, texture: &Texture) -> usize {
+	fn bind(&mut self, texture: &Texture) -> Index {
 		info!("Binding texture {}", &texture.name);
 		let entry = BoundTexture::from_image(
 			&self.device, &self.queue, 
 			&texture.data, 
-			&format!("{}: {:?}", &texture.name, &texture.path), 
-			true, // Todo make this good
+			1,
+			&*format!("{}: {:?}", &texture.name, &texture.path), 
+			TextureFormat::Rgba8UnormSrgb,
+			wgpu::TextureUsages::RENDER_ATTACHMENT
+				| wgpu::TextureUsages::COPY_DST
+				| wgpu::TextureUsages::TEXTURE_BINDING,
 		);
 		let idx = self.insert(entry);
 		if let Some(path) = texture.path.clone() {
@@ -379,62 +343,89 @@ impl BoundTextureManager {
 		idx
 	}
 
-	pub fn insert(&mut self, texture: BoundTexture) -> usize {
-		let idx = self.textures.len();
-		self.textures_index_name.insert(texture.name.clone(), idx);
-		self.textures.push(texture);
+	pub fn insert(&mut self, texture: BoundTexture) -> Index {
+		let name = texture.name.clone();
+		let mipped_yet = texture.mipped_yet;
+		let idx = self.textures.insert(texture);
+		self.textures_index_name.insert(name, idx);
+		if !mipped_yet {
+			self.textures_unmipped.push(idx);
+		}
 		idx
 	}
 
-	pub fn index(&self, i: usize) -> &BoundTexture {
-		&self.textures[i]
+	pub fn remove_clean(&mut self, index: Index) -> Option<BoundTexture> {
+		self.textures_unmipped.retain(|i| *i != index);
+		self.textures_index_name.retain(|_, i| *i != index);
+		self.textures_index_path.retain(|_, i| *i != index);
+		self.textures.remove(index)
 	}
 
-	pub fn index_name(&self, name: &String) -> Option<usize> {
-		if self.textures_index_name.contains_key(name) {
-			Some(self.textures_index_name[name])
-		} else {
-			None
-		}
+	pub fn remove_dirty(&mut self, index: Index) -> Option<BoundTexture> {
+		self.textures.remove(index)
+	}
+
+	pub fn index(&self, i: Index) -> Option<&BoundTexture> {
+		self.textures.get(i)
+	}
+
+	pub fn index_name(&self, name: &String) -> Option<Index> {
+		self.textures_index_name.get(name).and_then(|&i| Some(i))
 	}
 
 	// Index by name, bind if not bound
-	pub fn index_name_bind(&mut self, name: &String) -> Option<usize> {
+	pub fn index_name_bind(&mut self, name: &String) -> Option<Index> {
 		let dm = self.data_manager.read().unwrap();
-		if self.textures_index_name.contains_key(name) {
-			Some(self.textures_index_name[name])
+		if let Some(&idx) = self.textures_index_name.get(name) {
+			Some(idx)
 		} else if let Some(texture_idx) = dm.index_name(name) {
 			// Clone is needed because of borrow checker stuff
-			let texture = dm.index(texture_idx).clone();
-			drop(dm);
-			let idx = self.bind(&texture);
-			Some(idx)
+			if let Some(texture) = dm.index(texture_idx) {
+				let texture = texture.clone();
+				drop(dm);
+				let idx = self.bind(&texture);
+				Some(idx)
+			} else {
+				error!("Bad index for texture data {name}");
+				None
+			}
 		} else {
 			None
 		}
 	}
 
-	pub fn index_path(&self, path: &PathBuf) -> Option<usize> {
-		if self.textures_index_path.contains_key(path) {
-			Some(self.textures_index_path[path])
-		} else {
-			None
-		}
+	pub fn index_path(&self, path: &PathBuf) -> Option<Index> {
+		self.textures_index_path.get(path).and_then(|&i| Some(i))
 	}
 
 	// Index by path, bind if not bound
-	pub fn index_path_bind(&mut self, path: &PathBuf) -> Option<usize> {
+	pub fn index_path_bind(&mut self, path: &PathBuf) -> Option<Index> {
 		let dm = self.data_manager.read().unwrap();
-		if self.textures_index_path.contains_key(path) {
-			Some(self.textures_index_path[path])
-		} else if let Some(texture_idx) = dm.index_path(path) {
-			let texture = dm.index(texture_idx).clone();
-			drop(dm);
-			let idx = self.bind(&texture);
+		if let Some(&idx) = self.textures_index_path.get(path) {
 			Some(idx)
+		} else if let Some(texture_idx) = dm.index_path(path) {
+			let texture = dm.index(texture_idx);
+			if let Some(texture) = texture {
+				let texture = texture.clone();
+				drop(dm);
+				let idx = self.bind(&texture);
+				Some(idx)
+			} else {
+				error!("Bad index for texture data {path:?}");
+				None
+			}
 		} else {
 			None
 		}
 	}
 
+	// This function should take all unmipped textures and generate mips for them.
+	// Maybe it should take an encoder? Yes, it probably should.
+	// Perhaps boundtexture should have a function to decide how it is mipped based on its dimension?
+	pub fn mip_unmipped(&mut self, _encoder: &mut wgpu::CommandEncoder) {
+
+		let _textures = self.textures_unmipped.drain(..).filter_map(|i| self.textures.get(i));
+
+		todo!()
+	}
 }

@@ -9,7 +9,7 @@
     ),
     bind_groups: {
 		0: {
-			0: ("colour", StorageTexture(RGBA)),
+			0: ("colour", StorageTexture(Rgba8Unorm)),
             1: ("camera", Buffer),
 		},
         1: {

@@ -1,8 +1,14 @@
 use rayon::prelude::*;
 use image::DynamicImage;
 use crate::world::Map;
-use crate::world::VoxelRayHit;
 use nalgebra::*;
+
+
+pub trait Intersect<Other> {
+	type IOutput;
+	fn intersect(&self, other: &Other) -> Option<Self::IOutput>;
+}
+
 
 
 struct RayPointLight {
@@ -10,6 +16,180 @@ struct RayPointLight {
 	pub radius: f32,
 	pub colour: [f32; 3],
 }
+
+
+
+pub struct Ray {
+	pub origin: Vector3<f32>,
+	pub direction: Vector3<f32>,
+}
+impl Ray {
+	pub fn new(origin: Vector3<f32>, mut direction: Vector3<f32>) -> Self {
+		direction.normalize_mut();
+		Self { origin, direction }
+	}
+}
+
+
+
+pub struct Sphere {
+	pub position: Vector3<f32>,
+	pub radius: f32,
+}
+
+
+
+#[derive(Debug, Clone)]
+pub struct AABB {
+	p0: Vector3<f32>,
+	p1: Vector3<f32>,
+	centre: Vector3<f32>,
+}
+impl AABB {
+	pub fn new(
+		p0: Vector3<f32>,
+		p1: Vector3<f32>,
+	) -> Self {
+		Self {
+			p0, p1,
+			centre: p0 + p1,
+		}
+	}
+
+	// Todo: handle div by zero
+	// https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection
+	#[inline]
+	pub fn ray_intersect(
+		&self, 
+		origin: Vector3<f32>,
+		direction: Vector3<f32>,
+		position: Vector3<f32>, 
+		t0: f32, // Min distance
+		t1: f32, // Max distance
+	) -> Option<(f32, f32)> {
+		let v_max = self.p1 + position;
+		let v_min = self.p0 + position;
+
+		let (mut t_min, mut t_max) = {
+			let t_min = (v_min[0] - origin[0]) / direction[0];
+			let t_max = (v_max[0] - origin[0]) / direction[0];
+
+			if t_min < t_max {
+				(t_min, t_max)
+			} else {
+				(t_max, t_min)
+			}
+		};
+
+		let (ty_min, ty_max) = {
+			let ty_min = (v_min[1] - origin[1]) / direction[1];
+			let ty_max = (v_max[1] - origin[1]) / direction[1];
+
+			if ty_min < ty_max {
+				(ty_min, ty_max)
+			} else {
+				(ty_max, ty_min)
+			}
+		};
+
+		if t_min > ty_max || ty_min > t_max {
+			return None
+		}
+
+		if ty_min > t_min {
+			t_min = ty_min;
+		}
+		if ty_max < t_max {
+			t_max = ty_max;
+		}
+
+		let (tz_min, tz_max) = {
+			let tz_min = (v_min[2] - origin[2]) / direction[2];
+			let tz_max = (v_max[2] - origin[2]) / direction[2];
+
+			if tz_min < tz_max {
+				(tz_min, tz_max)
+			} else {
+				(tz_max, tz_min)
+			}
+		};
+
+		if t_min > tz_max || tz_min > t_max {
+			return None
+		}
+
+		if tz_min > t_min {
+			t_min = tz_min;
+		}
+		if tz_max < t_max {
+			t_max = tz_max;
+		}
+		
+		if (t_min < t1) && (t_max > t0) {
+			Some((t_min, t_max))
+		} else {
+			None
+		}
+	}
+
+	pub fn contains(&self, point: Vector3<f32>) -> bool {
+		point >= self.p0 && point <= self.p1
+
+		// point[0] >= self.p0[0] &&
+		// point[1] >= self.p0[1] &&
+		// point[2] >= self.p0[2] &&
+		// point[0] <= self.p1[0] &&
+		// point[1] <= self.p1[1] &&
+		// point[2] <= self.p1[2]
+	}
+
+	pub fn mid_planes(&self) -> [Plane; 3] {
+		[
+			Plane {
+				normal: *Vector3::z_axis(),
+				distance: self.centre[2],
+			},
+			Plane {
+				normal: *Vector3::y_axis(),
+				distance: self.centre[1],
+			},
+			Plane {
+				normal: *Vector3::x_axis(),
+				distance: self.centre[1],
+			},
+		]
+	}
+}
+
+
+
+#[derive(Debug, Clone)]
+pub struct Plane {
+	pub normal: Vector3<f32>,
+	pub distance: f32,
+}
+impl Plane {
+	// Restricted to along positive line direction
+	pub fn ray_intersect(
+		&self, 
+		origin: Vector3<f32>,
+		direction: Vector3<f32>,
+		position: Vector3<f32>, 
+		t0: f32, // Min distance
+		t1: f32, // Max distance
+	) -> Option<f32> {
+		let d = self.normal.dot(&direction);
+		if d > f32::EPSILON {
+			let g = position - origin;
+			let t = g.dot(&self.normal) / d;
+			if t > t0 && t < t1 {
+				return Some(t)
+			}
+		}
+		None
+	}
+}
+
 
 
 /// Generates ray directions for each pixel in a thingy
@@ -35,7 +215,8 @@ pub fn ray_spread(
 }
 
 
-pub fn map_trace(
+
+pub fn trace_map(
 	map: &Map, 
 	position: Vector3<f32>, 
 	rotation: UnitQuaternion<f32>,
@@ -43,25 +224,7 @@ pub fn map_trace(
 	height: u32, 
 	fovy: f32,
 ) -> DynamicImage {
-	let coords = (0..height).flat_map(|y| (0..width).map(move |x| (x, y))).collect::<Vec<_>>();
-	// coords.chunks(width as usize).for_each(|row| println!("{:?}", row));
-
-	let near = 1.0 / (fovy.to_radians() / 2.0).tan();
-	println!("near is {near}");
-	let directions = coords.iter().map(|&(x, y)| {
-		rotation * Vector3::new(
-			(((x as f32 + 0.5) / width as f32) - 0.5) * 2.0,
-			-(((y as f32 + 0.5) / height as f32) - 0.5) * 2.0,
-			near,
-		).normalize()
-	}).collect::<Vec<_>>();
-	// directions.chunks(width as usize).for_each(|row| 
-	// 	println!("{}",
-	// 	row.iter().map(|v| format!("[{:>4.1}, {:>4.1}, {:>4.1}]", v[0], v[1], v[2]))
-	// 		.collect::<Vec<_>>()
-	// 		.join(", ")
-	// 	)
-	// );
+	let directions = ray_spread(rotation, width, height, fovy);
 
 	let albedo_map = |voxel_name: &str| {
 		match voxel_name {
@@ -74,9 +237,8 @@ pub fn map_trace(
 
 	let bm = map.blocks.read().unwrap();
 	let albedo = directions.par_iter().map(|&direction| {
-		match map_ray(map, position, direction, 100.0) {
-			Some(hit) => {
-				let block = map.get_voxel_world(hit.coords).unwrap();
+		match map.ray(position, direction, 100.0) {
+			Some((block, _, _)) => {
 				let name = &*bm.index(block.unwrap_id()).name;
 				albedo_map(name)
 				// [u8::MAX; 3]
@@ -91,93 +253,7 @@ pub fn map_trace(
 
 
 
-fn map_ray(
-	map: &Map,
-	origin: Vector3<f32>, 
-	direction: Vector3<f32>,
-	t_limit: f32,
-) -> Option<VoxelRayHit> {
-	let mut vx = origin[0].floor() as i32;
-	let mut vy = origin[1].floor() as i32; 
-	let mut vz = origin[2].floor() as i32;
-
-	let direction = direction.normalize();
-	let dx = direction[0]; 
-	let dy = direction[1]; 
-	let dz = direction[2];
-
-	let v_step_x = dx.signum() as i32;
-	let v_step_y = dy.signum() as i32;
-	let v_step_z = dz.signum() as i32;
-
-	let t_delta_x = 1.0 / dx.abs();
-	let t_delta_y = 1.0 / dy.abs();
-	let t_delta_z = 1.0 / dz.abs();
-
-	let dist = |i: i32, p: f32, vs: i32| {
-		if vs > 0 {
-			i as f32 + 1.0 - p
-		} else {
-			p - i as f32
-		}
-	};
-	let mut t_max_x = t_delta_x * dist(vx, origin[0], v_step_x);
-	let mut t_max_y = t_delta_y * dist(vy, origin[1], v_step_y);
-	let mut t_max_z = t_delta_z * dist(vz, origin[2], v_step_z);
-
-	if t_delta_x == 0.0 && t_delta_y == 0.0 && t_delta_z == 0.0 {
-		panic!()
-	}
-
-	let mut t = 0.0;
-	let mut normal = Vector3::zeros();
-	while t < t_limit {
-
-		if let Some(v) = map.get_voxel_world([vx, vy, vz]).ok() {
-			if !v.is_empty() {
-				return Some(VoxelRayHit {
-					coords: [vx, vy, vz],
-					t,
-					normal,
-					face_coords: [0.0; 2],
-				});
-			}
-		}
-
-		if t_max_x < t_max_y {
-			if t_max_x < t_max_z {
-				normal = vector![-v_step_x as f32, 0.0, 0.0];
-				vx += v_step_x;
-				t = t_max_x;
-				t_max_x += t_delta_x;
-				
-			} else {
-				normal = vector![0.0, 0.0, -v_step_z as f32];
-				vz += v_step_z;
-				t = t_max_z;
-				t_max_z += t_delta_z;
-			}
-		} else {
-			if t_max_y < t_max_z {
-				normal = vector![0.0, -v_step_y as f32, 0.0];
-				vy += v_step_y;
-				t = t_max_y;
-				t_max_y += t_delta_y;
-			} else {
-				normal = vector![0.0, 0.0, -v_step_z as f32];
-				vz += v_step_z;
-				t = t_max_z;
-				t_max_z += t_delta_z;
-			}
-		}
-	}
-
-	None
-}
-
-
-
-pub fn rendery(
+pub fn trace_octree(
 	origin: Vector3<f32>,
 	directions: &Vec<Vector3<f32>>,
 	albedo: &mut Vec<[f32; 4]>,
@@ -187,9 +263,6 @@ pub fn rendery(
 	volume_palette: &Vec<[f32; 4]>,
 	distance: f32,
 ) {
-	// let ncpu = 8;
-	// Todo: Divide into ncpu chunks and give to par iter
-
 	let new_data = directions.iter().enumerate()
 		.filter_map(|(i, &direction)| {
 			if let Some((st, en)) = volume.aa_intersect(origin, direction, volume_position, 0.0, distance) {
@@ -210,7 +283,7 @@ pub fn rendery(
 			let max1 = en - st;
 			let max2 = distance - st;
 
-			let mut iiter = crate::render::rays::AWIter::new(
+			let mut iiter = AWIter::new(
 				rel_hit_pos, 
 				direction, 
 				0.0, 
@@ -220,21 +293,22 @@ pub fn rendery(
 
 			// Mark initial miss as red
 			if !volume.in_bounds([iiter.vx, iiter.vy, iiter.vz]) {
-				return (i, [f32::MAX, 0.0, 0.0, 0.0], st+iiter.t)
+				return (i, [1.0, 0.0, 0.0, 0.0], st+iiter.t)
 			}
 			loop {
 				if let Some(&g) = volume.get([iiter.vx, iiter.vy, iiter.vz]) {
 					return (i, volume_palette[g], st+iiter.t)
+					// return (i, [0.0, 0.0, 1.0, 0.0], st+iiter.t)
 				}
 
 				// Mark out of cast length as green
 				if !iiter.next().is_some() {
-					return (i, [0.0, f32::MAX, 0.0, 0.0], st+iiter.t)
+					return (i, [0.0, 1.0, 0.0, 0.0], st+iiter.t)
 				}
 
 				// Mark out of bounds as white
 				if !volume.in_bounds([iiter.vx, iiter.vy, iiter.vz]) {
-					return (i, [f32::MAX, f32::MAX, f32::MAX, 0.0], st+iiter.t)
+					return (i, [1.0, 1.0, 1.0, 0.0], st+iiter.t)
 				}
 			}
 		}).collect::<Vec<_>>();
@@ -258,7 +332,7 @@ mod tests {
 
 	#[test]
 	fn test_cit() {
-		let mut cit = crate::render::rays::AWIter::new(
+		let mut cit = crate::rays::AWIter::new(
 			Vector3::new(4.0, 4.0, 4.0),
 			Vector3::new(1.0, 1.1, 1.2),
 			0.0,

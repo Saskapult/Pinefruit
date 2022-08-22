@@ -3,6 +3,7 @@ use image::DynamicImage;
 use anyhow::*;
 use std::process::Command;
 use splines::*;
+use std::sync::mpsc::{channel, Sender, Receiver};
 
 
 
@@ -13,13 +14,18 @@ pub struct DurationHolder {
 	num_to_hold: usize,
 	durations: Vec<Duration>,
 	durations_index: usize,
+	pub sender: Sender<Duration>,
+	receiver: Receiver<Duration>,
 }
 impl DurationHolder {
 	pub fn new(num_to_hold: usize) -> Self {
+		let (sender, receiver) = channel();
 		Self {
 			num_to_hold,
 			durations: Vec::with_capacity(num_to_hold),
 			durations_index: num_to_hold-1,
+			sender,
+			receiver,
 		}
 	}
 
@@ -36,6 +42,13 @@ impl DurationHolder {
 			self.durations_index = 0;
 		}
 		self.num_to_hold = new_size;
+	}
+
+	// Bad because it bypasses timings
+	pub fn get_things(&mut self) {
+		for d in self.receiver.try_iter().collect::<Vec<_>>() {
+			self.record(d);
+		}
 	}
 
 	pub fn record(&mut self, duration: Duration) {
@@ -299,6 +312,36 @@ impl<T: std::fmt::Debug> PTCT<T> {
 
 
 
+/// Maybe. Better. Pollable. Threadish. Checker. Thing.
+#[derive(Debug)]
+pub struct MBPTCT<T: std::fmt::Debug> {
+	result: Option<T>,
+	receiver: Receiver<T>,
+}
+impl<T: std::fmt::Debug> MBPTCT<T> {
+	pub fn new() -> (Self, Sender<T>) {
+		let (sender, receiver) = channel();
+		let s = Self { 
+			result: None,
+			receiver,
+		};
+		(s, sender)
+	}
+
+	pub fn poll(&mut self) -> Option<&T> {
+		if self.result.is_none() {
+			self.result = self.receiver.try_recv().ok();
+		}
+		self.result.as_ref()
+	}
+
+	pub fn take(self) -> T {
+		self.result.unwrap()
+	}
+}
+
+
+
 fn load_egui_image_from_path(path: &std::path::Path) -> Result<egui::ColorImage, image::ImageError> {
     let image = image::io::Reader::open(path)?.decode()?;
     let size = [image.width() as _, image.height() as _];
@@ -311,10 +354,33 @@ fn load_egui_image_from_path(path: &std::path::Path) -> Result<egui::ColorImage,
 }
 
 
+// https://chercher.tech/rust/insertion-sort-rust
+pub fn insertion_sort<T: PartialOrd>(data: &mut [T]) {
+	for i in 1..data.len() {
+		let mut j = i;
+		while j > 0 && data[j-1] > data[j] {
+			data.swap(j-1, j);
+			j -= 1;
+		}
+	}
+}
+
+
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn test_sort() {
+		let mut nums = vec![4,5,62,3,43,243,532,5,32,523];
+		insertion_sort(&mut nums[..]);
+
+		println!("{nums:?}");
+		let is_sorted = (1..nums.len()).map(|i| nums[i-1] <= nums[i]).all(|b| b);
+		assert!(is_sorted);
+	}
+
 
 	fn make_test_spline() -> Spline<f64, f64> {
 		let k1 = Key::new(0.0, 0.0, Interpolation::Linear);

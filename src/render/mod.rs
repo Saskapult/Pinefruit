@@ -44,8 +44,8 @@ pub use light::*;
 pub mod interpolation;
 pub use interpolation::*;
 
-pub mod rays;
-pub use rays::*;
-
 pub mod ssao;
 pub use ssao::*;
+
+pub mod blit;
+pub use blit::*;

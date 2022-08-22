@@ -1,14 +1,13 @@
-use std::time::Instant;
 use rapier3d::prelude::*;
 use crate::mesh::*;
-use crate::util::DurationHolder;
 use nalgebra::*;
-use specs::prelude::*;
-use specs::{Component, VecStorage};
+use shipyard::*;
 use crate::ecs::*;
 
 
 
+
+#[derive(Unique)]
 pub struct PhysicsResource {
 	pub rigid_body_set: RigidBodySet,
 	pub collider_set: ColliderSet,
@@ -21,8 +20,6 @@ pub struct PhysicsResource {
 	pub narrow_phase: NarrowPhase,
 	pub joint_set: JointSet,
 	pub ccd_solver: CCDSolver,
-
-	pub tick_durations: DurationHolder,
 }
 impl PhysicsResource {
 	pub fn new(
@@ -31,7 +28,7 @@ impl PhysicsResource {
 			rigid_body_set: RigidBodySet::new(),
 			collider_set: ColliderSet::new(),
 			query_pipeline: QueryPipeline::new(),
-			gravity: vector![0.0, -9.81, 0.0],
+			gravity: Vector3::new(0.0, -9.81, 0.0),
 			integration_parameters: IntegrationParameters::default(),
 			physics_pipeline: PhysicsPipeline::new(),
 			island_manager: IslandManager::new(),
@@ -39,8 +36,6 @@ impl PhysicsResource {
 			narrow_phase: NarrowPhase::new(),
 			joint_set: JointSet::new(),
 			ccd_solver: CCDSolver::new(),
-			
-			tick_durations: DurationHolder::new(5),
 		}
 	}
 
@@ -75,10 +70,6 @@ impl PhysicsResource {
 	}
 
 	pub fn tick(&mut self) {
-		info!("Physics tick!");
-
-		let tick_st = Instant::now();
-
 		self.physics_pipeline.step(
 			&self.gravity,
 			&self.integration_parameters,
@@ -94,8 +85,6 @@ impl PhysicsResource {
 		);
 		
 		self.query_pipeline.update(&self.island_manager, &self.rigid_body_set, &self.collider_set);
-
-		self.tick_durations.record(Instant::now() - tick_st);
 	}
 
 	pub fn add_rigid_body_with_mesh(
@@ -162,7 +151,6 @@ impl PhysicsResource {
 
 /// A static physics thing
 #[derive(Component, Debug)]
-#[storage(VecStorage)]
 pub struct StaticPhysicsComponent {
 	pub rigid_body_handle: RigidBodyHandle,
 	pub collider_handles: Vec<ColliderHandle>,
@@ -220,7 +208,6 @@ impl From<RigidBodyHandle> for StaticPhysicsComponent {
 
 /// A non-static physics thing
 #[derive(Component, Debug)]
-#[storage(VecStorage)]
 pub struct DynamicPhysicsComponent {
 	pub rigid_body_handle: RigidBodyHandle,
 	pub collider_handles: Vec<ColliderHandle>,
@@ -278,32 +265,31 @@ impl From<RigidBodyHandle> for DynamicPhysicsComponent {
 
 
 /// Ticks physics and moves affected objects
-pub struct DynamicPhysicsSystem;
-impl<'a> System<'a> for DynamicPhysicsSystem {
-	type SystemData = (
-		ReadStorage<'a, DynamicPhysicsComponent>,
-		WriteStorage<'a, TransformComponent>,
-		WriteExpect<'a, PhysicsResource>,
-	);
+pub fn dynamic_physics_system(
+	dynamic_objects: View<DynamicPhysicsComponent>,
+	mut transforms: ViewMut<TransformComponent>,
+	mut physics: UniqueViewMut<PhysicsResource>,
+) {
+	// Tick physics
+	physics.tick();
 
-	fn run(
-		&mut self, 
-		(
-			dynamic_objects,
-			mut transforms,
-			mut physics_resource,
-		): Self::SystemData,
-	) { 
-		// Tick physics
-		physics_resource.tick();
-
-		// For each thing with dynamic physics, put it where it should be
-		for (p_dynamic_c, transform_c) in (&dynamic_objects, &mut transforms).join() {
-			// get position and rotation of object using id
-			let body = &physics_resource.rigid_body_set[p_dynamic_c.rigid_body_handle];
-			// Update transform component
-			transform_c.position = *body.translation();
-			transform_c.rotation = *body.rotation();
-		}
+	// For each thing with dynamic physics, put it where it should be
+	for (dynamic_object, transform) in (&dynamic_objects, &mut transforms).iter() {
+		// get position and rotation of object using id
+		let body = &physics.rigid_body_set[dynamic_object.rigid_body_handle];
+		// Update transform component
+		transform.position = *body.translation();
+		transform.rotation = *body.rotation();
 	}
 }
+
+
+// // Things affected by gravity
+// #[derive(Component, Debug)]
+// pub struct GravityComponent {
+// 	pub gravity_acceleration: Vector3<f32>,
+// }
+
+// // Pull derived from physics mass?
+// #[derive(Component, Debug)]
+// pub struct GravitySourceComponent;

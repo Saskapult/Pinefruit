@@ -1,56 +1,120 @@
-use std::{collections::HashMap, time::{Instant, Duration}};
-use winit::{
-	event::*,
-};
-
-/*
-on mouse moved apply to all windows with mouse inside
+use crate::input::*;
+use shipyard::*;
 
 
-	GLOBAL
-mouse movement
-mouse wheel
-
-	PER-WINDOW
-keys
-cursor inside
-*/
 
 
-// Holds input data
-pub struct InputResource {
-	// The press percentages for all keys pressed during a timestep
-	// It is possible for a percentage to be greater than 100%
-	// This happends if startt is after the earliest queue value
-	pub board_keys: HashMap<VirtualKeyCode, Duration>,
-	pub board_presscache: Vec<VirtualKeyCode>,
-	pub mouse_keys: HashMap<MouseButton, Duration>,
-	pub mouse_presscache: Vec<MouseButton>,
-	pub mx: f64,
-	pub my: f64,
-	pub mdx: f64,
-	pub mdy: f64,
-	pub dscrollx: f32,
-	pub dscrolly: f32,
-	pub last_read: Instant,
-	pub last_updated: Instant,
-	// controlmap: HashMap<VirtualKeyCode, (some kind of enum option?)>
+#[derive(Component, Debug)]
+pub struct InputComponent {
+	pub input: InputSegment,
 }
-impl InputResource {
+impl InputComponent {
 	pub fn new() -> Self {
 		Self {
-			board_keys: HashMap::new(),
-			board_presscache: Vec::new(),
-			mouse_keys: HashMap::new(),
-			mouse_presscache: Vec::new(),
-			mx: 0.0,
-			my: 0.0,
-			mdx: 0.0, 
-			mdy: 0.0,
-			dscrollx: 0.0,
-			dscrolly: 0.0,
-			last_read: Instant::now(),
-			last_updated: Instant::now(),
+			input: InputSegment::new(),
 		}
 	}
+}
+
+
+
+#[derive(Component, Debug)]
+pub struct MouseComponent {
+	pub data: MouseData,
+}
+impl MouseComponent {
+	pub fn new() -> Self {
+		Self {
+			data: MouseData::new(),
+		}
+	}
+}
+
+
+
+pub fn input_mouse_system(
+	inputs: View<InputComponent>, 
+	mut mice: ViewMut<MouseComponent>,
+) {
+	
+	for (input, mouse) in (&inputs, &mut mice).iter() {
+		mouse.data.clear();
+		mouse.data.apply_segment(
+			&input.input,
+		);
+	}
+}
+
+
+
+#[derive(Component)]
+pub struct KeysComponent {
+	pub data: KeyData,
+}
+impl KeysComponent {
+	pub fn new() -> Self {
+		Self {
+			data: KeyData::new(),
+		}
+	}
+}
+
+
+
+pub fn input_keys_system(
+	inputs: View<InputComponent>, 
+	mut keys: ViewMut<KeysComponent>,
+) {
+	for (input, key) in (&inputs, &mut keys).iter() {
+		key.data.clear();
+		key.data.apply_segment(
+			&input.input,
+		);
+	}
+}
+
+
+
+#[derive(Component)]
+pub struct ControlComponent {
+	pub map: ControlMap,
+	pub data: ControlData,
+}
+impl ControlComponent {
+	pub fn from_map(map: ControlMap) -> Self {
+		Self {
+			map,
+			data: ControlData::new(),
+		}
+	}
+}
+
+
+
+pub fn input_control_system(
+	inputs: View<InputComponent>, 
+	mut controls: ViewMut<ControlComponent>,
+) {
+	for (input, control) in (&inputs, &mut controls).iter() {
+		control.data.clear();
+		control.data.apply_segment(
+			&input.input,
+			&control.map,
+		);
+		for cid in control.data.control_presses.keys() {
+			let name = control.map.cid_name_map.get(&cid).unwrap();
+			println!("\t{cid} - {name}");
+		}
+		println!("-");
+	}
+}
+
+
+/// Run input harvesters
+pub fn input_workload() -> Workload {
+	(
+		input_mouse_system, 
+		input_keys_system, 
+		input_control_system,
+	).into_workload()
 }

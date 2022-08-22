@@ -1,6 +1,5 @@
-#![feature(drain_filter, int_roundings)]
+#![feature(drain_filter, int_roundings, variant_count, int_log, hash_drain_filter)]
 #![allow(dead_code)]
-#![feature(int_log)]
 
 mod render;
 mod window;
@@ -15,18 +14,11 @@ mod noise;
 mod lua;
 mod octree;
 mod gui;
-mod simulation;
-mod voxelvolume;
-
+mod gpu;
+mod rays;
+mod input;
 
 use window::*;
-use std::thread;
-use std::sync::mpsc::channel;
-use winit::{
-	event::*,
-	event_loop::*,
-	window::*,
-};
 
 
 #[macro_use]
@@ -48,26 +40,27 @@ fn main() {
     warn!("some warning log");
     error!("some error log");		// High priority
 
-	let (game_sender, game_receiver) = channel();
 
-	let event_loop = EventLoop::<EventLoopEvent>::with_user_event();
-	let event_loop_proxy = event_loop.create_proxy();
+	let window_manager = WindowManager::new();
 
-	let game_thread = thread::Builder::new()
-		.name("game thread".into())
-		.spawn(move || {
-			let mut game = game::Game::new(event_loop_proxy, game_receiver);
-			game.setup();
-			game.new_window();
-			loop {
-				game.tick();
-			}
-		})
-		.expect("Failed to spawn game thread!");
+	// let event_loop_proxy = window_manager.event_loop_proxy.clone();
+	// let game_thread = thread::Builder::new()
+	// 	.name("game thread".into())
+	// 	.spawn(move || {
+	// 		let mut game = game::Game::new(
+	// 			event_loop_proxy,
+	// 		);
+	// 		game.setup();
+	// 		game.new_window();
+	// 		loop {
+	// 			game.tick();
+	// 		}
+	// 	})
+	// 	.expect("Failed to spawn game thread!");
 
-	run_event_loop(event_loop, game_sender);
-
-	game_thread.join().expect("huh?");
+	
+	window_manager.run();
+	// game_thread.join().expect("huh?");
 }
 
 

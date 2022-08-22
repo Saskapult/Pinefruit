@@ -1,37 +1,30 @@
-use std::time::{Instant, Duration};
+use std::{sync::{RwLock, Arc}, time::Instant};
 use nalgebra::*;
-// use specs::prelude::*;
-use specs::{Component, VecStorage};
-
-use crate::util::DurationHolder;
+use shipyard::*;
+use crate::{mesh::MeshManager, texture::TextureManager};
 
 
-
-
-
-// Holds timestep data
-pub struct StepResource {
-	pub last_step: Instant, // Time of last step
-	pub this_step: Instant, // Time of current step
-	pub step_diff: Duration, // this-last
-	pub step_durations: DurationHolder,
+#[derive(Unique)]
+pub struct TimeResource {
+	pub this_tick_start: Instant,
+	pub last_tick_start: Instant,
 }
-impl StepResource {
+impl TimeResource {
 	pub fn new() -> Self {
-		let heh = Instant::now();
 		Self {
-			last_step: heh,
-			this_step: heh, 
-			step_diff: heh - heh,
-			step_durations: DurationHolder::new(5),
+			this_tick_start: Instant::now(),
+			last_tick_start: Instant::now(),
 		}
+	}
+
+	pub fn next_tick(&mut self) {
+		self.last_tick_start = self.this_tick_start;
+		self.this_tick_start = Instant::now();
 	}
 }
 
 
-
 #[derive(Component, Debug, Clone)]
-#[storage(VecStorage)]
 pub struct TransformComponent {
 	pub position: Vector3<f32>,
 	pub rotation: UnitQuaternion<f32>,
@@ -72,3 +65,11 @@ impl TransformComponent {
 }
 
 
+#[derive(Unique, Debug, Clone)]
+pub struct MeshResource {
+	pub meshes: Arc<RwLock<MeshManager>>,
+}
+#[derive(Unique, Debug, Clone)]
+pub struct TextureResource {
+	pub textures: Arc<RwLock<TextureManager>>,
+}

@@ -1,7 +1,7 @@
 use rand::Rng;
 use nalgebra::*;
 use wgpu::util::DeviceExt;
-
+use crate::render::boundtexture::TextureFormat;
 use super::BoundTexture;
 
 
@@ -96,10 +96,14 @@ impl SSAOUniform {
 		queue: &wgpu::Queue, 
 		size: [u32; 2],
 	) -> BoundTexture {
-		let ssao_noise_texture = BoundTexture::new_with_format(
-			&device, &"ssao noise".to_string(), 
-			wgpu::TextureFormat::Rgba8Unorm, 
+		let ssao_noise_texture = BoundTexture::new(
+			&device, 
+			TextureFormat::Rgba8Unorm,
 			size[0], size[1],
+			1,
+			"ssao noise", 
+			wgpu::TextureUsages::COPY_DST 
+				| wgpu::TextureUsages::TEXTURE_BINDING, 
 		);
 		let num_pixels = (size[0] * size[1]) as usize;
 		let random_stuff = {

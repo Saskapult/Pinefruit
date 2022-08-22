@@ -1,10 +1,6 @@
 use std::time::Instant;
-
-use crate::render::*;
 use nalgebra::{Point3, Matrix4};
-use specs::prelude::*;
-use specs::{Component, VecStorage};
-use crate::ecs::*;
+use shipyard::*;
 
 
 
@@ -18,43 +14,43 @@ pub enum RenderTarget {
 
 
 #[derive(Component, Debug, Clone)]
-#[storage(VecStorage)]
 pub struct CameraComponent {
-	// Old and bad
-	pub target: RenderTarget,
-
-	pub fovy: f32,
-	pub znear: f32,
-
-	// Rename to render distance or something like that
-	// Can be used as ray distance or far plane distance.
-	pub zfar: f32,
-	
-	// Also old, also bad
-	// Should be stored in a mesh rendering component based on camera entity
-	pub render_data: Vec<ModelInstance>, // All the models visible to this camera
+	pub fovy: f32, // In radians, don't forget
+	pub near: f32,
+	pub far: f32,
 }
 impl CameraComponent {
 	pub fn new() -> Self {
 		Self {
-			target: RenderTarget::Window(0),
 			fovy: 45.0,
-			znear: 0.1,
-			zfar: 100.0,
-			render_data: Vec::new(),
+			near: Self::near_from_fovy_degrees(45.0),
+			far: 100.0,
 		}
+	}
+
+	fn near_from_fovy_degrees(fovy: f32) -> f32 {
+		1.0 / (fovy.to_radians() / 2.0).tan()
 	}
 
 	pub fn set_fovy(&mut self, degrees: f32) {
 		self.fovy = degrees.to_radians();
-		self.znear = 1.0 / (degrees.to_radians() / 2.0).tan();
+		self.near = Self::near_from_fovy_degrees(self.fovy);
 	}
 }
+
+// // Attached to camera
+// #[derive(Component, Debug)]
+// struct MeshRenderingComponent {
+// 	pub render_data: Vec<ModelInstance>, // All the models visible to this camera
+// }
+// #[derive(Component, Debug)]
+// struct TextureRenderComponent {
+// 	pub texture_id: usize,
+// }
 
 
 
 #[derive(Component, Debug)]
-#[storage(VecStorage)]
 pub struct ModelComponent {
 	pub mesh_idx: usize,
 	pub material_idx: usize,
@@ -73,26 +69,22 @@ impl ModelComponent {
 
 
 #[derive(Component, Debug)]
-#[storage(VecStorage)]
 pub struct SkeletonComponent {
 	pub index: usize,
 }
 
 #[derive(Component, Debug)]
-#[storage(VecStorage)]
 pub struct VVolumeComponent {
 	pub volume: bool,
 }
 
 #[derive(Component, Debug)]
-#[storage(VecStorage)]
 pub struct SkeletalVVolumeComponent {
 	pub bones: Vec<Matrix4<f32>>,
 	pub volumes: (bool, usize),
 }
 
 #[derive(Component, Debug)]
-#[storage(VecStorage)]
 /// A straight line between two points.
 /// Usually accompanied by a RenderMarkerComponent.
 /// Might be accompanied by a LifetimeComponent.
@@ -102,7 +94,6 @@ pub struct SimpleLineComponent {
 }
 
 #[derive(Component, Debug)]
-#[storage(VecStorage)]
 /// A marker to remove this entity after a point in time.
 pub struct LifetimeComponent {
 	pub expiry: Instant,
@@ -111,67 +102,67 @@ pub struct LifetimeComponent {
 
 
 
-/// For each camera gets the stuff that should be rendered
-// Todo: Buffer the instances to let renderer render independently
-pub struct RenderDataSystem;
-impl<'a> System<'a> for RenderDataSystem {
-	type SystemData = (
-		ReadStorage<'a, ModelComponent>,
-		ReadStorage<'a, MapComponent>,
-		WriteStorage<'a, CameraComponent>,
-		ReadStorage<'a, TransformComponent>,
-	);
+// /// For each camera gets the stuff that should be rendered
+// // Todo: Buffer the instances to let renderer render independently
+// pub struct RenderDataSystem;
+// impl<'a> System<'a> for RenderDataSystem {
+// 	type SystemData = (
+// 		ReadStorage<'a, ModelComponent>,
+// 		ReadStorage<'a, MapComponent>,
+// 		WriteStorage<'a, CameraComponent>,
+// 		ReadStorage<'a, TransformComponent>,
+// 	);
 
-	fn run(
-		&mut self, 
-		(
-			models,
-			maps,
-			mut cameras,
-			transforms,
-		): Self::SystemData,
-	) { 
-		for (camera, _camera_transform) in (&mut cameras, &transforms).join() {
+// 	fn run(
+// 		&mut self, 
+// 		(
+// 			models,
+// 			maps,
+// 			mut cameras,
+// 			transforms,
+// 		): Self::SystemData,
+// 	) { 
+// 		for (camera, _camera_transform) in (&mut cameras, &transforms).join() {
 			
-			let mut render_data = Vec::new();
-			// Models
-			for (model_c, transform_c) in (&models, &transforms).join() {
-				let instance = Instance::new()
-					.with_position(transform_c.position)
-					.with_rotation(transform_c.rotation);
-				let model_instance = ModelInstance {
-					material_idx: model_c.material_idx,
-					mesh_idx: model_c.mesh_idx,
-					instance,
-				};
-				render_data.push(model_instance);
-			}
-			// Map chunks
-			// Todo: rotation
-			for (map_c, transform_c) in (&maps, &transforms).join() {
-				// Renders ALL available chunks
-				for (cp, entry) in &map_c.chunk_models {
-					let mesh_mats = match entry {
-						ChunkModelEntry::Complete(mesh_mats) => Some(mesh_mats),
-						ChunkModelEntry::ReModeling(mesh_mats, _) => Some(mesh_mats),
-						_ => None,
-					};
-					if let Some(mesh_mats) = mesh_mats {
-						let position = transform_c.position + map_c.map.chunk_point(*cp);
-						let instance = Instance::new().with_position(position);
-						for (mesh_idx, material_idx) in mesh_mats.iter().cloned() {
-							let model_instance = ModelInstance {
-								material_idx,
-								mesh_idx,
-								instance,
-							};
-							render_data.push(model_instance);
-						}
-					}
-				}
-			}
+// 			let mut render_data = Vec::new();
+// 			// Models
+// 			for (model_c, transform_c) in (&models, &transforms).join() {
+// 				let instance = Instance::new()
+// 					.with_position(transform_c.position)
+// 					.with_rotation(transform_c.rotation);
+// 				let model_instance = ModelInstance {
+// 					material_idx: model_c.material_idx,
+// 					mesh_idx: model_c.mesh_idx,
+// 					instance,
+// 				};
+// 				render_data.push(model_instance);
+// 			}
+// 			// Map chunks
+// 			// Todo: rotation
+// 			for (map_c, transform_c) in (&maps, &transforms).join() {
+// 				// Renders ALL available chunks
+// 				for (cp, entry) in &map_c.chunk_models {
+// 					let mesh_mats = match entry {
+// 						ChunkModelEntry::Complete(mesh_mats) => Some(mesh_mats),
+// 						ChunkModelEntry::ReModeling(mesh_mats, _) => Some(mesh_mats),
+// 						_ => None,
+// 					};
+// 					if let Some(mesh_mats) = mesh_mats {
+// 						let position = transform_c.position + map_c.map.chunk_point(*cp);
+// 						let instance = Instance::new().with_position(position);
+// 						for (mesh_idx, material_idx) in mesh_mats.iter().cloned() {
+// 							let model_instance = ModelInstance {
+// 								material_idx,
+// 								mesh_idx,
+// 								instance,
+// 							};
+// 							render_data.push(model_instance);
+// 						}
+// 					}
+// 				}
+// 			}
 
-			camera.render_data = render_data;
-		}
-	}
-}
+// 			camera.render_data = render_data;
+// 		}
+// 	}
+// }

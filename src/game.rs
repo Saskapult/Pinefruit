@@ -1,16 +1,14 @@
-use specs::prelude::*;
+use shipyard::*;
 use winit::event_loop::*;
-use nalgebra::*;
-use std::collections::HashMap;
-use std::sync::mpsc::Receiver;
 use std::time::{Instant, Duration};
 use std::sync::{Arc, RwLock};
-use rapier3d::prelude::*;
 use crate::ecs::*;
 use crate::window::*;
 use crate::mesh::*;
 use crate::texture::*;
 use crate::material::*;
+use crate::world::BlockManager;
+use crate::gpu::*;
 
 
 
@@ -18,99 +16,66 @@ use crate::material::*;
 pub struct Game {
 	pub world: World,
 	
-	blocks_manager: Arc<RwLock<crate::world::BlockManager>>,
+	pub textures: Arc<RwLock<TextureManager>>,
+	pub meshes: Arc<RwLock<MeshManager>>,
+	pub materials: Arc<RwLock<MaterialManager>>,
+	pub blocks: Arc<RwLock<BlockManager>>,
+
+	pub device: Arc<wgpu::Device>,
+	pub queue: Arc<wgpu::Queue>,
+	pub gpu_data: GpuData,
+	event_loop_proxy: EventLoopProxy<WindowCommand>, 
 	
-	window_manager: WindowManager,
-
-	tick_dispatcher: Dispatcher<'static, 'static>,
 	last_tick: Instant,
-	entity_names_map: HashMap<Entity, String>,
-
-	marker_entity: Option<Entity>,
-	can_modify_block: bool,
+	tick_delay: Duration,
 }
 impl Game {
 	pub fn new(
-		event_loop_proxy: EventLoopProxy<EventLoopEvent>, 
-		event_loop_receiver: Receiver<ResponseFeed>,
+		device: &Arc<wgpu::Device>,
+		queue: &Arc<wgpu::Queue>,
+		event_loop_proxy: EventLoopProxy<WindowCommand>, 
 	) -> Self {
-		let instance = wgpu::Instance::new(wgpu::Backends::all());
-		let adapter = pollster::block_on(instance.request_adapter(
-			&wgpu::RequestAdapterOptions {
-				power_preference: wgpu::PowerPreference::HighPerformance, // Dedicated GPU
-				compatible_surface: None, // Some(&surface)
-				force_fallback_adapter: false, // Don't use software renderer
-			},
-		)).unwrap();
+		let device = device.clone();
+		let queue = queue.clone();
 
-		let adapter_info = adapter.get_info();
-		info!("Kkraft using device {} ({:?})", adapter_info.name, adapter_info.backend);
-		info!("Features: {:?}", adapter.features());
-		info!("Limits: {:?}", adapter.limits());
+		let textures = Arc::new(RwLock::new(TextureManager::new()));
+		let meshes = Arc::new(RwLock::new(MeshManager::new()));
+		let materials = Arc::new(RwLock::new(MaterialManager::new()));
+		let blocks = Arc::new(RwLock::new(BlockManager::new()));		
 
-		let blocks_manager = Arc::new(RwLock::new(crate::world::BlockManager::new()));
-
-		let mut world = World::new();
-
-		// Register components
-		world.register::<TransformComponent>();
-		world.register::<MovementComponent>();
-		world.register::<ModelComponent>();
-		world.register::<MapComponent>();
-		world.register::<CameraComponent>();
-		world.register::<DynamicPhysicsComponent>();
-		world.register::<StaticPhysicsComponent>();
-		world.register::<MarkerComponent>();
-
-		// Attach resources
-		let step_resource = StepResource::new();
-		world.insert(step_resource);
-
-		let gpu_resource = GPUResource::new(
-			&adapter,
-			&Arc::new(RwLock::new(TextureManager::new())),
-			&Arc::new(RwLock::new(MeshManager::new())),
-			&Arc::new(RwLock::new(MaterialManager::new())),
+		let gpu_data = GpuData::new(
+			&device,
+			&queue,
+			&textures,
+			&meshes,
+			&materials,
 		);
-		world.insert(gpu_resource);
 
-		let input_resource = InputResource::new();
-		world.insert(input_resource);
+		let world = World::new();
+		world.add_unique(PhysicsResource::new());
+		world.add_unique(TimeResource::new());
 
-		let physics_resource = PhysicsResource::new();
-		world.insert(physics_resource);
-
-		let tick_dispatcher = DispatcherBuilder::new()
-			// .with(MovementSystem, "movement", &[])
-			.with(MapLoadingSystem, "map loading", &[])
-			.build();
-
-		let window_manager = WindowManager::new(
-			instance,
-			adapter,
-			event_loop_proxy,
-			event_loop_receiver,
-		);
+		world.add_workload(input_workload);
 
 		Self {
 			world,
-			blocks_manager,
-			window_manager,
-			tick_dispatcher,
+			textures, meshes, materials, blocks, 
+			device, queue, gpu_data, 
+			event_loop_proxy,
 			last_tick: Instant::now(),
-			entity_names_map: HashMap::new(),
-			marker_entity: None,
-			can_modify_block: true,
+			tick_delay: Duration::from_secs_f32(1.0 / 60.0),
 		}
 	}
 
 	pub fn setup(&mut self) {
+		// Load testing shaders
+		self.gpu_data.shaders.register_path("./resources/shaders/acceleration_test.ron");
+		self.gpu_data.shaders.register_path("./resources/shaders/blit.ron");
+
 		// Material loading
 		{
-			let mut gpu = self.world.write_resource::<GPUResource>();
-
-			let mut matm = gpu.data.materials.data_manager.write().unwrap();
-			let mut texm = gpu.data.textures.data_manager.write().unwrap();
+			let mut matm = self.materials.write().unwrap();
+			let mut texm = self.textures.write().unwrap();
 
 			// Load some materials
 			load_materials_file(
@@ -118,21 +83,13 @@ impl Game {
 				&mut texm,
 				&mut matm,
 			).unwrap();
-
-			// Load my thingy
-			drop(matm);
-			drop(texm);
-			gpu.data.shaders.register_path("./resources/shaders/acceleration_test.ron");
-			gpu.data.shaders.register_path("./resources/shaders/blit.ron");
 		}
 
 		// Block loading
 		{
-			let mut bm = self.blocks_manager.write().unwrap();
-
-			let gpu = self.world.write_resource::<GPUResource>();
-			let mut mm = gpu.data.materials.data_manager.write().unwrap();
-			let mut tm = gpu.data.textures.data_manager.write().unwrap();
+			let mut bm = self.blocks.write().unwrap();
+			let mut mm = self.materials.write().unwrap();
+			let mut tm = self.textures.write().unwrap();
 
 			crate::world::blocks::load_blocks_file(
 				"resources/kblocks.ron",
@@ -151,65 +108,25 @@ impl Game {
 		
 	}
 
-	pub fn tick(&mut self) {
-		// Run window update
-		self.window_manager.read_input();
-		for (_, window) in self.window_manager.windows.iter_mut() {
-			window.game_widget.tracked_entity.get_or_insert_with(|| {
-				self.world.create_entity()
-					.with(CameraComponent::new())
-					.with(
-						TransformComponent::new()
-						.with_position(Vector3::new(0.5, 0.5, 0.5))
-					)
-					.with(MovementComponent{speed: 4.0})
-					.build()
-			});
-
-			window.game_input.end();
-
-			// Move things
-			let mut tcs = self.world.write_component::<TransformComponent>();
-			let mcs = self.world.read_component::<MovementComponent>();
-			if let Some(entity) = window.game_widget.tracked_entity {
-				if let Some(mv) = mcs.get(entity) {
-					if let Some(tc) = tcs.get_mut(entity) {
-						crate::ecs::apply_input(&window.game_input, tc, mv);
-					}
-				}
-			}
-		}
-
-		// Do ticking stuff
-		if self.last_tick.elapsed() > Duration::from_secs_f32(1.0 / 30.0) {
-			self.last_tick = Instant::now();
-			self.tick_dispatcher.dispatch(&self.world);
-			let mut input_resource = self.world.write_resource::<InputResource>();
-			input_resource.last_read = Instant::now();
-		}
-		
-		// Show windows
-		{
-			let mut gpu_resource = self.world.write_resource::<GPUResource>();
-			for (_, window) in self.window_manager.windows.iter_mut() {
-				window.game_input.reset();
-				window.update(
-					&mut gpu_resource,
-					&self.world,
-				);
-			}
-		}
+	pub fn should_tick(&self) -> bool {
+		self.last_tick.elapsed() >= self.tick_delay
 	}
 
-	
+	pub fn tick(&mut self) {
+		self.last_tick = Instant::now();
+
+		{
+			let mut time_resource = self.world.borrow::<UniqueViewMut<TimeResource>>().unwrap();
+			(*time_resource).next_tick();
+		}
+
+		self.world.run_workload(input_workload).unwrap();
+
+		self.world.run(control_movement_system);
+	}
 
 	pub fn new_window(&mut self) {
 		info!("Requesting new game window");
-
-		self.window_manager.request_new_window();
+		self.event_loop_proxy.send_event(WindowCommand::NewWindow).unwrap();
 	}
 }
-
-
-
-

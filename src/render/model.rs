@@ -1,7 +1,8 @@
-use crate::ecs::GPUData;
 use crate::render::*;
 use std::collections::{HashMap, HashSet};
 use wgpu::util::DeviceExt;
+use crate::gpu::GpuData;
+use generational_arena::{Arena, Index};
 
 
 
@@ -9,8 +10,8 @@ use wgpu::util::DeviceExt;
 #[derive(Debug, Copy, Clone)]
 pub struct ModelInstance {
 	// Indices to the UNBOUND mesh and material
-	pub material_idx: usize,
-	pub mesh_idx: usize,
+	pub material_idx: Index,
+	pub mesh_idx: Index,
 	pub instance: Instance,
 }
 
@@ -48,8 +49,8 @@ pub struct ModelInstance {
 #[derive(Debug)]
 pub struct Model {
 	pub name: String,
-	pub mesh_idx: usize,	// Must match material's shader vertex input
-	pub material_idx: usize,
+	pub mesh_idx: Index,	// Must match material's shader vertex input
+	pub material_idx: Index,
 }
 
 
@@ -58,29 +59,29 @@ pub struct Model {
 /// Lame and maybe not needed.
 #[derive(Debug)]
 pub struct ModelManager {
-	models: Vec<Model>,
-	index_name: HashMap<String, usize>,
+	models: Arena<Model>,
+	index_name: HashMap<String, Index>,
 }
 impl ModelManager {
 	pub fn new() -> Self {
 		Self {
-			models: Vec::new(),
+			models: Arena::new(),
 			index_name: HashMap::new(),
 		}
 	}
 
-	pub fn index(&self, i: usize) -> &Model {
-		&self.models[i]
+	pub fn index(&self, i: Index) -> Option<&Model> {
+		self.models.get(i)
 	}
 
-	pub fn index_name(&self, name: &String) -> usize {
-		self.index_name[name]
+	pub fn index_name(&self, name: &String) -> Option<Index> {
+		self.index_name.get(name).and_then(|&i| Some(i))
 	}
 
-	pub fn insert(&mut self, model: Model) -> usize {
-		let idx = self.models.len();
-		self.index_name.insert(model.name.clone(), idx);
-		self.models.push(model);
+	pub fn insert(&mut self, model: Model) -> Index {
+		let name = model.name.clone();
+		let idx = self.models.insert(model);
+		self.index_name.insert(name, idx);
 		idx
 	}
 }
@@ -90,9 +91,9 @@ impl ModelManager {
 /// Shader inputs are simplified to instance properties, vertex properties, and material format
 pub type ShaderInput = (InstanceProperties, VertexProperties, BindGroupFormat);
 /// instance buffer idx, [material idx, mesh idx, count])
-pub type ModelQueue = (usize, Vec<(usize, usize, u32)>);
+pub type ModelQueue = (usize, Vec<(Index, Index, u32)>);
 /// Instance idx, mesh, count
-pub type MeshQueue = (usize, Vec<(usize, u32)>);
+pub type MeshQueue = (usize, Vec<(Index, u32)>);
 
 pub fn meshq_from_modelq(model_queue: &ModelQueue) -> MeshQueue {
 	let (instance_buffer_idx, model_stuff) = model_queue;
@@ -113,7 +114,7 @@ pub fn meshq_from_modelq(model_queue: &ModelQueue) -> MeshQueue {
 	(*instance_buffer_idx, mesh_queue_1)
 }
 
-pub fn modelq_from_meshq(mesh_queue: MeshQueue, materials: Vec<usize>) -> ModelQueue {
+pub fn modelq_from_meshq(mesh_queue: MeshQueue, materials: Vec<Index>) -> ModelQueue {
 
 	let (instance_buffer_idx, mesh_stuff) = mesh_queue;
 
@@ -206,7 +207,8 @@ impl ModelQueuesResource {
 	pub fn add_format(
 		&mut self,
 		format: &ShaderInput,
-		gpu_data: &mut GPUData,
+		device: &wgpu::Device,
+		gpu_data: &mut GpuData,
 	) -> usize {
 		warn!("Adding format without setup");
 		match self.queue_index_of_format(format) {
@@ -219,7 +221,7 @@ impl ModelQueuesResource {
 						instances_data.extend_from_slice(&instance_data[..]);
 					}
 
-					let instances_buffer = gpu_data.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+					let instances_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 						label: Some("Instance Buffer"),
 						contents: &instances_data[..],
 						usage: wgpu::BufferUsages::VERTEX,
@@ -254,13 +256,15 @@ impl ModelQueuesResource {
 	pub fn update_models(
 		&mut self, 
 		models: Vec<ModelInstance>,
-		gpu_data: &mut GPUData,
+		gpu_data: &mut GpuData,
 	) {
 		for ((_, vp, mbgf), &queue_idx) in self.queue_index_of_format.iter() {
 			// I don't want to allocate a new vector
 			// The existing vector should either be extended or truncated
+			// It should betterly just be logically resvered and then cleared and then use pushed
 			let queue_content = &mut self.queues.get_mut(queue_idx).unwrap().1;
-			queue_content.resize(models.len(), (0,0,0));
+			let i = Index::from_raw_parts(0, 0);
+			queue_content.resize(models.len(), (i,i,0));
 
 			// Another way of doing stuff
 			// queue_content.iter_mut().enumerate().map(|(i, c)| {

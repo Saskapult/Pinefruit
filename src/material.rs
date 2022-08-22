@@ -2,6 +2,7 @@ use std::{path::{PathBuf, Path}, collections::HashMap};
 use serde::{Serialize, Deserialize};
 use anyhow::*;
 use crate::texture::*;
+use generational_arena::{Arena, Index};
 
 
 
@@ -38,35 +39,31 @@ impl std::fmt::Display for Material {
 
 #[derive(Debug)]
 pub struct MaterialManager {
-	materials: Vec<Material>,
-	materials_index_name: HashMap<String, usize>,
+	materials: Arena<Material>,
+	materials_index_name: HashMap<String, Index>,
 }
 impl MaterialManager {
 	pub fn new() -> Self {
 		Self {
-			materials: Vec::new(),
+			materials: Arena::new(),
 			materials_index_name: HashMap::new(),
 		}
 	}
 
-	pub fn insert(&mut self, material: Material) -> usize {
+	pub fn insert(&mut self, material: Material) -> Index {
 		info!("New material {}", &material.name);
-		let idx = self.materials.len();
-		self.materials_index_name.insert(material.name.clone(), idx);
-		self.materials.push(material);
+		let name = material.name.clone();
+		let idx = self.materials.insert(material);
+		self.materials_index_name.insert(name, idx);
 		idx
 	}
 
-	pub fn index(&self, i: usize) -> &Material {
-		&self.materials[i]
+	pub fn index(&self, i: Index) -> Option<&Material> {
+		self.materials.get(i)
 	}
 
-	pub fn index_name(&self, name: &String) -> Option<usize> {
-		if self.materials_index_name.contains_key(name) {
-			Some(self.materials_index_name[name])
-		} else {
-			None
-		}
+	pub fn index_name(&self, name: &String) -> Option<Index> {
+		self.materials_index_name.get(name).and_then(|&i| Some(i))
 	}
 }
 
@@ -108,7 +105,7 @@ pub fn load_materials_file(
 
 		// Load textures
 		for (t, tps) in &textures {
-			let tex = Texture::new(t, &tps[0]);
+			let tex = Texture::from_path(t, &tps[0]).unwrap();
 			tm.insert(tex);
 		}
 

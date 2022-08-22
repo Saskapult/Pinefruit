@@ -1,15 +1,18 @@
-use std::{time::Instant, sync::mpsc::{Receiver, SyncSender}};
+use std::{time::{Instant, Duration}, sync::mpsc::{Receiver, SyncSender}};
 use bytemuck::{Pod, Zeroable};
 use egui;
-use specs::Entity;
+use egui_wgpu_backend::RenderPass;
+use generational_arena::Index;
+use shipyard::*;
 use std::sync::mpsc::sync_channel;
-use crate::{render::*, ecs::GPUResource, world::{TracingChunkManager, BlockManager, load_blocks_file_messy, Chunk}, octree::chunk_to_octree};
+use crate::{render::*, gpu::GpuData, world::{TracingChunkManager, BlockManager, load_blocks_file_messy, Chunk}, octree::chunk_to_octree, game::Game, input::ControlMap, ecs::InputComponent};
 use crate::window::WindowSettings;
+use crate::ecs::*;
+use nalgebra::*;
+use wgpu::util::DeviceExt;
+use crate::input::*;
 
 
-
-
-// use egui::Widget;
 
 
 #[repr(C)]
@@ -24,13 +27,16 @@ struct Camera {
 
 #[derive(Debug)]
 pub struct GameWidget {
-	pub tracked_entity: Option<Entity>,
+	pub tracked_entity: Option<EntityId>,
 	rgba_texture: Option<BoundTexture>,
 	srgba_texture: Option<BoundTexture>,
 	display_texture: Option<egui::TextureId>,
 	last_size: [f32; 2],
 	conversion_sampler: Option<wgpu::Sampler>,
 	fugg_buffer: Option<wgpu::Buffer>,
+
+	render_delay: Duration,
+	last_render: Option<Instant>,
 	
 	bm: BlockManager,
 	tcm: Option<TracingChunkManager>,
@@ -41,7 +47,7 @@ pub struct GameWidget {
 }
 impl GameWidget {
 	pub fn new(
-		tracked_entity: Option<Entity>,
+		tracked_entity: Option<EntityId>,
 	) -> Self {
 
 		let mut bm = BlockManager::new();
@@ -59,32 +65,76 @@ impl GameWidget {
 			conversion_sampler: None,
 			fugg_buffer: None,
 
-			aspect: None,
+			render_delay: Duration::from_secs_f32(1.0 / 30.0),
+			last_render: None,
 
 			bm,
 			tcm: None,
+
+			aspect: None,
 
 			camera_buffer: None,
 		}
 	}
 
-	pub fn encode_render(
+	pub fn pre_tick_stuff(&mut self, game: &mut Game, input_segment: InputSegment) {
+		// Make entity if not exists
+		let entity = *self.tracked_entity.get_or_insert_with(|| {
+			info!("Creating game widgit entity");
+			let mut cc = ControlMap::new(); // TEMPORARY
+			game.world.add_entity((
+				CameraComponent::new(),
+				TransformComponent::new()
+					.with_position(Vector3::new(0.5, 0.5, 0.5)),
+				MovementComponent::new(&mut cc),
+				InputComponent::new(),
+				MouseComponent::new(),
+				// KeysComponent::new(),
+				ControlComponent::from_map(cc),
+			))
+		});
+		// Apply input
+		let mut inputs = game.world.borrow::<ViewMut<InputComponent>>().unwrap();
+		if let Ok((input,)) = (&mut inputs,).get(entity) {
+			input.input = input_segment;
+			// input.last_read = self.last_render.unwrap_or_else(|| input.get(0).and_then(|v| Some(v.1)).unwrap_or(Instant::now()));
+			// input.last_feed = Instant::now();
+		}
+
+		// Load shaders if not loaded
+		let octree_path = "resources/shaders/acceleration_test.ron".to_owned().into();
+		game.gpu_data.shaders.index_from_path(&octree_path).or_else(|| Some(game.gpu_data.shaders.register_path(&octree_path)));
+		let blit_path = "resources/shaders/blit.ron".to_owned().into();
+		game.gpu_data.shaders.index_from_path(&blit_path).or_else(|| Some(game.gpu_data.shaders.register_path(&blit_path)));
+
+		
+	}
+
+	// True if actually encoded anything
+	pub fn maybe_encode_render(
 		&mut self,
+		device: &wgpu::Device,
+		queue: &wgpu::Queue,
+		egui_rpass: &mut RenderPass,
 		encoder: &mut wgpu::CommandEncoder,
-		world: &specs::World,
-		gpu_resource: &mut GPUResource,
-	) {
-		use specs::WorldExt;
-		use crate::ecs::*;
-		use wgpu::util::DeviceExt;
+		// Maybe take game instead?
+		world: &shipyard::World,
+		gpu_data: &GpuData,
+	) -> bool {
+		if let Some(t) = self.last_render {
+			if t.elapsed() < self.render_delay {
+				return false;
+			}
+		}
+		self.last_render = Some(Instant::now());
 
 		if let Some(entity) = self.tracked_entity {
 
 			// Camera
-			let ccs = world.read_component::<CameraComponent>();
-			let _camera = ccs.get(entity)
+			let ccs = world.borrow::<View<CameraComponent>>().unwrap();
+			let _camera_camera = ccs.get(entity)
 				.expect("Render point has no camera!");
-			let tcs = world.read_component::<TransformComponent>();
+			let tcs = world.borrow::<View<TransformComponent>>().unwrap();
 			let camera_transform = tcs.get(entity)
 				.expect("Render camera has no transform!");
 			let camera_data = Camera {
@@ -95,12 +145,12 @@ impl GameWidget {
 
 
 			// Textures and stuff
-			self.update_size(&gpu_resource.device);
+			self.update_size(device);
 			let rgba = self.rgba_texture.as_ref().unwrap();
 			let srgba = self.srgba_texture.as_ref().unwrap();
 			let fugg_buffer = self.fugg_buffer.get_or_insert_with(|| {
 				info!("Making fugg buffer");
-				gpu_resource.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+				device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 					label: Some("fugg buffer"),
 					contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
 					usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
@@ -108,7 +158,7 @@ impl GameWidget {
 			});
 			let conversion_sampler = self.conversion_sampler.get_or_insert_with(|| {
 				info!("Making conversion sampler");
-				gpu_resource.device.create_sampler(&wgpu::SamplerDescriptor {
+				device.create_sampler(&wgpu::SamplerDescriptor {
 					label: Some("conversion sampler"),
 					address_mode_u: wgpu::AddressMode::ClampToEdge,
 					address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -124,20 +174,19 @@ impl GameWidget {
 			// Camera
 			let camera_buffer = self.camera_buffer.get_or_insert_with(|| {
 				info!("Making camera buffer");
-				println!("{:#?}", camera_data.rotation);
-				gpu_resource.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+				device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 					label: Some("camera buffer"),
 					contents: bytemuck::bytes_of(&camera_data),
 					usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 				})
 			});
-			gpu_resource.queue.write_buffer(&*camera_buffer, 0, bytemuck::bytes_of(&camera_data));
+			queue.write_buffer(&*camera_buffer, 0, bytemuck::bytes_of(&camera_data));
 
 
-			let comp_shader = gpu_resource.data.shaders.index(0);
-			let cp_bind_group = gpu_resource.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			let comp_shader = gpu_data.shaders.index(Index::from_raw_parts(0, 0)).unwrap();
+			let cp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
 				label: Some("compute bind group"),
-				layout: gpu_resource.data.shaders.bind_group_layout_index(comp_shader.bind_groups[&0].layout_idx),
+				layout: gpu_data.shaders.bind_group_layout_index(comp_shader.bind_groups[&0].layout_idx),
 				entries: &[
 					wgpu::BindGroupEntry {
 						binding: 0,
@@ -150,7 +199,7 @@ impl GameWidget {
 				],
 			});
 			let tcm = self.tcm.get_or_insert_with(|| {
-				let mut tcm = TracingChunkManager::new(&gpu_resource.device);
+				let mut tcm = TracingChunkManager::new(device);
 				
 				let chunk = Chunk::from_compressed_mapped_rle(
 					"./map_saved/0/-3.-2.1.cmrle", 
@@ -161,9 +210,9 @@ impl GameWidget {
 				warn!("Chunk uses  {} bytes", chunk.size());
 				warn!("Octree uses {} bytes", octree.get_size());
 
-				tcm.insert_octree(&gpu_resource.queue, [0,0,2], &octree);
+				tcm.insert_octree(queue, [0,0,2], &octree);
 				warn!("Buffer is at {:.2}% capacity", tcm.storage.capacity_frac() * 100.0);
-				tcm.insert_octree(&gpu_resource.queue, [1,0,2], &octree);
+				tcm.insert_octree(queue, [1,0,2], &octree);
 				warn!("Buffer is at {:.2}% capacity", tcm.storage.capacity_frac() * 100.0);
 				
 				
@@ -171,8 +220,8 @@ impl GameWidget {
 			});
 			// tcm.chunks.insert([0,1,1], (0, 0));
 			// tcm.chunks.insert([0,0,1], (0, 0));
-			tcm.rebuild(&gpu_resource.queue, [0,0,0]);
-			let tcmbg = tcm.make_bg(&gpu_resource.device, gpu_resource.data.shaders.bind_group_layout_index(comp_shader.bind_groups[&1].layout_idx));
+			tcm.rebuild(queue, [0,0,0]);
+			let tcmbg = tcm.make_bg(device, gpu_data.shaders.bind_group_layout_index(comp_shader.bind_groups[&1].layout_idx));
 			{
 				let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
 					label: Some("compute pass"),
@@ -187,10 +236,10 @@ impl GameWidget {
 			}
 
 
-			let blit_shader = gpu_resource.data.shaders.index(1);
-			let bp_bind_group = gpu_resource.device.create_bind_group(&wgpu::BindGroupDescriptor {
+			let blit_shader = gpu_data.shaders.index(Index::from_raw_parts(1, 0)).unwrap();
+			let bp_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
 				label: Some("blit bind group"),
-				layout: gpu_resource.data.shaders.bind_group_layout_index(blit_shader.bind_groups[&0].layout_idx),
+				layout: gpu_data.shaders.bind_group_layout_index(blit_shader.bind_groups[&0].layout_idx),
 				entries: &[
 					wgpu::BindGroupEntry {
 						binding: 0,
@@ -217,7 +266,7 @@ impl GameWidget {
 				});
 
 				match &blit_shader.pipeline {
-					crate::render::ShaderPipeline::Polygon{pipeline, ..} => bp.set_pipeline(pipeline),
+					crate::render::ShaderPipeline::Polygon{pipeline, ..} => bp.set_pipeline(&pipeline),
 					_ => panic!("Weird shader things"),
 				}
 
@@ -231,16 +280,16 @@ impl GameWidget {
 
 			match self.display_texture {
 				Some(id) => {
-					gpu_resource.egui_rpass.update_egui_texture_from_wgpu_texture(
-						&gpu_resource.device, 
+					egui_rpass.update_egui_texture_from_wgpu_texture(
+						device, 
 						&srgba.view, 
 						wgpu::FilterMode::Nearest, 
 						id,
 					).unwrap();
 				},
 				None => {
-					self.display_texture = Some(gpu_resource.egui_rpass.egui_texture_from_wgpu_texture(
-						&gpu_resource.device,
+					self.display_texture = Some(egui_rpass.egui_texture_from_wgpu_texture(
+						device,
 						&srgba.view,
 						wgpu::FilterMode::Nearest, 
 					));
@@ -248,19 +297,16 @@ impl GameWidget {
 			};
 
 		}
-	}
 
-	/// To be used if one wished to display an image independently of other systems.
-	pub fn set_source(&mut self, source: BoundTexture) {
-		self.srgba_texture = Some(source);
+		true
 	}
 
 	/// Adjusts the texture size to the widget size
 	pub fn update_size(&mut self, device: &wgpu::Device) {
-		fn update_size_internal(device: &wgpu::Device, texture: &mut Option<BoundTexture>, intended_size: [u32; 2], format: TextureFormat) -> bool {
+		let update_size_internal = |texture: &mut Option<BoundTexture>, intended_size: [u32; 2], format: TextureFormat, usages: wgpu::TextureUsages| -> bool {
 			if let Some(texture) = texture.as_ref() {
-				let srgba_size = [texture.size.width, texture.size.height];
-				if srgba_size == intended_size {
+				let size = [texture.size.width, texture.size.height];
+				if size == intended_size {
 					return false;
 				}
 			}
@@ -269,18 +315,25 @@ impl GameWidget {
 				format,
 				intended_size[0], 
 				intended_size[1], 
-				"GameWidgetSource",
+				1,
+				"GameWidgetTexture",
+				usages,
 			));
 			true
-		}
+		};
 
-		// let indended_width = self.last_size[0].round() as u32;
-		// let height = (self.last_size[0] * 9.0 / 16.0).round() as u32;
 		let intended_size = self.last_size.map(|f| f.round() as u32);
-		// let intended_size = [indended_width, height];
-
-		update_size_internal(device, &mut self.rgba_texture, intended_size, TextureFormat::Rgba8Unorm);
-		update_size_internal(device, &mut self.srgba_texture, intended_size, TextureFormat::Rgba8UnormSrgb);
+		update_size_internal(
+			&mut self.rgba_texture, intended_size, TextureFormat::Rgba8Unorm, 
+			wgpu::TextureUsages::RENDER_ATTACHMENT 
+				| wgpu::TextureUsages::TEXTURE_BINDING
+				| wgpu::TextureUsages::STORAGE_BINDING,
+		);
+		update_size_internal(
+			&mut self.srgba_texture, intended_size, TextureFormat::Rgba8UnormSrgb,
+			wgpu::TextureUsages::RENDER_ATTACHMENT 
+				| wgpu::TextureUsages::TEXTURE_BINDING,
+		);
 	}
 	
 	pub fn update_display(
@@ -325,6 +378,15 @@ impl GameWidget {
 				window_settings.capture_mouse = false;
 			};
 		}
+	}
+}
+
+
+pub struct EntityMovementWidget;
+impl EntityMovementWidget {
+	pub fn display(&mut self, ui: &mut egui::Ui, movement_component: &mut MovementComponent) {
+		// ui.text_edit_single_line();
+		ui.add(egui::Slider::new(&mut movement_component.max_speed, 0.1..=20.0).text("Maximum Speed"));
 	}
 }
 

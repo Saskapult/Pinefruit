@@ -3,6 +3,9 @@ pub mod chunk;
 pub mod map;
 pub mod terrain;
 
+pub mod voxelvolume;
+pub use voxelvolume::*;
+
 pub mod acceleration;
 pub use acceleration::*;
 

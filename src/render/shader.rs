@@ -7,6 +7,7 @@ use std::collections::{HashMap, BTreeMap};
 use wgpu;
 use crate::render::*;
 use anyhow::anyhow;
+use generational_arena::{Arena, Index};
 
 
 
@@ -95,7 +96,7 @@ pub enum BindingType {
 	ArrayTexture,
 	Sampler,
 	SamplerArray,
-	StorageTexture(TextureType),
+	StorageTexture(TextureFormat),
 	StorageBuffer,
 }
 
@@ -232,7 +233,7 @@ impl BindGroupEntryFormat {
 					visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
 					ty: wgpu::BindingType::StorageTexture {
 						access: wgpu::StorageTextureAccess::ReadWrite,
-						format: format.translate(),
+						format: format.into(),
 						view_dimension: wgpu::TextureViewDimension::D2,
 					},
 					count: None,
@@ -390,10 +391,10 @@ pub enum ShaderError {
 pub struct ShaderManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
-	shaders: Vec<Shader>,
-	shaders_loaded_at: Vec<SystemTime>,
-	shaders_index_by_name: HashMap<String, usize>,
-	shaders_index_by_path: HashMap<PathBuf, usize>,
+	shaders: Arena<(Shader, SystemTime)>,
+	shaders_index_by_name: HashMap<String, Index>,
+	shaders_index_by_path: HashMap<PathBuf, Index>,
+	// I do not care about unloading these
 	bind_group_layouts: Vec<wgpu::BindGroupLayout>,
 	bind_group_layouts_bind_group_format: HashMap<BindGroupFormat, usize>,
 }
@@ -405,8 +406,7 @@ impl ShaderManager {
 		Self {
 			device: device.clone(), 
 			queue: queue.clone(), 
-			shaders: Vec::new(), 
-			shaders_loaded_at: Vec::new(),
+			shaders: Arena::new(), 
 			shaders_index_by_name: HashMap::new(), 
 			shaders_index_by_path: HashMap::new(),
 			bind_group_layouts: Vec::new(),
@@ -419,12 +419,13 @@ impl ShaderManager {
 	/// Returns a list of the reloaded shaders specification paths.
 	pub fn check_reload(&mut self) -> anyhow::Result<Vec<(PathBuf, anyhow::Result<()>)>> {
 		let mut reloaded = Vec::new();
+		let mut reloaded_stuff = Vec::new(); // Sometimes I hate the borrow checker
 
 		info!("Running shader refresh");
-		for i in 0..self.shaders.len() {
-			let last_loaded = self.shaders_loaded_at[i];
-
-			let spec_path = self.index(i).specification_path.clone();
+		let g = self.shaders.iter().map(|(i, (s, ll))| {
+			(i, s.specification_path.clone(), *ll)
+		}).collect::<Vec<_>>();
+		for (i, spec_path, last_loaded) in g {
 			let specification = ShaderSpecification::from_path(&spec_path);
 			let spec_modified = std::fs::metadata(&spec_path)?.modified()?;
 			let spec_parent = spec_path.parent().unwrap();
@@ -453,13 +454,9 @@ impl ShaderManager {
 			
 			if last_modified > last_loaded {
 				info!("Reloading shader {spec_path:?}");
-
-				let specification = ShaderSpecification::from_path(&spec_path);
 				match self.construct_shader(&specification, &spec_path) {
 					Ok(new_shader) => {
-						self.shaders[i] = new_shader;
-						self.shaders_loaded_at[i] = last_modified;
-
+						reloaded_stuff.push((i, (new_shader, last_modified)));
 						reloaded.push((spec_path, Ok(())));
 					}
 					Err(e) => {
@@ -469,6 +466,9 @@ impl ShaderManager {
 				}
 			}
 		}
+		for (i, data) in reloaded_stuff {
+			self.shaders[i] = data;
+		}
 		
 		Ok(reloaded)
 	}
@@ -476,31 +476,27 @@ impl ShaderManager {
 	pub fn register_path(
 		&mut self,
 		path: impl AsRef<std::path::Path>,
-	) -> usize {
+	) -> Index {
 		let path = path.as_ref();
 		let path = &PathBuf::from(path);
 		info!("Registering shader from {:?}", path);
 		let specification = ShaderSpecification::from_path(path);
 		let shader = self.construct_shader(&specification, path).unwrap();
 
-		let idx = self.shaders.len();
-		self.shaders_loaded_at.push(SystemTime::now());
-		self.shaders_index_by_name.insert(shader.name.clone(), idx);
-		self.shaders_index_by_path.insert(shader.specification_path.clone(), idx);
-		self.shaders.push(shader);
+		let name = shader.name.clone();
+		let sp = shader.specification_path.clone();
+		let idx = self.shaders.insert((shader, SystemTime::now()));
+		self.shaders_index_by_name.insert(name, idx);
+		self.shaders_index_by_path.insert(sp, idx);
 		idx
 	}
 
-	pub fn index(&self, i: usize) -> &Shader {
-		&self.shaders[i]
+	pub fn index(&self, i: Index) -> Option<&Shader> {
+		self.shaders.get(i).and_then(|(s, _)| Some(s))
 	}
 
-	pub fn index_from_path(&self, path: &PathBuf) -> Option<usize> {
-		if self.shaders_index_by_path.contains_key(path) {
-			Some(self.shaders_index_by_path[path])
-		} else {
-			None
-		}
+	pub fn index_from_path(&self, path: &PathBuf) -> Option<Index> {
+		self.shaders_index_by_path.get(path).and_then(|&i| Some(i))
 	}
 
 	pub fn bind_group_layout_create(&mut self, format: &BindGroupFormat) -> usize {
@@ -712,10 +708,6 @@ impl ShaderManager {
 					source: wgpu::ShaderSource::Wgsl(source.into()),
 				}))
 			},
-			_ => {
-				error!("Unimplemented shader language: {source_type:?}");
-				panic!("Unimplemented shader language!");
-			},
 		}
 	}
 
@@ -805,7 +797,7 @@ impl ShaderManager {
 		let depth_stencil = polygon_behaviour.as_ref().and_then(|svi| {
 			svi.depth_write.and_then(|depth_write_enabled| {
 				Some(wgpu::DepthStencilState {
-					format: BoundTexture::DEPTH_FORMAT,
+					format: BoundTexture::DEPTH_FORMAT.into(),
 					depth_write_enabled,
 					depth_compare: wgpu::CompareFunction::LessEqual,
 					stencil: wgpu::StencilState::default(),

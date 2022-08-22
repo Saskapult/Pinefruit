@@ -6,8 +6,18 @@ use anyhow::*;
 use crate::material::*;
 use crate::texture::*;
 use crate::world::*;
+use generational_arena::Index;
 
 
+#[repr(u8)]
+pub enum Direction {
+	Xp = 0b00000001,
+	Xn = 0b00000010,
+	Yp = 0b00000100,
+	Yn = 0b00001000,
+	Zp = 0b00010000,
+	Zn = 0b00100000,
+}
 
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,23 +112,23 @@ pub fn load_blocks_file(
 #[derive(Debug)]
 pub struct Block {
 	pub name: String,
-	pub xp_material_idx: usize,
-	pub yp_material_idx: usize,
-	pub zp_material_idx: usize,
-	pub xn_material_idx: usize,
-	pub yn_material_idx: usize,
-	pub zn_material_idx: usize,
+	pub xp_material_idx: Index,
+	pub yp_material_idx: Index,
+	pub zp_material_idx: Index,
+	pub xn_material_idx: Index,
+	pub yn_material_idx: Index,
+	pub zn_material_idx: Index,
 }
 impl Block {
 	pub fn new(name: &String) -> Self {
 		Self {
 			name: name.clone(),
-			xp_material_idx: 0,
-			yp_material_idx: 0,
-			zp_material_idx: 0,
-			xn_material_idx: 0,
-			yn_material_idx: 0,
-			zn_material_idx: 0,
+			xp_material_idx: Index::from_raw_parts(0, 0),
+			yp_material_idx: Index::from_raw_parts(0, 0),
+			zp_material_idx: Index::from_raw_parts(0, 0),
+			xn_material_idx: Index::from_raw_parts(0, 0),
+			yn_material_idx: Index::from_raw_parts(0, 0),
+			zn_material_idx: Index::from_raw_parts(0, 0),
 		}
 	}
 

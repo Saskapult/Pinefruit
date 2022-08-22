@@ -3,6 +3,7 @@ use anyhow::*;
 use rapier3d::prelude::*;
 use crate::render::vertex::*;
 // use thiserror::Error;
+use generational_arena::{Arena, Index};
 
 
 
@@ -195,34 +196,35 @@ impl std::fmt::Display for Mesh {
 
 #[derive(Debug)]
 pub struct MeshManager {
-	meshes: Vec<Mesh>,
-	index_name: HashMap<String, usize>,
-	index_path: HashMap<PathBuf, usize>,
+	meshes: Arena<Mesh>,
+	index_name: HashMap<String, Index>,
+	index_path: HashMap<PathBuf, Index>,
 }
 impl MeshManager {
 	pub fn new() -> Self {
 		Self {
-			meshes: Vec::new(), 
+			meshes: Arena::new(), 
 			index_name: HashMap::new(), 
 			index_path: HashMap::new(),
 		}
 	}
 	
-	pub fn insert(&mut self, mesh: Mesh) -> usize {
-		let idx = self.meshes.len();
-		self.index_name.insert(mesh.name.clone(), idx);
-		if let Some(path) = mesh.path.clone() {
+	pub fn insert(&mut self, mesh: Mesh) -> Index {
+		let name = mesh.name.clone();
+		let path = mesh.path.clone();
+		let idx = self.meshes.insert(mesh);
+		self.index_name.insert(name, idx);
+		if let Some(path) = path {
 			self.index_path.insert(path, idx);
 		}
-		self.meshes.push(mesh);
 		idx
 	}
 
-	pub fn index(&self, i: usize) -> &Mesh {
-		&self.meshes[i]
+	pub fn index(&self, i: Index) -> Option<&Mesh> {
+		self.meshes.get(i)
 	}
 
-	pub fn index_name(&self, name: &String) -> Option<usize> {
+	pub fn index_name(&self, name: &String) -> Option<Index> {
 		if self.index_name.contains_key(name) {
 			Some(self.index_name[name])
 		} else {
@@ -230,7 +232,7 @@ impl MeshManager {
 		}
 	}
 
-	pub fn index_path(&self, path: &PathBuf) -> Option<usize> {
+	pub fn index_path(&self, path: &PathBuf) -> Option<Index> {
 		if self.index_path.contains_key(path) {
 			Some(self.index_path[path])
 		} else {
