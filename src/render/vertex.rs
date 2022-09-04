@@ -9,22 +9,39 @@ A shader can specify the format of its vertex data
 */
 
 
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VertexProperty {
 	VertexPosition,
 	VertexColour,
 	VertexUV,
 	VertexTextureID,
 }
+impl VertexProperty {
+	pub fn attribute_segment(self) -> AttributeSegment {
+		match self {
+			Self::VertexPosition => VertexPosition::attributes(),
+			Self::VertexColour => VertexColour::attributes(),
+			Self::VertexUV => VertexUV::attributes(),
+			_ => panic!("Unimplemented vertex property"),
+		}
+	}
+}
 pub type VertexProperties = Vec<VertexProperty>;
 
 
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum InstanceProperty {
 	InstanceModelMatrix,
 	InstanceColour,
+}
+impl InstanceProperty {
+	pub fn attribute_segment(self) -> AttributeSegment {
+		match self {
+			Self::InstanceModelMatrix => InstanceModelMatrix::attributes(),
+			Self::InstanceColour => InstanceColour::attributes(),
+		}
+	}
 }
 pub type InstanceProperties = Vec<InstanceProperty>;
 

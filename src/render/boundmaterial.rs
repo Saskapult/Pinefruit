@@ -1,5 +1,5 @@
 use std::{
-	collections::HashMap,
+	collections::{HashMap, BTreeMap},
 	path::PathBuf,
 	sync::{Arc, RwLock},
 };
@@ -7,6 +7,8 @@ use crate::render::*;
 use crate::material::*;
 use generational_arena::{Arena, Index};
 
+
+// This whole thing is bad because material should not be specified as a bind group, it should be a type of graph input
 
 
 
@@ -16,13 +18,8 @@ pub struct BoundMaterial {
 	pub name: String,
 	pub graph: PathBuf,
 	pub material_idx: Index,
-	pub bind_group_format: BindGroupFormat,
+	pub bind_group_format: BTreeMap<u32, ResourceDescriptor2>,
 	pub bind_group: wgpu::BindGroup,
-}
-impl std::fmt::Display for BoundMaterial {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "BoundMaterial {} '{}'", &self.name, &self.bind_group_format)
-	}
 }
 
 
@@ -36,8 +33,8 @@ pub struct BoundMaterialManager {
 	device: Arc<wgpu::Device>,
 	queue: Arc<wgpu::Queue>,
 	bound_materials: Arena<BoundMaterial>,
-	materials_index_from_index_format: HashMap<(Index, BindGroupFormat), Index>,
-	materials_index_from_name_format: HashMap<(String, BindGroupFormat), Index>,
+	materials_index_from_index_format: HashMap<(Index, BTreeMap<u32, ResourceDescriptor2>), Index>,
+	materials_index_from_name_format: HashMap<(String, BTreeMap<u32, ResourceDescriptor2>), Index>,
 	pub data_manager: Arc<RwLock<MaterialManager>>,
 }
 impl BoundMaterialManager {
@@ -69,12 +66,12 @@ impl BoundMaterialManager {
 		self.bound_materials.get(i)
 	}
 
-	pub fn index_from_name_format(&self, name: &String, format: &BindGroupFormat) -> Option<Index> {
+	pub fn index_from_name_format(&self, name: &String, format: &BTreeMap<u32, ResourceDescriptor2>) -> Option<Index> {
 		let key = (name.clone(), format.clone());
 		self.materials_index_from_name_format.get(&key).and_then(|&i| Some(i))
 	}
 
-	pub fn index_from_index_format(&self, material_idx: Index, format: &BindGroupFormat) -> Option<Index> {
+	pub fn index_from_index_format(&self, material_idx: Index, format: &BTreeMap<u32, ResourceDescriptor2>) -> Option<Index> {
 		let key = (material_idx, format.clone());
 		self.materials_index_from_index_format.get(&key).and_then(|&i| Some(i))
 	}
@@ -82,7 +79,7 @@ impl BoundMaterialManager {
 	pub fn index_from_index_format_bind(
 		&mut self, 
 		material_idx: Index, 
-		format: &BindGroupFormat,
+		format: &BTreeMap<u32, ResourceDescriptor2>,
 		shaders: &mut ShaderManager,
 		textures: &mut BoundTextureManager,
 	) -> Index {
@@ -98,7 +95,7 @@ impl BoundMaterialManager {
 	pub fn bind_by_index(
 		&mut self,
 		_material_idx: Index,
-		_bind_group_format: &BindGroupFormat,
+		_bind_group_format: &BTreeMap<u32, ResourceDescriptor2>,
 		_shaders: &mut ShaderManager,
 		_textures: &mut BoundTextureManager,
 	) -> Index {

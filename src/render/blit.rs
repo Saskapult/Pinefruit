@@ -1,25 +1,30 @@
-use wgpu::util::DeviceExt;
-
 
 /*
 This is a lesson in why automation is important if you want to keep your fingers.
 */
 
 
+#[derive(Debug)]
 pub struct Blitter {
 	pipeline: wgpu::RenderPipeline,
 	bgl: wgpu::BindGroupLayout,
-	fb: wgpu::Buffer,
+	sampler: wgpu::Sampler,
 }
 impl Blitter {
 	pub fn new(
 		device: &wgpu::Device,
 		output_format: wgpu::TextureFormat,
 	) -> Self {
-		let fb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-			label: Some("fugg buffer"),
-			contents: &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-			usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX,
+
+		let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+			label: Some("Blit sampler"),
+			address_mode_u: wgpu::AddressMode::ClampToEdge,
+			address_mode_v: wgpu::AddressMode::ClampToEdge,
+			address_mode_w: wgpu::AddressMode::ClampToEdge,
+			mag_filter: wgpu::FilterMode::Linear,
+			min_filter: wgpu::FilterMode::Linear,
+			mipmap_filter: wgpu::FilterMode::Nearest,
+			..Default::default()
 		});
 
 		let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -35,6 +40,12 @@ impl Blitter {
 						view_dimension: wgpu::TextureViewDimension::D2, 
 						multisampled: false, 
 					},
+					count: std::num::NonZeroU32::new(1),
+				},
+				wgpu::BindGroupLayoutEntry {
+					binding: 1,
+					visibility: wgpu::ShaderStages::FRAGMENT,
+					ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
 					count: std::num::NonZeroU32::new(1),
 				},
 			]
@@ -73,25 +84,19 @@ impl Blitter {
 			depth_stencil: None,
 			multisample: wgpu::MultisampleState {
 				count: 1,
-				mask: 0,
+				mask: !0,
 				alpha_to_coverage_enabled: false,
 			},
 			fragment: Some(wgpu::FragmentState {
 				module: &module,
-				entry_point: "vs_main",
-				targets: &[
-					Some(wgpu::ColorTargetState {
-						format: output_format,
-						blend: None,
-						write_mask: wgpu::ColorWrites::ALL,
-					}),
-				],
+				entry_point: "fs_main",
+				targets: &[Some(output_format.into()),],
 			}),
 			multiview: None,
 		});
 
 		Self {
-			pipeline, bgl, fb, 
+			pipeline, bgl, sampler, 
 		}
 	}
 
@@ -110,8 +115,12 @@ impl Blitter {
 				wgpu::BindGroupEntry {
 					binding: 0,
 					resource: wgpu::BindingResource::TextureView(source_view),
-				}
-			]
+				},
+				wgpu::BindGroupEntry {
+					binding: 1,
+					resource: wgpu::BindingResource::Sampler(&self.sampler),
+				},
+			],
 		});
 
 		let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -128,8 +137,6 @@ impl Blitter {
 		});
 
 		rp.set_pipeline(&self.pipeline);
-		rp.set_vertex_buffer(0, self.fb.slice(..));
-		rp.set_vertex_buffer(1, self.fb.slice(..));
 		rp.set_bind_group(0, &bg, &[]);
 		rp.draw(0..3, 0..1);
 	}

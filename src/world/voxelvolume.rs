@@ -74,10 +74,10 @@ impl DynamicArrayVoxelVolume {
 
 
 
-
+#[derive(Debug)]
 pub struct TypedArrayVoxelVolume<T: std::fmt::Debug + Clone + PartialEq + Eq + Default> {
 	pub size: [u32; 3],
-	pub contents: Vec<T>,
+	pub contents: Vec<T>, // Encoding is x,y,z
 }
 impl<T: std::fmt::Debug + Clone + PartialEq + Eq + Default> TypedArrayVoxelVolume<T> {
 	pub fn new(size: [u32; 3]) -> Self {
@@ -88,6 +88,7 @@ impl<T: std::fmt::Debug + Clone + PartialEq + Eq + Default> TypedArrayVoxelVolum
 		}
 	}
 
+	// Why are these here? It seems like a bad idea
 	pub fn get_index(&self, index: usize) -> &T {
 		&self.contents[index]
 	}
@@ -130,9 +131,96 @@ impl<T: std::fmt::Debug + Clone + PartialEq + Eq + Default> TypedArrayVoxelVolum
 		g.zip(self.contents.iter_mut())
 	}
 
+	/// [min, max]
 	pub fn aabb_extent(&self) -> [[f32;3];2] {
 		let max = self.size.map(|v| v as f32);
 		let min = [0.0; 3];
 		[min, max]
+	}
+
+	pub fn run_length_encoding<'a>(&'a self) -> Vec<(&'a T, usize)> {
+		let mut runs = Vec::new();
+		let mut last = &self.contents[0];
+		let mut run_length = 1;
+		for item in &self.contents[1..] {
+			if item == last {
+				run_length += 1;
+			} else {
+				runs.push((last, run_length));
+				last = item;
+				run_length = 1;
+			}
+		}
+		runs.push((last, run_length));
+
+		runs
+	}
+	pub fn run_length_decoding(size: [u32; 3], encoding: &[(impl AsRef<T>, usize)]) -> Self {
+		assert_eq!(
+			size.iter().fold(1, |a, v| a*v) as usize, 
+			encoding.iter().fold(0, |a, &(_, l)| a+l), 
+			"Encoding length differs from specified volume size!",
+		);
+
+		let mut this = Self::new(size);
+		let mut index = 0;
+		for (item, length) in encoding {
+			for _ in 0..*length {
+				this.contents[index] = item.as_ref().clone();
+				index += 1;
+			}
+		}
+		this
+	}
+
+	/// Generates a mesh of cube-looking things.
+	/// Groups these things by a function of their item.
+	/// gf(Empty) -> none
+	/// gf(Mesh(1)) -> none (do another pass for these)
+	/// gf(Block(0)) -> some(0)
+	pub fn exposed_faces(
+		&self, 
+		_grouping_function: impl Fn(&T) -> Option<usize>,
+	) -> [Vec<(usize, Vec<[u32; 3]>)>; 6] {
+		// Only really needs to record if a voxel is exposed for each direction
+		// Can map to vertices after that
+		// let mut exposed_faces: [HashMap<_,_>; 6] = (0..6).map(|_| HashMap::new()).collect::<Vec<_>>().try_into().unwrap();
+
+		// let directions = [
+		// 	[ 1, 0, 0],
+		// 	[-1, 0, 0],
+		// 	[ 0, 1, 0],
+		// 	[ 0,-1, 0],
+		// 	[ 0, 0, 1],
+		// 	[ 0, 0,-1],
+		// ];
+		// let [sx, sy, sz] = self.size;
+		// for x in 0..sx {
+		// 	for y in 0..sy {
+		// 		for z in 0..sz {
+		// 			let a = self.get([x,y,z]).unwrap();
+		// 			let gfa = grouping_function(a);
+		// 			// Check neighbours
+		// 			for (i, [dx, dy, dz]) in directions.iter().cloned().enumerate() {
+		// 				// If out of bonds then use none as group
+		// 				// We still need to test for subtraction overflow though
+		// 				let b = self.get([x+dx,y+dy,z+dz]);
+		// 				let gfb = b.and_then(|b| Some(grouping_function(b)));
+		// 				exposed_faces[i].insert(k, v)
+		// 			}
+		// 		}
+		// 	}
+		// }
+		
+
+		// exposed_faces.map(|mut hm| hm.drain().collect::<Vec<_>>())
+		todo!()
+	}
+	// Makes (st, end)s for each group for each direction
+	pub fn exposed_faces_greedy(
+		&self, 
+		_grouping_function: impl Fn(&T) -> Option<usize>,
+	) -> [Vec<(usize, Vec<[[u32; 3]; 2]>)>; 6] {
+		todo!()
 	}
 }

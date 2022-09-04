@@ -15,14 +15,14 @@ pub const OPENGL_TO_WGPU_MATRIX: Matrix4<f32> = Matrix4::new(
 
 
 #[derive(Debug)]
-pub struct Camera {
+pub struct RenderCamera {
 	pub position: Vector3<f32>,
 	pub rotation: UnitQuaternion<f32>,
 	pub fovy: f32,
-	pub znear: f32,
-	pub zfar: f32,
+	pub near: f32,
+	pub far: f32,
 }
-impl Camera {
+impl RenderCamera {
 	pub fn new<P: Into<Vector3<f32>>, R: Into<UnitQuaternion<f32>>,>(
 		position: P,
 		rotation: R,
@@ -35,8 +35,8 @@ impl Camera {
 			position: position.into(),
 			rotation: rotation.into(),
 			fovy,
-			znear,
-			zfar,
+			near: znear,
+			far: zfar,
 		}
 	}
 
@@ -46,7 +46,7 @@ impl Camera {
 
 	pub fn projection_matrix(&self, width: f32, height: f32) -> Matrix4<f32> {
 		let fovr = (self.fovy / 360.0) * 2.0 * std::f32::consts::PI;
-		OPENGL_TO_WGPU_MATRIX * perspective_lh(width / height, fovr, self.znear, self.zfar)
+		OPENGL_TO_WGPU_MATRIX * perspective_lh(width / height, fovr, self.near, self.far)
 	}
 
 	pub fn view_projection_matrix(&self, width: f32, height: f32) -> Matrix4<f32> {
@@ -105,7 +105,7 @@ impl CameraUniform {
 		}
 	}
 
-	pub fn new_from_camera(camera: &Camera, width: f32, height: f32) -> Self {
+	pub fn new_from_camera(camera: &RenderCamera, width: f32, height: f32) -> Self {
 		Self {
 			position: camera.position.to_homogeneous().into(),
 			view_projection: camera.view_projection_matrix(width, height).into(),
@@ -114,7 +114,7 @@ impl CameraUniform {
 		}
 	}
 
-	pub fn update(&mut self, camera: &Camera, width: f32, height: f32,) {
+	pub fn update(&mut self, camera: &RenderCamera, width: f32, height: f32,) {
 		self.position = camera.position.to_homogeneous().into();
 		self.view_projection = camera.view_projection_matrix(width, height).into();
 		self.projection = camera.projection_matrix(width, height).into();

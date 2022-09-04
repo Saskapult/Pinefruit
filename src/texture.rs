@@ -53,7 +53,7 @@ impl Texture {
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TextureManager {
 	textures: Arena<Texture>,
 	textures_index_name: HashMap<String, Index>,

@@ -1,6 +1,3 @@
-use rayon::prelude::*;
-use image::DynamicImage;
-use crate::world::Map;
 use nalgebra::*;
 
 
@@ -40,20 +37,119 @@ pub struct Sphere {
 
 
 #[derive(Debug, Clone)]
+pub struct OBB {
+	pub aabb: AABB,
+	pub orientation: UnitQuaternion<f32>,
+}
+impl OBB {
+	pub fn corners(&self) -> [Vector3<f32>; 8] {
+		let n = &self.aabb.min;
+		let p = &self.aabb.max;
+		let nnn = Vector3::new(n[0], n[1], n[2]);
+		let nnp = Vector3::new(n[0], n[1], p[2]);
+		let npn = Vector3::new(n[0], p[1], n[2]);
+		let npp = Vector3::new(n[0], p[1], p[2]);
+		let pnn = Vector3::new(p[0], n[1], n[2]);
+		let pnp = Vector3::new(p[0], n[1], p[2]);
+		let ppn = Vector3::new(p[0], p[1], n[2]);
+		let ppp = Vector3::new(p[0], p[1], p[2]);
+		[nnn, nnp, npn, npp, pnn, pnp, ppn, ppp]
+	}
+
+	pub fn bounding_aabb(&self) -> AABB {
+		let c = self.corners().map(|c| self.orientation * c);
+		let mut aabb_max = c[0];
+		let mut aabb_min = c[0];
+		for c in &c[1..] {
+			for i in 0..3 {
+				if c[i] > aabb_max[i] {
+					aabb_max[i] = c[i];
+				}
+				if c[i] < aabb_min[i] {
+					aabb_min[i] = c[i];
+				}
+			}
+		}
+		AABB::new(aabb_min, aabb_max)
+	}
+
+	// Untested
+	pub fn ray_intersect(
+		&self, 
+		origin: Vector3<f32>, 
+		direction: Vector3<f32>, 
+		position: Vector3<f32>, 
+		t0: f32, 
+		t1: f32, 
+	) -> Option<(f32, f32)> {
+		let poisiton_relative_to_ray = position - origin;
+
+		let mut t_min = t0;
+		let mut t_max = t1;
+
+		for i in 0..3 {
+			let axis = self.orientation * Vector3::new(
+				if i==0 { 1.0 } else { 0.0 }, 
+				if i==1 { 1.0 } else { 0.0 }, 
+				if i==2 { 1.0 } else { 0.0 },
+			);
+			let e = axis.dot(&poisiton_relative_to_ray);
+			let f = direction.dot(&axis);
+			if f.abs() > 0.00000001 {
+				let (t1, t2) = {
+					let t1 = (e + self.aabb.min[i]) / f;
+					let t2 = (e + self.aabb.max[i]) / f;
+					if t1 < t2 {
+						(t1, t2)
+					} else {
+						(t2, t1)
+					}
+				};
+	
+				if t2 < t_max {
+					t_max = t2;
+				}
+				if t1 > t_min {
+					t_min = t1;
+				}
+	
+				if t_max < t_min {
+					return None;
+				}
+			} else {
+				if -e + self.aabb.min[i] > 0.0 || -e + self.aabb.max[i] > 0.0 {
+					return None;
+				}
+			}
+		}
+
+		Some((t_min, t_max))
+	}
+}
+
+
+
+#[derive(Debug, Clone)]
 pub struct AABB {
-	p0: Vector3<f32>,
-	p1: Vector3<f32>,
-	centre: Vector3<f32>,
+	pub min: Vector3<f32>,
+	pub max: Vector3<f32>,
 }
 impl AABB {
 	pub fn new(
-		p0: Vector3<f32>,
-		p1: Vector3<f32>,
+		aabb_min: Vector3<f32>,
+		aabb_max: Vector3<f32>,
 	) -> Self {
 		Self {
-			p0, p1,
-			centre: p0 + p1,
+			min: aabb_min, max: aabb_max,
 		}
+	}
+
+	pub fn extent(&self) -> Vector3<f32> {
+		(self.max - self.min).abs() / 2.0
+	}
+
+	pub fn centre(&self) -> Vector3<f32> {
+		self.min + self.extent()
 	}
 
 	// Todo: handle div by zero
@@ -67,8 +163,8 @@ impl AABB {
 		t0: f32, // Min distance
 		t1: f32, // Max distance
 	) -> Option<(f32, f32)> {
-		let v_max = self.p1 + position;
-		let v_min = self.p0 + position;
+		let v_max = self.max + position;
+		let v_min = self.min + position;
 
 		let (mut t_min, mut t_max) = {
 			let t_min = (v_min[0] - origin[0]) / direction[0];
@@ -133,7 +229,7 @@ impl AABB {
 	}
 
 	pub fn contains(&self, point: Vector3<f32>) -> bool {
-		point >= self.p0 && point <= self.p1
+		point >= self.min && point <= self.max
 
 		// point[0] >= self.p0[0] &&
 		// point[1] >= self.p0[1] &&
@@ -144,18 +240,19 @@ impl AABB {
 	}
 
 	pub fn mid_planes(&self) -> [Plane; 3] {
+		let centre = self.centre();
 		[
 			Plane {
 				normal: *Vector3::z_axis(),
-				distance: self.centre[2],
+				distance: centre[2],
 			},
 			Plane {
 				normal: *Vector3::y_axis(),
-				distance: self.centre[1],
+				distance: centre[1],
 			},
 			Plane {
 				normal: *Vector3::x_axis(),
-				distance: self.centre[1],
+				distance: centre[0],
 			},
 		]
 	}
@@ -212,43 +309,6 @@ pub fn ray_spread(
 	}).collect::<Vec<_>>();
 
 	directions
-}
-
-
-
-pub fn trace_map(
-	map: &Map, 
-	position: Vector3<f32>, 
-	rotation: UnitQuaternion<f32>,
-	width: u32, 
-	height: u32, 
-	fovy: f32,
-) -> DynamicImage {
-	let directions = ray_spread(rotation, width, height, fovy);
-
-	let albedo_map = |voxel_name: &str| {
-		match voxel_name {
-			"stone" => [0.5, 0.5, 0.5].map(|v| (v * u8::MAX as f32) as u8),
-			"grass" => [65, 125, 55],
-			"dirt" => [61, 47, 40],
-			_ => [u8::MAX; 3],
-		}
-	};
-
-	let bm = map.blocks.read().unwrap();
-	let albedo = directions.par_iter().map(|&direction| {
-		match map.ray(position, direction, 100.0) {
-			Some((block, _, _)) => {
-				let name = &*bm.index(block.unwrap_id()).name;
-				albedo_map(name)
-				// [u8::MAX; 3]
-			},
-			None => [0; 3]
-		}
-	}).flatten().collect::<Vec<_>>();
-	
-	let imb = image::ImageBuffer::from_vec(width, height, albedo).unwrap();
-	image::DynamicImage::ImageRgb8(imb)
 }
 
 
@@ -320,175 +380,6 @@ pub fn trace_octree(
 		}
 	}
 
-}
-
-
-
-#[cfg(test)]
-mod tests {
-	use std::sync::{Arc, RwLock};
-	use super::*;
-	use crate::{util::*, world::BlockManager, texture::TextureManager, material::{MaterialManager, load_materials_file}};
-
-	#[test]
-	fn test_cit() {
-		let mut cit = crate::rays::AWIter::new(
-			Vector3::new(4.0, 4.0, 4.0),
-			Vector3::new(1.0, 1.1, 1.2),
-			0.0,
-			100.0,
-			16.0,
-		);
-		println!("{cit:#?}\n");
-		for _ in 0..5 {
-			let cp = [cit.vx, cit.vy, cit.vz];
-			let t = cit.t;
-			println!("{cp:?} ({t})");
-			cit.next();
-		}
-	}
-
-	#[test]
-	fn test_show_trace() {
-
-		let fovy = 90.0;
-		let aspect = 16.0 / 9.0;
-		let width = 512;
-		let height = (width as f32 / aspect) as u32;
-		
-		let position = [1.0, -29.0, 1.0].into();
-		let rotation = UnitQuaternion::identity();
-		
-		let mut tm = TextureManager::new();
-		let mut mm = MaterialManager::new();
-		load_materials_file(
-			"resources/materials/kmaterials.ron",
-			&mut tm,
-			&mut mm,
-		).unwrap();
-		let bm = {
-			let mut bm = BlockManager::new();
-
-			crate::world::blocks::load_blocks_file(
-				"resources/kblocks.ron",
-				&mut bm,
-				&mut tm,
-				&mut mm,
-			).unwrap();
-			
-			Arc::new(RwLock::new(bm))
-		};
-		
-		let mut map = Map::new([16; 3], &bm);
-		let xs = 3;
-		let zs = 3;
-		for cx in -xs..=xs {
-			for cz in -zs..=zs {
-				for cy in -5..=2 {
-					map.begin_chunk_generation([cx, cy, cz]);
-				}
-			}
-		}
-		println!("Waiting for map generation");
-		let mut done = false;
-		while !done {
-			done = true;
-			for cx in -xs..=xs {
-				for cz in -zs..=zs {
-					for cy in -5..=2 {
-						if !map.check_chunk_available([cx, cy, cz]) {
-							done = false;
-						}
-					}
-				}
-			}
-		}
-		println!("Done that, tracing!");
-
-		let directions = ray_spread(rotation, width, height, fovy);
-		let albedo_map = |voxel_name: &str| {
-			match voxel_name {
-				"stone" => [0.5, 0.5, 0.5],
-				"grass" => [0.25, 0.5, 0.2],
-				"dirt" => [0.25, 0.2, 0.15],
-				_ => [1.0; 3],
-			}
-		};
-		let bm = map.blocks.read().unwrap();
-		let st = std::time::Instant::now();
-		let albedo = directions.par_iter().map(|&direction| {
-			match map.ray(position, direction, 100.0) {
-				Some((voxel, _t, n)) => {
-					let name = &*bm.index(voxel.unwrap_id()).name;
-					// println!("Well something's happening...");
-					let base = albedo_map(name);
-
-					let g = n.angle(&Vector3::new(1.0, 1.0, 1.0));
-					let perc = 1.0 - g / f32::pi();
-
-					base.map(|f| f32::max(f * perc, f / 2.0))
-				},
-				None => [0.0; 3]
-			}
-			
-		}).collect::<Vec<_>>();
-		// let albedo = directions.par_chunks(width as usize).map(|bits| {
-		// 	bits.iter().map(|&direction|{
-		// 		match map.ray(position, direction, 100.0) {
-		// 			Some((voxel, _t, n)) => {
-		// 				let name = &*bm.index(voxel.unwrap_id()).name;
-		// 				// println!("Well something's happening...");
-		// 				let base = albedo_map(name);
-	
-		// 				let g = n.angle(&Vector3::new(1.0, 1.0, 1.0));
-		// 				let perc = 1.0 - g / f32::pi();
-	
-		// 				base.map(|f| f32::max(f * perc, f / 2.0))
-		// 			},
-		// 			None => [0.0; 3]
-		// 		}
-		// 	}).collect::<Vec<_>>()
-		// }).flatten().collect::<Vec<_>>();
-		let en = std::time::Instant::now();
-		println!("Done in {}ms", (en-st).as_millis());
-		
-		let imb = image::ImageBuffer::from_vec(
-			width, 
-			height, 
-			albedo.iter()
-				.flatten()
-				.map(|&v| (v * u8::MAX as f32) as u8)
-				.collect::<Vec<_>>(),
-		).unwrap();
-		let img = image::DynamicImage::ImageRgb8(imb);
-		println!("Done that, showing!");
-		show_image(img).unwrap();
-	}
-
-	#[test]
-	fn test_awiter() {
-		let iiter = AWIter::new(
-			Vector3::new(4.5, 4.5, 4.5),
-			Vector3::new(-0.5, 0.0, 0.0),
-			0.0,
-			100.0,
-			8.0,
-		);
-		assert_eq!(4.5, iiter.t_max_x);
-	}
-
-	#[test]
-	fn test_awiter_2() {
-		let iiter = AWIter::new(
-			Vector3::new(4.5, 4.5, 4.5),
-			Vector3::new(0.5, 0.0, 0.0),
-			0.0,
-			100.0,
-			8.0,
-		);
-
-		assert_eq!(3.5, iiter.t_max_x);
-	}
 }
 
 

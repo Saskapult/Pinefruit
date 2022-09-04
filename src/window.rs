@@ -157,7 +157,7 @@ impl GameWindow {
 		queue: &wgpu::Queue,
 		egui_rpass: &mut RenderPass,
 		mut encoder: &mut wgpu::CommandEncoder,
-		gpu_data: &mut GpuData,
+		_gpu_data: &mut GraphicsData,
 		destination_view: &wgpu::TextureView,
 		world: &shipyard::World,
 	) -> egui::TexturesDelta {
@@ -165,7 +165,7 @@ impl GameWindow {
 		self.platform.begin_frame();
 		let ctx = self.platform.context();
 
-		self.game_times.get_things();
+		self.game_times.update();
 
 		egui::CentralPanel::default().show(&ctx, |ui| {
 			egui::Frame::none()
@@ -223,10 +223,7 @@ impl GameWindow {
 						self.message_widget.display(ui);
 
 						if ui.button("Refresh shaders").clicked() {
-							if let Err(e) = gpu_data.shaders.check_reload() {
-								error!("Error in refresh shaders: {e:?}");
-								self.message_widget.add_message(e.to_string(), Instant::now() + Duration::from_secs_f32(5.0));
-							}
+							self.message_widget.add_message("Todo: re-add shader reloading", Instant::now() + Duration::from_secs_f32(5.0));
 						}
 					});
 				});
@@ -254,13 +251,13 @@ impl GameWindow {
 		egui_rpass.update_buffers(
 			device, 
 			queue, 
-			&paint_jobs, 
+			&paint_jobs[..], 
 			&screen_descriptor,
 		);
 		egui_rpass.execute(
 			&mut encoder,
 			destination_view,
-			&paint_jobs,
+			&paint_jobs[..],
 			&screen_descriptor,
 			None,
 		).unwrap();
@@ -274,7 +271,7 @@ impl GameWindow {
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
 		egui_rpass: &mut RenderPass,
-		gpu_data: &mut GpuData,
+		gpu_data: &mut GraphicsData,
 		world: &shipyard::World,
 	) {
 		if let Some(t) = self.last_redraw {
@@ -350,12 +347,12 @@ impl GameWindow {
 		}
 
 		// Submit to GPU
-		let submit_st = Instant::now();
 		queue.submit(std::iter::once(encoder.finish()));
 		if redraw_game {
-			let gts = self.game_times.sender.clone();
+			let submit_st = Instant::now();
+			let gts = self.game_times.record_later();
 			queue.on_submitted_work_done(move || {
-				gts.send(submit_st.elapsed()).unwrap()
+				gts(submit_st.elapsed());
 			});
 		}
 
@@ -524,11 +521,12 @@ impl WindowManager {
 			1,
 		);
 
-		let game = Game::new(
+		let mut game = Game::new(
 			&device,
 			&queue,
 			event_loop_proxy.clone(),
 		);
+		game.setup();
 
 		let first_window = GameWindow::new_with_surface(&instance, &adapter, surface, window);
 		let mut selfy = Self {

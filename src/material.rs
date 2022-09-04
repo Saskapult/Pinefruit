@@ -11,10 +11,28 @@ use generational_arena::{Arena, Index};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MaterialSpecification {
 	pub name: String,
-	pub graph: PathBuf,
+	pub polygon_graph: PathBuf,
 	pub textures: HashMap<String, Vec<PathBuf>>,
-	pub floats: HashMap<String, Vec<f32>>,	// Alpha cutoff in here or elsewhere?
+	pub floats: HashMap<String, Vec<f32>>,	// Alpha cutoff in here please
 	pub sounds: HashMap<String, Vec<PathBuf>>,
+}
+impl MaterialSpecification {
+	pub fn canonicalize(&mut self, context: &PathBuf) -> std::io::Result<()> {
+		self.polygon_graph = context.join(&self.polygon_graph).canonicalize()?;
+
+		for (_, textures) in self.textures.iter_mut() {
+			for tex in textures.iter_mut() {
+				*tex = context.join(&tex.clone()).canonicalize()?;
+			}
+		}
+		for (_, sounds) in self.sounds.iter_mut() {
+			for sound in sounds.iter_mut() {
+				*sound = context.join(&sound.clone()).canonicalize()?;
+			}
+		}
+		
+		Ok(())
+	}
 }
 
 
@@ -23,7 +41,7 @@ pub struct MaterialSpecification {
 #[derive(Debug)]
 pub struct Material {
 	pub name: String,
-	pub graph: PathBuf,
+	pub polygon_graph: PathBuf,
 	pub source_path: PathBuf,
 	pub textures: HashMap<String, Vec<PathBuf>>,
 	pub floats: HashMap<String, Vec<f32>>,
@@ -37,7 +55,7 @@ impl std::fmt::Display for Material {
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MaterialManager {
 	materials: Arena<Material>,
 	materials_index_name: HashMap<String, Index>,
@@ -87,8 +105,8 @@ pub fn load_materials_file(
 	let folder_context = canonical_path.parent().unwrap();
 
 	for material_spec in material_specs {
-		let canonical_graph_path = folder_context.join(&material_spec.graph).canonicalize()
-			.with_context(|| format!("Failed to canonicalize path '{:?}'", &material_spec.graph))?;
+		let canonical_graph_path = folder_context.join(&material_spec.polygon_graph).canonicalize()
+			.with_context(|| format!("Failed to canonicalize path '{:?}'", &material_spec.polygon_graph))?;
 		
 		// For each texture entry in material
 		let mut textures = HashMap::new();
@@ -111,7 +129,7 @@ pub fn load_materials_file(
 
 		let mat = Material {
 			name: material_spec.name,
-			graph: canonical_graph_path,
+			polygon_graph: canonical_graph_path,
 			source_path: canonical_path.clone(),
 			textures,
 			floats: HashMap::new(),

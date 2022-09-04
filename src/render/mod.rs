@@ -17,14 +17,8 @@
 pub mod camera;
 pub use camera::*;
 
-pub mod boundmaterial;
-pub use boundmaterial::*;
-
 pub mod boundmesh;
 pub use boundmesh::*;
-
-pub mod model;
-pub use model::*;
 
 pub mod shader;
 pub use shader::*;
@@ -34,9 +28,6 @@ pub use boundtexture::*;
 
 pub mod vertex;
 pub use vertex::*;
-
-pub mod graph;
-pub use graph::*;
 
 pub mod light;
 pub use light::*;

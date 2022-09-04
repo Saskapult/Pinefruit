@@ -4,8 +4,9 @@ use std::path::Path;
 
 
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, Default)]
 pub enum Voxel {
+	#[default]
 	Empty,
 	Block(usize),
 }
@@ -25,7 +26,7 @@ impl Voxel {
 			_ => None,
 		}
 	}
-	/// Returns some usize if the voxel is empty or a block.
+	/// Returns block encoding if the voxel is empty or a block.
 	pub fn block_encode(&self) -> Option<usize> {
 		match self {
 			Voxel::Empty => Some(0),
@@ -86,14 +87,6 @@ impl Chunk {
 
 	pub fn size(&self) -> usize {
 		self.size.iter().fold(1, |a, &v| a * v) as usize * std::mem::size_of::<Voxel>()
-	}
-
-	// To be used for meshing voxel models
-	pub fn mesh() {
-		todo!()
-	}
-	pub fn greedy_mesh() {
-		todo!()
 	}
 
 	/// Creates a run-length encoding of the chunk.

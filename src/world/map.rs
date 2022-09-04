@@ -1,82 +1,106 @@
+use crossbeam_channel::Receiver;
+use crossbeam_channel::Sender;
+use crossbeam_channel::unbounded;
 use generational_arena::Index;
 use nalgebra::*;
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use crate::util::KGeneration;
 use crate::world::*;
-use crate::render::*;
 use crate::mesh::*;
 use thiserror::Error;
-// use rayon::prelude::*;
-use crate::util::PTCT;
 
 
 
 
 #[derive(Error, Debug)]
 pub enum MapError {
-	#[error("this chunk exists on disk but isn't loaded")]
-	ChunkUnloaded,
-	#[error("this chunk hasn't yet been generated")]
-	ChunkUngenerated,
+	#[error("this chunk was not available")]
+	ChunkUnavailable,
 	#[error("this chunk's positive neighbours are not available")]
-	ChunkMeshNeighboursUnavailable,
+	ChunkNeighboursUnavailable,
 }
 
 
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum GenerationStage {
-	// Lowest level
-	Nothing,	// Nothing generated here, used if chunk does not exist yet
-	Bare,		// Only basic geometry
-	Covered,	// Top and filling applied
-	Decorated,	// Has trees and all that
-	// Highest level
+#[derive(Debug)]
+pub struct MapChunk {
+	pub chunk: Chunk,
+	pub generation: KGeneration,
 }
-
-
-
+impl MapChunk {
+	pub fn decompose(self) -> (Chunk, KGeneration) {
+		(self.chunk, self.generation)
+	}
+	pub fn parts(&self) -> (&Chunk, &KGeneration) {
+		(&self.chunk, &self.generation)
+	}
+}
 // An entry in the mesh storage for a map component
 #[derive(Debug)]
-pub enum MapChunkEntry {
+enum MapChunkEntry {
 	UnLoaded,	// Used if chunk does not exist yet
-	Loading,	// To be used when waiting for disk data in future
-	Generating(PTCT<(Chunk, ChunkBlockMods)>),
-	Complete(Chunk),
+	Loading,	// Waiting for disk data done
+	Generating,	// Waiting for generation done
+	Complete(MapChunk),
 }
 impl MapChunkEntry {
-	pub fn unwrap_complete(self) -> Chunk {
+	pub fn chunk(self) -> Option<MapChunk> {
 		match self {
-			MapChunkEntry::Complete(c) => c,
-			_ => panic!(),
+			MapChunkEntry::Complete(c) => Some(c),
+			_ => None,
+		}
+	}
+	pub fn chunk_ref(&self) -> Option<&MapChunk> {
+		match self {
+			MapChunkEntry::Complete(c) => Some(c),
+			_ => None,
+		}
+	}
+	pub fn chunk_mut(&mut self) -> Option<&mut MapChunk> {
+		match self {
+			MapChunkEntry::Complete(c) => Some(c),
+			_ => None,
 		}
 	}
 }
 
 
 
+/// A map is a collection of chunks which are paged and also generated.
 #[derive(Debug)]
 pub struct Map {
 	// Both chunk and generation stage are held here because having them separate could cause two allocations in place of one
 	chunks: HashMap<[i32; 3], MapChunkEntry>,
+	
+	// Can receiver from network, generation, loading
+	generated_chunk_sender: Sender<([i32; 3], Chunk, ChunkBlockMods)>,
+	generated_chunk_receiver: Receiver<([i32; 3], Chunk, ChunkBlockMods)>,
+	pub max_generation_jobs: u8,
+	pub cur_generation_jobs: u8,
+	
+
 	// Records the height of the map's highest block for every xz in a chunk
 	// Could be used for lighting or feature placement
 	// max_heightmap: HashMap<[i32; 3], Vec<i32>>, 
 	pub chunk_size: [u32; 3],
-	pub blocks: Arc<RwLock<BlockManager>>,
-	blockmods: ChunkBlockMods,
+	pub seed: u32,
+	pending_blockmods: HashMap<[i32; 3], Vec<BlockMod>>,
 	tgen: TerrainGenerator,
 }
 impl Map {
-	pub fn new(chunk_size: [u32; 3], blockmanager: &Arc<RwLock<BlockManager>>) -> Self {
+	pub fn new(chunk_size: [u32; 3], seed: u32) -> Self {
+		let (generated_chunk_sender, generated_chunk_receiver) = unbounded();
 		Self { 
 			chunks: HashMap::new(), 
-			// max_heightmap: HashMap::new(),
+
+			generated_chunk_sender,
+			generated_chunk_receiver,
+			max_generation_jobs: 4,
+			cur_generation_jobs: 0,
+
 			chunk_size, 
-			blocks: blockmanager.clone(),
-			blockmods: ChunkBlockMods::new(chunk_size), 
-			tgen: TerrainGenerator::new(0),
+			seed,
+			pending_blockmods: HashMap::new(), 
+			tgen: TerrainGenerator::new(seed),
 		}
 	}
 
@@ -90,250 +114,162 @@ impl Map {
 							let (_, voxel_chunk_position) = bm.position.chunk_voxel_position(chunk_size);
 							c.set_voxel(voxel_chunk_position, v)
 						},
-						_ => todo!(),
+						_ => todo!("Handle block mods other than world generation"),
 					}
 				}
 			} else {
-				// Add bms to self bms
+				// Add bms to pending bms
+				if let Some(v) = self.pending_blockmods.get_mut(&cpos) {
+					v.extend_from_slice(&bms[..]);
+				} else {
+					self.pending_blockmods.insert(cpos, bms);
+				}
 			}
 		}
 	}
 
-	pub fn generate_chunk(&self, chunk_position: [i32; 3]) -> Result<(Chunk, ChunkBlockMods), GenerationError> {
-		
-		let mut chunk = Chunk::new(self.chunk_size);
-		let cbms = ChunkBlockMods::new(self.chunk_size);
-
-		// Generate bare
-		{
-			let bm = self.blocks.read().unwrap();
-			let stone_idx = bm.index_name(&"stone".to_string()).unwrap();
-			chunk = self.tgen.chunk_base_3d(chunk_position, chunk, Voxel::Block(stone_idx));
-		}
-		
-		// Covering
-		{
-			let bm = self.blocks.read().unwrap();
-			let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
-			let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();	
-			drop(bm);
-			chunk =  self.tgen.cover_chunk(chunk, chunk_position, Voxel::Block(grass_idx), Voxel::Block(dirt_idx), 3);
-		}
-		
-		// Decoration
-		{
-			// Treeification
-			// let tree_mods = tgen.treeify_3d(chunk_position, &self, &bm, 5);
-		}
-
-		Ok((chunk, cbms))
-	}
-
-	fn generate_chunk_rayon(
+	pub fn chunk_generation_function(
 		&self, 
 		chunk_position: [i32; 3],
-	) -> PTCT<(Chunk, ChunkBlockMods)> {
-
-		let bm = self.blocks.read().unwrap();
-		let stone_idx = bm.index_name(&"stone".to_string()).unwrap();
-		let grass_idx = bm.index_name(&"grass".to_string()).unwrap();
-		let dirt_idx = bm.index_name(&"dirt".to_string()).unwrap();	
-
-		let result = PTCT::new();
-		let mut result_clone = result.clone();
-
+		blocks: &BlockManager,
+	) -> Result<impl Fn() -> (Chunk, ChunkBlockMods), GenerationError> {
+	
+		let stone = "stone".to_string();
+		let stone_idx = blocks.index_name(&stone)
+			.ok_or(GenerationError::BlockNotFoundError(stone))?;
+		let grass = "grass".to_string();
+		let grass_idx = blocks.index_name(&grass)
+			.ok_or(GenerationError::BlockNotFoundError(grass))?;
+		let dirt = "dirt".to_string();
+		let dirt_idx = blocks.index_name(&dirt)
+			.ok_or(GenerationError::BlockNotFoundError(dirt))?;
 		let chunk_size = self.chunk_size;
-		rayon::spawn(move || {			
+		let chunk_func = move || {			
 			let mut chunk = Chunk::new(chunk_size);
 			let cbms = ChunkBlockMods::new(chunk_size);
 			let tgen = TerrainGenerator::new(0);
 	
+			// Bare
 			chunk = tgen.chunk_base_3d(chunk_position, chunk, Voxel::Block(stone_idx));
 		
+			// Cover
 			chunk = tgen.cover_chunk(chunk, chunk_position, Voxel::Block(grass_idx), Voxel::Block(dirt_idx), 3);
 
-			result_clone.insert((chunk, cbms));
-		});
+			// Trees
+			// let tree_mods = tgen.treeify_3d(chunk_position, &self, &bm, 5);
 
-		result
+			(chunk, cbms)
+		};
+
+		Ok(chunk_func)
+	}
+
+	pub fn mark_chunk_existence(&mut self, chunk_position: [i32; 3]) -> bool {
+		if self.chunks.contains_key(&chunk_position) {
+			true
+		} else {
+			self.chunks.insert(chunk_position, MapChunkEntry::UnLoaded);
+			false
+		}
+	}
+
+	/// begins generation for chunks that have not been generated
+	pub fn begin_chunks_generation(
+		&mut self,
+		blocks: &BlockManager,
+	) -> Result<Vec<[i32; 3]>, GenerationError> {
+		let mut queued_chunks = Vec::new();
+		for (&chunk_position, mce) in self.chunks.iter() {
+			if !(self.cur_generation_jobs < self.max_generation_jobs) {
+				break
+			}
+			match mce {
+				MapChunkEntry::UnLoaded => {
+					info!("Generating chunk {chunk_position:?}");
+					queued_chunks.push(chunk_position);
+					self.cur_generation_jobs += 1;
+					let f = self.chunk_generation_function(chunk_position, blocks)?;
+					let sender = self.generated_chunk_sender.clone();
+					rayon::spawn(move || {
+						let (c, cbms) = f();
+						sender.send((chunk_position, c, cbms)).unwrap();
+					});
+				},
+				_ => {},
+			}
+		}
+		for chunk in queued_chunks.iter() {
+			let c = self.chunks.get_mut(chunk).unwrap();
+			*c = MapChunkEntry::Generating;
+		}
+		Ok(queued_chunks)
+	}
+	pub fn receive_generated_chunks(&mut self) {
+		for (chunk_position, chunk, block_mods) in self.generated_chunk_receiver.try_iter().collect::<Vec<_>>() {
+			info!("Received generated chunk {chunk_position:?}");
+			self.cur_generation_jobs -= 1;
+			self.insert_chunk(chunk_position, chunk, KGeneration::new());
+			self.apply_chunkblockmods(block_mods);
+		}
 	}
 
 	// Mesh a chunk with respect to those around it
 	// This will look bad if seen from an side without a chunk before it
-	pub fn mesh_chunk(&self, position: [i32; 3]) -> Vec<(Index, Mesh)> {
-		let [px, py, pz] = position;
-		
-		let main_chunk = self.chunk(position).expect("Tried to mesh unloaded chunk!");
-		
-		// Copy slices of neighbours
-		// If the neighbour is not loaded, pretend there is nothing there (this is bad)
-		debug!("Extracting xp slice");
-		let xp_slice = match self.chunk([px+1, py, pz]) {
-			Ok(chunk) => {
-				let mut xp = vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize];
-				for y in 0..self.chunk_size[1] {
-					let y_offset = y * self.chunk_size[1];
-					for z in 0..self.chunk_size[2] {
-						xp[(y_offset + z) as usize] = chunk.get_voxel([0, y as i32, z as i32]);
-					}
-				}
-				xp
-			},
-			Err(_) => vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize],
-		};
-		debug!("Extracting yp slice");
-		let yp_slice = match self.chunk([px, py+1, pz]) {
-			Ok(chunk) => {
-				let mut yp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize];
-				for x in 0..self.chunk_size[0] {
-					let x_offset = x * self.chunk_size[0];
-					for z in 0..self.chunk_size[2] {
-						yp[(x_offset + z) as usize] = chunk.get_voxel([x as i32, 0, z as i32]);
-					}
-				}
-				yp
-			},
-			Err(_) => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize],
-		};
-		debug!("Extracting zp slice");
-		let zp_slice = match self.chunk([px, py, pz+1]) {
-			Ok(chunk) => {
-				let mut zp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize];
-				for x in 0..self.chunk_size[0] {
-					let x_offset = x * self.chunk_size[0];
-					for y in 0..self.chunk_size[1] {
-						zp[(x_offset + y) as usize] = chunk.get_voxel([x as i32, y as i32, 0]);
-					}
-				}
-				zp
-			},
-			Err(_) => vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize],
-		};
-		let slices = [xp_slice, yp_slice, zp_slice];
-
-		let (mut segments, _) = map_mesh(
-			&main_chunk.contents, 
-			self.chunk_size.map(|x| x as usize),
-			&slices,
-			self.blocks.clone(),
-			true,
-		);
-
-		segments.drain(..).map(|(material_idx, segment)| {
-			let mesh = Mesh::new(&format!("mesh of chunk {:?} material {:?}", position, material_idx))
-				.with_positions(segment.positions)
-				.with_uvs(segment.uvs)
-				.with_normals(segment.normals)
-				.with_indices(segment.indices);
-			(material_idx, mesh)
-		}).collect::<Vec<_>>()
-	}
-
-	// The same as mesh_chunk but it does the bulk of computation on a rayon thread
-	pub fn mesh_chunk_rayon(
+	pub fn chunk_meshing_function(
 		&self, 
 		position: [i32; 3],
-	) -> Result<PTCT<Vec<(Index, Mesh)>>, MapError> {
+		blocks: &BlockManager,
+	) -> Result<(impl Fn() -> (Vec<(Index, Mesh)>,), [KGeneration; 4]), MapError> {
 		let [px, py, pz] = position;
 		
-		let main_chunk = self.chunk(position).expect("Tried to mesh unloaded chunk!");
+		let (main_chunk, &main_gen) = self.chunk_map(position)
+			.ok().ok_or(MapError::ChunkUnavailable)?.parts();
 		
 		// Copy slices of neighbours
-		// If the neighbour is not loaded, pretend there is nothing there (this is bad)
-		let xp_slice = match self.chunk([px+1, py, pz]) {
-			Ok(chunk) => {
-				let mut xp = vec![Voxel::Empty; (self.chunk_size[1] * self.chunk_size[2]) as usize];
-				for y in 0..self.chunk_size[1] {
-					let y_offset = y * self.chunk_size[1];
-					for z in 0..self.chunk_size[2] {
-						xp[(y_offset + z) as usize] = chunk.get_voxel([0, y as i32, z as i32]);
-					}
-				}
-				xp
-			},
-			Err(_) => return Err(MapError::ChunkMeshNeighboursUnavailable),
-		};
-		let yp_slice = match self.chunk([px, py+1, pz]) {
-			Ok(chunk) => {
-				let mut yp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[2]) as usize];
-				for x in 0..self.chunk_size[0] {
-					let x_offset = x * self.chunk_size[0];
-					for z in 0..self.chunk_size[2] {
-						yp[(x_offset + z) as usize] = chunk.get_voxel([x as i32, 0, z as i32]);
-					}
-				}
-				yp
-			},
-			Err(_) => return Err(MapError::ChunkMeshNeighboursUnavailable),
-		};
-		let zp_slice = match self.chunk([px, py, pz+1]) {
-			Ok(chunk) => {
-				let mut zp = vec![Voxel::Empty; (self.chunk_size[0] * self.chunk_size[1]) as usize];
-				for x in 0..self.chunk_size[0] {
-					let x_offset = x * self.chunk_size[0];
-					for y in 0..self.chunk_size[1] {
-						zp[(x_offset + y) as usize] = chunk.get_voxel([x as i32, y as i32, 0]);
-					}
-				}
-				zp
-			},
-			Err(_) => return Err(MapError::ChunkMeshNeighboursUnavailable),
-		};
-		let slices = [xp_slice, yp_slice, zp_slice];
+		debug!("Extracting xp slice");
+		let (xp_chunk, &xp_gen) = self.chunk_map([px+1, py, pz])
+			.ok().ok_or(MapError::ChunkNeighboursUnavailable)?.parts();
+		let xp_slice = (0..self.chunk_size[1]).map(|y| {
+			(0..self.chunk_size[2]).map(move |z| {
+				xp_chunk.get_voxel([0, y as i32, z as i32])
+			})
+		}).flatten().collect::<Vec<_>>();
 
-		let result = PTCT::new();
+		debug!("Extracting yp slice");
+		let (yp_chunk, &yp_gen) = self.chunk_map([px, py+1, pz])
+			.ok().ok_or(MapError::ChunkNeighboursUnavailable)?.parts();
+		let yp_slice = (0..self.chunk_size[0]).map(|x| {
+			(0..self.chunk_size[2]).map(move |z| {
+				yp_chunk.get_voxel([x as i32, 0, z as i32])
+			})
+		}).flatten().collect::<Vec<_>>();
+		
+		debug!("Extracting zp slice");
+		let (zp_chunk, &zp_gen) = self.chunk_map([px, py, pz+1])
+			.ok().ok_or(MapError::ChunkNeighboursUnavailable)?.parts();
+		let zp_slice = (0..self.chunk_size[0]).map(|x| {
+			(0..self.chunk_size[1]).map(move |y| {
+				zp_chunk.get_voxel([x as i32, y as i32, 0])
+			})
+		}).flatten().collect::<Vec<_>>();
 
-		let mut result_clone = result.clone();
-		let chunk_contents = main_chunk.contents.clone();
-		let blockmap = self.blocks.clone();
+		let neighbour_slices = [xp_slice, yp_slice, zp_slice];
 		let chunk_size = self.chunk_size.map(|x| x as usize);
-		rayon::spawn(move || {			
-
-			let (mut segments, _) = map_mesh(
+		let blockmap = blocks.clone(); // <- BAD!
+		let chunk_contents = main_chunk.contents.clone(); // Also BAD
+		// Maybe extract entries for all blocks in chunks?
+		let result = move || {
+			map_mesh(
 				&chunk_contents, 
 				chunk_size,
-				&slices,
-				blockmap,
+				position,
+				&neighbour_slices,
+				&blockmap,
 				true,
-			);
-	
-			let output = segments.drain(..).map(|(material_idx, segment)| {
-				let mesh = Mesh::new(&format!("mesh of chunk {:?} material {:?}", position, material_idx))
-					.with_positions(segment.positions)
-					.with_uvs(segment.uvs)
-					.with_normals(segment.normals)
-					.with_indices(segment.indices);
-				(material_idx, mesh)
-			}).collect::<Vec<_>>();
+			)
+		};
 
-			result_clone.insert(output);
-		});
-
-		Ok(result)
-	}
-
-	pub fn chunks_sphere(&self, centre: [i32; 3], radius: i32) -> Vec<[i32; 3]> {
-		let [cx, cy, cz] = centre;
-		let mut res = Vec::new();
-		// Consider bounding cube
-		for x in (cx-radius)..=(cx+radius) {
-			for y in (cy-radius)..=(cy+radius) {
-				for z in (cz-radius)..=(cz+radius) {
-					if Map::within_chunks_sphere([x, y, z], centre, radius) {
-						res.push([x,y,z]);
-					}
-				}
-			}
-		}
-		res
-	}
-
-	#[inline]
-	pub fn within_chunks_sphere(cpos: [i32; 3], centre: [i32; 3], radius: i32) -> bool {
-		let x = cpos[0] - centre[0];
-		let y = cpos[1] - centre[1];
-		let z = cpos[2] - centre[2];
-		(x.pow(2) + y.pow(2) + z.pow(2)) < radius.pow(2)
+		Ok((result, [main_gen, xp_gen, yp_gen, zp_gen]))
 	}
 
 	/// A ray that continues until it either reaches max length or hits a non-empty voxel.
@@ -382,17 +318,6 @@ impl Map {
 
 			// Point of entry into chunk relative to map
 			let entry = origin + direction * c_iter.t + direction * 0.001;
-			
-			// // If entry isn't in the chunk then continue
-			// let [ctx, cty, ctz] = point_chunk(entry, chunk_size);
-			// if ctx != c_iter.vx || cty != c_iter.vy || ctz != c_iter.vz {
-			// 	println!("Chunk {cpos:?}");
-			// 	println!("Entry is {:?}", entry.data);
-			// 	println!("Meant for chunk {:?}", [ctx, cty, ctz]);
-			// 	println!("{:#?}", c_iter);
-			// 	// break
-			// 	panic!()
-			// }
 
 			match self.chunk(cpos) {
 				Ok(c) => {
@@ -442,112 +367,41 @@ impl Map {
 		None
 	}
 
-	/// Encodes run length, maps blocks with name, compresses with lz4.
-	pub fn save_chunk(&self, chunk_position: [i32; 3]) -> anyhow::Result<()> {
-		use lz4_flex::compress_prepend_size;
-		use std::io::Write;
+	pub fn insert_chunk(&mut self, chunk_position: [i32; 3], chunk: Chunk, generation: KGeneration) -> Option<(Chunk, KGeneration)> {
+		let mc = MapChunk { chunk, generation, };
 
-		let c = self.chunk(chunk_position)?;
-		let rle = c.rle();
-
-		let (name_idx_map, name_map) = self.blocks.read().unwrap().encoding_maps(&rle);
-
-		let mapped_rle = rle.iter().map(|&(id, l)| {
-			if id == 0 {
-				(id, l)
-			} else {
-				(name_idx_map[&id]+1, l)
-			}
-		}).collect::<Vec<_>>();
-
-		let seed = 0;
-		let [cx, cy, cz] = chunk_position;
-		
-		let save_path = PathBuf::from(format!("map_saved/{seed}/{cx}.{cy}.{cz}.cmrle"));
-		std::fs::create_dir_all(save_path.parent().unwrap())?;
-		let mut writer = std::fs::File::create(&save_path)?;
-
-		let bytes = bincode::serialize(&(name_map, mapped_rle))?;
-		let compressed_bytes = compress_prepend_size(&bytes[..]);
-
-		writer.write_all(&compressed_bytes[..])?;
-
-		// ron::ser::to_writer(writer, &(name_map, mapped_rle))?;
-
-		Ok(())
+		self.chunks.insert(chunk_position, MapChunkEntry::Complete(mc))
+			.and_then(|e| e.chunk())
+			.and_then(|mc| Some(mc.decompose()))
 	}
 
-	pub fn read_chunk(&mut self, chunk_position: [i32; 3]) -> anyhow::Result<()> {
-
-		let seed = 0;
-		let [cx, cy, cz] = chunk_position;
-		let save_path = format!("map_saved/{seed}/{cx}.{cy}.{cz}.cmrle");
-
-		let blocks = self.blocks.read().unwrap();
-		let c = Chunk::from_compressed_mapped_rle(save_path, self.chunk_size, &blocks)?;
-
-		self.chunks.insert(chunk_position, MapChunkEntry::Complete(c));
-		
-		Ok(())
+	pub fn generation(&self, chunk_position: [i32; 3]) -> Result<KGeneration, MapError> {
+		self.chunks.get(&chunk_position)
+			.and_then(|mce| mce.chunk_ref())
+			.and_then(|mc| Some(mc.generation))
+			.ok_or(MapError::ChunkUnavailable)
 	}
-
-	// Returns the positions of all chunks that should be rendered from this camera
-	// There was some article showing how this can be optimized quite well, but I don't remember its name 
-	pub fn chunks_view_cone(&self, _camera: Camera, _distance: u32) -> Vec<[i32; 3]> {
-		todo!()
-	}
-
-	/// Begins chunk generation.
-	/// Check for completion using check_chunk_done().
-	pub fn begin_chunk_generation(&mut self, chunk_position: [i32; 3]) {
-		self.chunks.insert(chunk_position, MapChunkEntry::Generating(
-			self.generate_chunk_rayon(chunk_position)
-		));
-	}
-
-	/// Checks if a chunk is done generating.
-	/// Inserts it if it is ready.
-	pub fn check_chunk_available(&mut self, chunk_position: [i32; 3]) -> bool {
-		if self.chunks.contains_key(&chunk_position) {
-			match self.chunks.get_mut(&chunk_position).unwrap() {
-				MapChunkEntry::Complete(_) => true,
-				MapChunkEntry::Generating(ptct) => {
-					if let Some((c, cbms)) = ptct.pollmebb() {
-						self.chunks.insert(chunk_position, MapChunkEntry::Complete(c));
-						self.apply_chunkblockmods(cbms);
-						true
-					} else {
-						false
-					}
-				},
-				_ => false,
-			}
-		} else {
-			false
-		}
-	}
-
 	pub fn chunk(&self, chunk_position: [i32; 3]) -> Result<&Chunk, MapError> {
-		if self.chunks.contains_key(&chunk_position) {
-			let c = self.chunks.get(&chunk_position).unwrap();
-			match c {
-				MapChunkEntry::Complete(c) => Ok(c),
-				_ => Err(MapError::ChunkUnloaded),
-			}
-		} else {
-			Err(MapError::ChunkUnloaded)
-		}
+		self.chunks.get(&chunk_position)
+			.and_then(|mce| mce.chunk_ref())
+			.and_then(|mc| Some(&mc.chunk))
+			.ok_or(MapError::ChunkUnavailable)
 	}
 	pub fn chunk_mut(&mut self, chunk_position: [i32; 3]) -> Result<&mut Chunk, MapError> {
-		if self.chunks.contains_key(&chunk_position) {
-			let c = self.chunks.get_mut(&chunk_position).unwrap();
-			match c {
-				MapChunkEntry::Complete(c) => Ok(c),
-				_ => Err(MapError::ChunkUnloaded),
-			}
-		} else {
-			Err(MapError::ChunkUnloaded)
-		}
+		self.chunks.get_mut(&chunk_position)
+			.and_then(|mce| mce.chunk_mut())
+			.and_then(|mc| Some(&mut mc.chunk))
+			.ok_or(MapError::ChunkUnavailable)
+	}
+	pub fn chunk_map(&self, chunk_position: [i32; 3]) -> Result<&MapChunk, MapError> {
+		self.chunks.get(&chunk_position)
+			.and_then(|mce| mce.chunk_ref())
+			.ok_or(MapError::ChunkUnavailable)
+	}
+	pub fn chunk_map_mut(&mut self, chunk_position: [i32; 3]) -> Result<&mut MapChunk, MapError> {
+		self.chunks.get_mut(&chunk_position)
+			.and_then(|mce| mce.chunk_mut())
+			.ok_or(MapError::ChunkUnavailable)
 	}
 
 	// All voxels are set through me
@@ -556,9 +410,11 @@ impl Map {
 	pub fn set_voxel_world(&mut self, world_coords: [i32; 3], voxel: Voxel) {
 		let (cpos, cvpos) = self.world_chunk_voxel(world_coords);
 		debug!("world {:?} -> chunk {:?} voxel {:?} to {:?}", &world_coords, &cpos, &cvpos, &voxel);
-		match self.chunk_mut(cpos) {
-			Ok(c) => c.set_voxel(cvpos, voxel),
-			Err(_) => todo!("add to cbms"), 
+		if let Ok(mc) = self.chunk_map_mut(cpos) {
+			mc.chunk.set_voxel(cvpos, voxel);
+			mc.generation.increment();
+		} else {
+			todo!("Add modification to nonexistent chunk to pending block modifications")
 		}
 	}
 
@@ -595,134 +451,30 @@ impl Map {
 
 
 
-#[derive(Debug, Clone, Copy)]
-pub struct VoxelRayHit {
-	pub coords: [i32; 3],
-	pub t: f32,
-	pub normal: Vector3<f32>,
-	pub face_coords: [f32; 2],	// [0,1], uses wgpu texture coordinates
+pub fn voxel_sphere(centre: [i32; 3], radius: i32) -> Vec<[i32; 3]> {
+	let [cx, cy, cz] = centre;
+	let mut res = Vec::new();
+	// Consider bounding cube
+	for x in (cx-radius)..=(cx+radius) {
+		for y in (cy-radius)..=(cy+radius) {
+			for z in (cz-radius)..=(cz+radius) {
+				if within_voxel_sphere(centre, radius, [x, y, z]) {
+					res.push([x,y,z]);
+				}
+			}
+		}
+	}
+	res
 }
-/// This needs much testing as I am not mathy
-pub fn voxel_ray_v2(
-	origin: &Vector3<f32>,
-	direction: &Vector3<f32>,
-	t_limit: f32,
-) -> Vec<VoxelRayHit> {
-	// https://stackoverflow.com/questions/12367071/how-do-i-initialize-the-t-variables-in-a-fast-voxel-traversal-algorithm-for-ray
-	// 1.3 -> 0.3, -1.7 -> 0.3
-	// fn frac(f: f32) -> f32 {
-	// 	if f > 0.0 { 
-	// 		f.fract()
-	// 	} else {
-	// 		f - f.floor()
-	// 	}
-	// }
-	// fn frac0(x: f32) -> f32 {
-	// 	x - x.floor()
-	// }
-	// fn frac1(x: f32) -> f32 {
-	// 	1.0 - x + x.floor()
-	// }
-	
-	// Origin voxel
-	let mut vx = origin[0].floor() as i32;
-	let mut vy = origin[1].floor() as i32; 
-	let mut vz = origin[2].floor() as i32;
 
-	// Direction of cast (normalized)
-	let direction = direction.normalize();
-	let dx = direction[0]; 
-	let dy = direction[1]; 
-	let dz = direction[2];
-	
-	// Direction to increment when stepping
-	let v_step_x = dx.signum() as i32;
-	let v_step_y = dy.signum() as i32;
-	let v_step_z = dz.signum() as i32;
 
-	// The change in t when taking a step (always positive)
-	// How far in terms of t we can travel before reaching another voxel in (direction)
-	// Todo: account for zeros
-	let t_delta_x = 1.0 / dx.abs();
-	let t_delta_y = 1.0 / dy.abs();
-	let t_delta_z = 1.0 / dz.abs();
 
-	// Distance along the line to the next voxel border of (direction)
-	// https://gitlab.com/athilenius/fast-voxel-traversal-rs/-/tree/main/
-	let dist = |i: i32, p: f32, vs: i32| {
-		if vs > 0 {
-			i as f32 + 1.0 - p
-		} else {
-			p - i as f32
-		}
-	};
-	// let mut t_max_x = t_delta_x * frac(origin[0]);
-	// let mut t_max_y = t_delta_y * frac(origin[1]);
-	// let mut t_max_z = t_delta_z * frac(origin[2]);
-	let mut t_max_x = t_delta_x * dist(vx, origin[0], v_step_x);
-	let mut t_max_y = t_delta_y * dist(vy, origin[1], v_step_y);
-	let mut t_max_z = t_delta_z * dist(vz, origin[2], v_step_z);
-
-	// Avoids infinite loop
-	if t_delta_x == 0.0 && t_delta_y == 0.0 && t_delta_z == 0.0 {
-		panic!()
-	}
-
-	let mut t = 0.0;
-	let mut hits = Vec::new();
-	let mut normal = Vector3::zeros();
-	// let mut face_coords = [0.0; 2];
-	while t < t_limit {
-		hits.push(VoxelRayHit {
-			coords: [vx, vy, vz],
-			t,
-			normal,
-			face_coords: [0.0; 2],
-		});
-
-		if t_max_x < t_max_y {
-			// Closer to x boundary than y
-			if t_max_x < t_max_z {
-				// Closer to x boundary than z, closest to x boundary
-				// face_coords = [frac(t*dy), frac(t*dz)];
-
-				normal = vector![-v_step_x as f32, 0.0, 0.0];
-				vx += v_step_x;
-				t = t_max_x;
-				t_max_x += t_delta_x;
-				
-			} else {
-				// Closer to z than x, closest to z
-				// face_coords = [frac(t*dx), frac(t*dy)];
-
-				normal = vector![0.0, 0.0, -v_step_z as f32];
-				vz += v_step_z;
-				t = t_max_z;
-				t_max_z += t_delta_z;
-			}
-		} else {
-			// Closer to y boundary than x
-			if t_max_y < t_max_z {
-				// Closer to y boundary than z, closest to y boundary
-				// face_coords = [frac(t*dx), frac(t*dz)];
-
-				normal = vector![0.0, -v_step_y as f32, 0.0];
-				vy += v_step_y;
-				t = t_max_y;
-				t_max_y += t_delta_y;
-			} else {
-				// Closer to z than y, closest to z
-				// face_coords = [frac(t*dx), frac(t*dy)];
-
-				normal = vector![0.0, 0.0, -v_step_z as f32];
-				vz += v_step_z;
-				t = t_max_z;
-				t_max_z += t_delta_z;
-			}
-		}
-	}
-
-	hits
+#[inline]
+pub fn within_voxel_sphere(centre: [i32; 3], radius: i32, position: [i32; 3]) -> bool {
+	let x = position[0] - centre[0];
+	let y = position[1] - centre[1];
+	let z = position[2] - centre[2];
+	(x.pow(2) + y.pow(2) + z.pow(2)) < radius.pow(2)
 }
 
 
@@ -807,32 +559,34 @@ pub fn point_world_voxel(point: &Vector3<f32>) -> [i32; 3] {
 
 // Never generate faces for negativemost blocks, they are covered by their chunks
 // If not collect_transparent then don't group faces with a transparent material together, allowing them to be drawn individually (could we use instancing for this?)
-struct ChunkMeshSegment {
-	pub positions: Vec<[f32; 3]>, 
-	pub normals: Vec<[f32; 3]>, 
-	pub uvs: Vec<[f32; 2]>,
-	pub indices: Vec<u16>,
-}
-impl ChunkMeshSegment {
-	pub fn new() -> Self {
-		Self {
-			positions: Vec::new(),
-			normals: Vec::new(),
-			uvs: Vec::new(),
-			indices: Vec::new(),
-		}
-	}
-}
+// TODO: Group by direction
 fn map_mesh(
 	chunk_contents: &Vec<Voxel>,
 	chunk_size: [usize; 3],
+	chunk_position: [i32; 3], // Used only for mesh name
 	neighbour_slices: &[Vec<Voxel>; 3], // xp, yp, zp
-	blockmap: Arc<RwLock<BlockManager>>,
+	blockmap: &BlockManager,
 	_collect_transparent: bool,
 ) -> (
-	Vec<(Index, ChunkMeshSegment)>, 	// Vec<(material idx, mesh data)>
-	Vec<ModelInstance>,
+	Vec<(Index, Mesh)>, 	// Vec<(material idx, mesh data)>
 ) {
+	struct ChunkMeshSegment {
+		pub positions: Vec<[f32; 3]>, 
+		pub normals: Vec<[f32; 3]>, 
+		pub uvs: Vec<[f32; 2]>,
+		pub indices: Vec<u16>,
+	}
+	impl ChunkMeshSegment {
+		pub fn new() -> Self {
+			Self {
+				positions: Vec::new(),
+				normals: Vec::new(),
+				uvs: Vec::new(),
+				indices: Vec::new(),
+			}
+		}
+	}
+
 	#[inline]
 	fn append_face(segment: &mut ChunkMeshSegment, position: [usize; 3], direction: &Direction) {
 		let [px, py, pz] = position;
@@ -880,10 +634,7 @@ fn map_mesh(
 		});
 	}
 
-	let blockmap = blockmap.read().unwrap();
-
 	let mut mesh_parts = HashMap::new();
-	let models = Vec::new();
 
 	let [x_size, y_size, z_size] = chunk_size;
 	let x_multiplier = y_size * z_size;
@@ -998,9 +749,16 @@ fn map_mesh(
 		}
 	}
 
-	let face_collections = mesh_parts.drain().collect::<Vec<_>>();
+	let face_collections = mesh_parts.drain().map(|(i, segment)| {
+		let mesh = Mesh::new(&format!("mesh of chunk {:?} material {:?}", chunk_position, i))
+		.with_positions(segment.positions)
+			.with_uvs(segment.uvs)
+			.with_normals(segment.normals)
+			.with_indices(segment.indices);
+		(i, mesh)
+	}).collect::<Vec<_>>();
 
-	(face_collections, models)
+	(face_collections,)
 }
 
 
@@ -1078,157 +836,3 @@ const REVERSE_QUAD_INDICES: [u16; 6] = [
 	2, 1, 0,
 	0, 3, 2, 
 ];
-
-
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	// // Tests that parallel chunk meshing is faster than non-parallel chunk meshing
-    // #[test]
-    // fn test_mesh_rayon() {
-	// 	const CHUNKSIZE: [u32; 3] = [32; 3];
-
-	// 	let bm = Arc::new(RwLock::new({
-	// 		let mut bm = BlockManager::new();
-
-	// 		bm.insert(Block::new(
-	// 			&format!("stone")
-	// 		));
-	// 		bm.insert(Block::new(
-	// 			&format!("grass")
-	// 		));
-	// 		bm.insert(Block::new(
-	// 			&format!("dirt")
-	// 		));
-
-	// 		bm
-	// 	}));
-
-	// 	println!("Generating world");
-	// 	let mapgen_st = Instant::now();
-	// 	let mut map = Map::new(CHUNKSIZE, &bm);
-	// 	map.generate();
-	// 	println!("Generated map in {}ms", (Instant::now() - mapgen_st).as_millis());
-
-	// 	println!("Begin meshing");
-	// 	let start_t = Instant::now();
-
-	// 	let mut queue = Vec::new();
-	// 	for cx in -4..4 {
-	// 		for cy in -1..2 {
-	// 			for cz in -4..4 {
-	// 				queue.push((
-	// 					[cx,cy,cz], 
-	// 					Instant::now(), 
-	// 					map.mesh_chunk_rayon([cx, cy, cz]),
-	// 				));
-	// 			}
-	// 		}
-	// 	}
-
-	// 	let mut mesh_times = Vec::new();
-	// 	while queue.len() > 0 {
-	// 		queue.drain_filter(|(cpos, st, result)| {
-	// 			let content = result.lock().unwrap();
-	// 			if content.is_some() {
-	// 				mesh_times.push((*cpos, Instant::now() - *st));
-	// 				true
-	// 			} else {
-	// 				false
-	// 			}
-	// 		});
-	// 		// Don't lock all the time
-	// 		std::thread::sleep(Duration::from_millis(2));
-	// 	}
-
-	// 	let total_duration = Instant::now() - start_t;
-
-	// 	// Display results
-	// 	for (cpos, cdur) in &mesh_times {
-	// 		println!("chunk {:?} meshed in {}ms", cpos, cdur.as_millis());
-	// 	}
-	// 	println!("{} chunks meshed in {}ms", mesh_times.len(), total_duration.as_millis());
-
-	// 	let duration_sum: Duration = mesh_times.drain(..).map(|(_, d)| d).sum();
-	// 	println!("Duration sum is {}ms", duration_sum.as_millis());
-
-    //     assert!(duration_sum > total_duration);
-    // }
-
-	#[test]
-	fn test_map_save_load() {
-		use crate::texture::TextureManager;
-		use crate::material::{MaterialManager, load_materials_file};
-
-		let xs = 3;
-		let zs = 3;
-		let ys = 3;
-
-		let mut tm = TextureManager::new();
-		let mut mm = MaterialManager::new();
-		load_materials_file(
-			"resources/materials/kmaterials.ron",
-			&mut tm,
-			&mut mm,
-		).unwrap();
-		let bm = {
-			let mut bm = BlockManager::new();
-
-			crate::world::blocks::load_blocks_file(
-				"resources/kblocks.ron",
-				&mut bm,
-				&mut tm,
-				&mut mm,
-			).unwrap();
-			
-			Arc::new(RwLock::new(bm))
-		};
-		
-		let mut map = Map::new([16; 3], &bm);
-		for cx in -xs..=xs {
-			for cz in -zs..=zs {
-				for cy in -ys..=ys {
-					map.begin_chunk_generation([cx, cy, cz]);
-				}
-			}
-		}
-		println!("Waiting for map generation");
-		let mut done = false;
-		while !done {
-			done = true;
-			for cx in -xs..=xs {
-				for cz in -zs..=zs {
-					for cy in -ys..=ys {
-						if !map.check_chunk_available([cx, cy, cz]) {
-							done = false;
-						}
-					}
-				}
-			}
-		}
-		println!("Done that, saving");
-
-		for cx in -xs..=xs {
-			for cz in -zs..=zs {
-				for cy in -ys..=ys {
-					map.save_chunk([cx, cy, cz]).unwrap();
-				}
-			}
-		}
-		println!("Done that, loading");
-
-		for cx in -xs..=xs {
-			for cz in -zs..=zs {
-				for cy in -ys..=ys {
-					let old = map.chunk([cx,cy,cz]).unwrap().clone();
-					map.read_chunk([cx,cy,cz]).unwrap();
-					assert_eq!(old, *map.chunk([cx,cy,cz]).unwrap());
-				}
-			}
-		}
-		
-	}
-}
-

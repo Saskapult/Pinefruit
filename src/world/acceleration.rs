@@ -7,7 +7,11 @@ use std::{ops::Range, collections::HashMap};
 
 
 
-/// Fits things into a buffer
+/// Fits things into a buffer.
+/// Addresses each byte using u32, so can hold up to 4GB.
+/// Hopefully you will never hold that much!
+/// If you do need to have more (you shouldn't) you can just make it address using the slab index.
+/// Or just plug in a u64, I'm not your boss.
 #[derive(Debug)]
 pub struct SlabBuffer {
 	slab_size: usize,
@@ -19,6 +23,8 @@ impl SlabBuffer {
 
 	pub fn new(device: &wgpu::Device, slab_size: usize, slab_count: usize, usages: wgpu::BufferUsages) -> Self {
 		info!("Creating slab buffer with {slab_count} slabs of size {slab_size} ({} bytes)", slab_count * slab_size);
+
+		assert!(slab_size * slab_count < u32::MAX as usize, "Buffer is too large to have bytes addressed by u32!");
 
 		if slab_size % 4 != 0 {
 			if Self::ENFORCE_ALIGN_FOUR {
@@ -60,6 +66,24 @@ impl SlabBuffer {
 	/// Fraction of storage space used.
 	pub fn capacity_frac(&self) -> f32 {
 		1.0 - self.remaining_size() as f32 / self.size() as f32
+	}
+
+	/// Writes to buffer memory, does not change slab status.
+	/// Returns false if slab unused or out of memory bounds.
+	pub fn write(&mut self, queue: &wgpu::Queue, offset: usize, data: &[u8]) -> bool {
+		let slab_index = offset / self.slab_size;
+		let out_of_bounds = self.slabs.len() >= slab_index;
+		if out_of_bounds {
+			error!("Tried to write outside of buffer bounds!");
+			return false;
+		} else {
+			queue.write_buffer(&self.buffer, offset as u64, data);
+		}
+		let slab_filled = self.slabs[slab_index];
+		if !slab_filled {
+			warn!("Wrote into inactive slab");
+		}
+		slab_filled
 	}
 
 	/// Returns start and end byte offsets.
@@ -134,9 +158,8 @@ impl SlabBuffer {
 		let bytes_en = range.end;
 		let slab_st = bytes_st.div_floor(self.slab_size);
 		let slab_en = bytes_en.div_ceil(self.slab_size);
-		// println!("Removing from bytes {bytes_st} to {bytes_en} affects slabs {slab_st} to {slab_en}");
 
-		for i in slab_st..slab_en {
+		for i in slab_st..=slab_en {
 			self.slabs[i] = false;
 		}
 	}
@@ -239,8 +262,6 @@ impl TracingChunkManager {
 
 	pub fn new(device: &wgpu::Device) -> Self {
 		let slab_count = Self::BUFFER_SIZE.div_ceil(Self::SLAB_SIZE);
-
-		assert!(Self::BUFFER_SIZE < u32::MAX as usize, "Buffer is too large to be addressed by u32!");
 		
 		Self {
 			storage: SlabBuffer::new(device, Self::SLAB_SIZE, slab_count, wgpu::BufferUsages::STORAGE),

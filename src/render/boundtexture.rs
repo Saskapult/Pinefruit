@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::{PathBuf, Path};
 use std::sync::Arc;
-use std::sync::RwLock;
 use serde::{Serialize, Deserialize};
 use crate::texture::*;
 use generational_arena::{Arena, Index};
@@ -305,13 +304,11 @@ pub struct BoundTextureManager {
 	textures_index_name: HashMap<String, Index>,
 	textures_index_path: HashMap<PathBuf, Index>,
 	textures_unmipped: Vec<Index>,
-	pub data_manager: Arc<RwLock<TextureManager>>,
 }
 impl BoundTextureManager {
 	pub fn new(
 		device: &Arc<wgpu::Device>,
 		queue: &Arc<wgpu::Queue>,
-		data_manager: &Arc<RwLock<TextureManager>>,
 	) -> Self {
 		Self {
 			device: device.clone(), 
@@ -320,7 +317,6 @@ impl BoundTextureManager {
 			textures_index_name: HashMap::new(), 
 			textures_index_path: HashMap::new(),
 			textures_unmipped: Vec::new(),
-			data_manager: data_manager.clone(),
 		}
 	}
 
@@ -374,24 +370,8 @@ impl BoundTextureManager {
 	}
 
 	// Index by name, bind if not bound
-	pub fn index_name_bind(&mut self, name: &String) -> Option<Index> {
-		let dm = self.data_manager.read().unwrap();
-		if let Some(&idx) = self.textures_index_name.get(name) {
-			Some(idx)
-		} else if let Some(texture_idx) = dm.index_name(name) {
-			// Clone is needed because of borrow checker stuff
-			if let Some(texture) = dm.index(texture_idx) {
-				let texture = texture.clone();
-				drop(dm);
-				let idx = self.bind(&texture);
-				Some(idx)
-			} else {
-				error!("Bad index for texture data {name}");
-				None
-			}
-		} else {
-			None
-		}
+	pub fn index_name_bind(&mut self, _name: &String) -> Option<Index> {
+		todo!("See index_path_bind implementation")
 	}
 
 	pub fn index_path(&self, path: &PathBuf) -> Option<Index> {
@@ -399,21 +379,11 @@ impl BoundTextureManager {
 	}
 
 	// Index by path, bind if not bound
-	pub fn index_path_bind(&mut self, path: &PathBuf) -> Option<Index> {
-		let dm = self.data_manager.read().unwrap();
-		if let Some(&idx) = self.textures_index_path.get(path) {
-			Some(idx)
-		} else if let Some(texture_idx) = dm.index_path(path) {
-			let texture = dm.index(texture_idx);
-			if let Some(texture) = texture {
-				let texture = texture.clone();
-				drop(dm);
-				let idx = self.bind(&texture);
-				Some(idx)
-			} else {
-				error!("Bad index for texture data {path:?}");
-				None
-			}
+	pub fn index_path_bind(&mut self, path: &PathBuf, textures: &TextureManager) -> Option<Index> {
+		if let Some(i) = self.index_path(path) {
+			Some(i)
+		} else if let Some(_g) = textures.index_path(path) {
+			todo!()
 		} else {
 			None
 		}

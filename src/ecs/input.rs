@@ -105,7 +105,7 @@ pub fn input_control_system(
 			let name = control.map.cid_name_map.get(&cid).unwrap();
 			println!("\t{cid} - {name}");
 		}
-		println!("-");
+		// println!("-");
 	}
 }
 

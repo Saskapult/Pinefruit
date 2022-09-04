@@ -109,7 +109,7 @@ pub fn load_blocks_file(
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
 	pub name: String,
 	pub xp_material_idx: Index,
@@ -177,7 +177,7 @@ pub struct BlockInstance {
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct BlockManager {
 	blocks: Vec<Block>,
 	index_name: HashMap<String, usize>,

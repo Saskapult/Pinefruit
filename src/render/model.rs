@@ -1,5 +1,5 @@
 use crate::render::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BTreeMap};
 use wgpu::util::DeviceExt;
 use crate::gpu::GpuData;
 use generational_arena::{Arena, Index};
@@ -48,7 +48,6 @@ pub struct ModelInstance {
 
 #[derive(Debug)]
 pub struct Model {
-	pub name: String,
 	pub mesh_idx: Index,	// Must match material's shader vertex input
 	pub material_idx: Index,
 }
@@ -89,7 +88,7 @@ impl ModelManager {
 
 
 /// Shader inputs are simplified to instance properties, vertex properties, and material format
-pub type ShaderInput = (InstanceProperties, VertexProperties, BindGroupFormat);
+pub type ShaderInput = (InstanceProperties, VertexProperties, BTreeMap<u32, ResourceDescriptor>);
 /// instance buffer idx, [material idx, mesh idx, count])
 pub type ModelQueue = (usize, Vec<(Index, Index, u32)>);
 /// Instance idx, mesh, count
@@ -259,26 +258,7 @@ impl ModelQueuesResource {
 		gpu_data: &mut GpuData,
 	) {
 		for ((_, vp, mbgf), &queue_idx) in self.queue_index_of_format.iter() {
-			// I don't want to allocate a new vector
-			// The existing vector should either be extended or truncated
-			// It should betterly just be logically resvered and then cleared and then use pushed
-			let queue_content = &mut self.queues.get_mut(queue_idx).unwrap().1;
-			let i = Index::from_raw_parts(0, 0);
-			queue_content.resize(models.len(), (i,i,0));
 
-			// Another way of doing stuff
-			// queue_content.iter_mut().enumerate().map(|(i, c)| {
-			// 	c.0 = resources.materials.index_from_index_format_bind(models[i].material_idx, mbgf, &mut resources.shaders, &mut resources.textures);
-			// 	c.1 = resources.meshes.index_from_index_properites_bind(models[i].mesh_idx, vp);
-			// 	c.2 = 1;
-			// });
-
-			models.iter().enumerate().for_each(|(i, model)| {
-				let mesh_idx = gpu_data.meshes.index_from_index_properites_bind(model.mesh_idx, vp);
-				let material_idx = gpu_data.materials.index_from_index_format_bind(model.material_idx, mbgf, &mut gpu_data.shaders, &mut gpu_data.textures);
-				let count = 1;
-				queue_content[i] = (material_idx, mesh_idx, count);
-			});
 		}
 		self.raw_models = models;
 	}

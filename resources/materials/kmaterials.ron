@@ -1,7 +1,7 @@
 [
 	(
 		name: "debug",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/debug.png"],
 		},
@@ -12,7 +12,7 @@
 	),
 	(
 		name: "dirt",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/dirt.png"],
 		},
@@ -21,7 +21,7 @@
 	), 
 	(
 		name: "stone",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/stone.png"],
 		},
@@ -30,7 +30,7 @@
 	),
 	(
 		name: "cobblestone",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/cobblestone.png"],
 		},
@@ -39,7 +39,7 @@
 	),
 	(
 		name: "sand",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/sand.png"],
 		},
@@ -48,7 +48,7 @@
 	),
 	(
 		name: "grass_side",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/grass_side.png"],
 		},
@@ -57,7 +57,7 @@
 	),
 	(
 		name: "grass",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/grass.png"],
 		},
@@ -66,7 +66,7 @@
 	),
 	(
 		name: "log_side",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/log_side.png"],
 		},
@@ -75,7 +75,7 @@
 	),
 	(
 		name: "log_top",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/log_top.png"],
 		},
@@ -84,7 +84,7 @@
 	),
 	(
 		name: "planks",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/planks.png"],
 		},
@@ -93,7 +93,7 @@
 	),
 	(
 		name: "leaves",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/blockfaces/leaves.png"],
 		},
@@ -102,7 +102,7 @@
 	),
 	(
 		name: "glass",
-		graph: "../graphs/default.ron",
+		polygon_graph: "../graphs/default.ron",
 		textures: {
 			"albedo": ["../not_for_git/InventivetalentDev/assets/minecraft/textures/blocks/glass.png"],
 		},

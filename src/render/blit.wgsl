@@ -31,4 +31,5 @@ var r_sampler: sampler;
 @fragment
 fn fs_main(vertex: VertexOutput) -> @location(0) vec4<f32> {
     return textureSample(r_color, r_sampler, vertex.tex_coords);
+    // return vec4<f32>(vertex.tex_coords, 0.0, 0.5);
 }

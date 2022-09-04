@@ -1,0 +1,20 @@
+(
+    name: "acceleration test",
+    base: Compute((
+        language: Glsl,
+        path: "voxel_scene.comp",
+        entry: "main",
+    )),
+    bind_groups: {
+		0: {
+            0: ("camera", UniformBuffer(([Compute]))),
+		},
+        1: {
+            0: ("colour", StorageTexture(([Compute]), (format: Rgba8Unorm, dimension: D2, count: 1, sample_type: Float), WriteOnly)),
+        },
+        2: {
+            0: ("voxel_scene_data", StorageBuffer(([Compute]), true)),
+            1: ("voxel_scene_uniform", UniformBuffer(([Compute]))),
+        }
+	},
+)

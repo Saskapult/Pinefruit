@@ -13,21 +13,29 @@ use wgpu::util::DeviceExt;
 use anyhow::*;
 
 
-/*
-A graph is a DAG of nodes which mutate a context
-There is incredible potential for optimization here
-(intermediate resource creation, resource aliasing, etc)
-You will not use any of those optimizations here
-Except for the necessary ones, as rendering must be fast
-Just make it work please
-*/
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ResourceType {
+	Texture(ResourceDescriptor2),
+	Buffer(ResourceDescriptor2),
+
+	Meshes(VertexProperties, InstanceProperties),
+	
+	MaterialTextures((String, ResourceDescriptor2)),
+	MaterialFloats((String, ResourceDescriptor2)),
+
+	Float,
+	Float3,
+	FloatVec,
+}
 
 
 
 pub trait RunnableNode : Send + Sync {
 	fn name(&self) -> &String;
-	fn inputs(&self) -> &HashSet<(String, GraphResourceType)>;
-	fn outputs(&self) -> &HashSet<(String, GraphResourceType)>;
+	fn inputs(&self) -> &HashMap<String, Vec<ResourceType>>;
+	fn outputs(&self) -> &HashMap<String, Vec<ResourceType>>;
 	// update should pull mesh data and create texture data for run()
 	// For performance it would be best to only check to reate the resources when initialized or resolution is changed, but I am too lazy
 	fn update(&mut self, device: &wgpu::Device, graph_resources: &mut GraphResources, model_resources: &mut ModelQueuesResource, gpu_data: &mut GpuData);
@@ -73,7 +81,7 @@ impl GraphsContext {
 		let model_inputs: HashSet<(Vec<InstanceProperty>, Vec<VertexProperty>, BindGroupFormat)> = self.graphs.iter().flat_map(|graph| {
 			graph.inputs().iter().filter_map(|(_, grt)| {
 				match grt {
-					GraphResourceType::Models(model_input) => Some(model_input.clone()),
+					ResourceType::Models(model_input) => Some(model_input.clone()),
 					_ => None,
 				}
 			})
@@ -153,45 +161,30 @@ impl GraphsContext {
 			);
 		}
 
-		// Copy output to destination
-		let output_texture = self.graph_resources.get_texture(
-			self.graph_resources.get_index_of_id(&"final".to_string(), GraphResourceType::Texture).unwrap()
-		);
-		encoder.copy_texture_to_texture(
-			wgpu::ImageCopyTextureBase { 
-				texture: &output_texture.texture, 
-				mip_level: 0, 
-				origin: wgpu::Origin3d::ZERO, 
-				aspect: wgpu::TextureAspect::All, 
-			}, 
-			wgpu::ImageCopyTextureBase { 
-				texture: dest, 
-				mip_level: 0, 
-				origin: wgpu::Origin3d::ZERO, 
-				aspect: wgpu::TextureAspect::All, 
-			},
-			output_texture.size,
-		);
+		// // Copy output to destination
+		// let output_texture = self.graph_resources.get_texture(
+		// 	self.graph_resources.get_index_of_id(&"final".to_string(), ResourceType::Texture).unwrap()
+		// );
+		// encoder.copy_texture_to_texture(
+		// 	wgpu::ImageCopyTextureBase { 
+		// 		texture: &output_texture.texture, 
+		// 		mip_level: 0, 
+		// 		origin: wgpu::Origin3d::ZERO, 
+		// 		aspect: wgpu::TextureAspect::All, 
+		// 	}, 
+		// 	wgpu::ImageCopyTextureBase { 
+		// 		texture: dest, 
+		// 		mip_level: 0, 
+		// 		origin: wgpu::Origin3d::ZERO, 
+		// 		aspect: wgpu::TextureAspect::All, 
+		// 	},
+		// 	output_texture.size,
+		// );
 	}
 }
 
 
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
-pub enum GraphResourceType {
-	Resources(BindGroupFormat),
-	Meshes(VertexProperties, InstanceProperties),
-	Materials(BindGroupFormat),
-	Models(ShaderInput), // Don't use this it's bad
-	Light(Vec<LightType>),
-	Buffer,
-	Texture,
-	TextureArray,
-	ArrayTexture,
-	Float,
-	Float3,
-	FloatVec,
-}
 
 
 
@@ -223,142 +216,6 @@ impl GraphResources {
 		}
 	}
 
-	pub fn get_index_of_id(&self, id: &String, resource_type: GraphResourceType) -> Option<usize> {
-		let holder = match resource_type {
-			GraphResourceType::Texture => &self.textures_index_of_id,
-			GraphResourceType::Buffer => &self.buffers_index_of_id,
-			_ => panic!(),
-		};
-		if holder.contains_key(id) {
-			Some(holder[id])
-		} else {
-			None
-		}
-	}
-
-	pub fn get_texture(&self, i: usize) -> &BoundTexture {
-		&self.textures[i]
-	}
-
-	pub fn insert_texture(&mut self, t: BoundTexture, id: &String) -> usize {
-		let idx = self.textures.len();
-		debug!("Inserting texture '{}' as '{}' at index {idx}", &t.name, id);
-		if let Some(old_texture) = self.textures_index_of_id.insert(id.clone(), idx) {
-			warn!("Replaced texture {id} ({old_texture:?} -> {idx:?})");
-		}
-		self.textures.push(t);
-		idx
-	}
-
-	pub fn get_buffer(&self, i: usize) -> &wgpu::Buffer {
-		&self.buffers[i]
-	}
-
-	pub fn insert_buffer(&mut self, b: wgpu::Buffer, id: &String) -> usize {
-		let idx = self.buffers.len();
-		self.buffers_index_of_id.insert(id.clone(), idx);
-		self.buffers.push(b);
-		idx
-	}
-
-	/// Creates a bind group containing all of the specified resources.
-	/// May fail if a requested resource does not exist.
-	pub fn create_resources_group(
-		&mut self, 
-		device: &wgpu::Device,
-		format: &BindGroupFormat, 
-		gpu_data: &mut GpuData,
-	) -> Result<usize> {
-		debug!("Creating resources bg for '{}'", format);
-
-		// The default sampler, used for every requested sampler
-		// Todo: make this customizable
-		let sampler_thing = device.create_sampler(&wgpu::SamplerDescriptor {
-			address_mode_u: wgpu::AddressMode::Repeat,
-			address_mode_v: wgpu::AddressMode::Repeat,
-			address_mode_w: wgpu::AddressMode::Repeat,
-			..Default::default()
-		});
-
-		let mut bindings = Vec::new();
-		for (&i, entry_format) in &format.entry_formats {
-			let resource_id = &entry_format.resource_usage;
-			match entry_format.binding_type {
-				BindingType::Buffer => {
-					if self.buffers_index_of_id.contains_key(resource_id) {
-						let idx = self.buffers_index_of_id[resource_id];
-						let buffer = &self.buffers[idx];
-						bindings.push(wgpu::BindGroupEntry {
-							binding: i,
-							resource: buffer.as_entire_binding(),
-						});
-					} else {
-						error!("No buffer found for resource id '{}'", resource_id);
-						panic!("Tried to retreive nonexistent resource buffer")
-					}
-				},
-				BindingType::Texture => {
-					if self.textures_index_of_id.contains_key(resource_id) {
-						let idx = self.textures_index_of_id[resource_id];
-						let texture = &self.textures[idx];
-						bindings.push(wgpu::BindGroupEntry {
-							binding: i,
-							resource: wgpu::BindingResource::TextureView(&texture.view),
-						});
-					} else {
-						error!("No texture found for resource id '{}'", resource_id);
-						panic!("Tried to retreive nonexistent resource buffer")
-					}
-				}
-				BindingType::Sampler => {
-					bindings.push(wgpu::BindGroupEntry {
-						binding: i,
-						resource: wgpu::BindingResource::Sampler(&sampler_thing),
-					});
-				},
-				_ => todo!("Resource group binding type is not yet implemented"),
-			}
-		}
-
-		let layout_idx = match gpu_data.shaders.bind_group_layout_index_from_bind_group_format(format) {
-			Some(idx) => idx,
-			None => gpu_data.shaders.bind_group_layout_create(format),
-		};
-		let layout = gpu_data.shaders.bind_group_layout_index(layout_idx);
-
-		let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-			entries: &bindings[..],
-			layout,
-			label: Some(&*format!("resources group with format '{}'", format)),
-		});
-
-		let idx = self.resources_bgs.len();
-		self.resource_bg_index_of_format.insert(format.clone(), idx);
-		self.resources_bgs.push(bind_group);
-		Ok(idx)
-	}
-
-	pub fn resource_bg(&self, i: usize) -> &wgpu::BindGroup {
-		&self.resources_bgs[i]
-	}
-
-	/// Find index of resource bind group if it exists
-	pub fn resource_bg_of_format(&self, bgf: &BindGroupFormat) -> Option<usize> {
-		if self.resource_bg_index_of_format.contains_key(bgf) {
-			Some(self.resource_bg_index_of_format[bgf])
-		} else {
-			None
-		}
-	}
-
-	/// Find index of resource bind group, create it if it doesn't exist
-	pub fn resource_bg_of_format_create(&mut self, device: &wgpu::Device, bgf: &BindGroupFormat, gpu_data: &mut GpuData) -> Result<usize> {
-		if self.resource_bg_index_of_format.contains_key(bgf) {
-			Ok(self.resource_bg_index_of_format[bgf])
-		} else {
-			Ok(self.create_resources_group(device, bgf, gpu_data)?)
-		}
-	}
 }
 
 
@@ -370,8 +227,8 @@ pub struct GraphNode {
 	nodes: Vec<Box<dyn RunnableNode>>,
 	order: Vec<usize>,
 	
-	inputs: HashSet<(String, GraphResourceType)>,
-	outputs: HashSet<(String, GraphResourceType)>,
+	inputs: HashSet<(String, ResourceType)>,
+	outputs: HashSet<(String, ResourceType)>,
 
 	material_indices: Vec<Vec<usize>>,
 	material_format_indices: HashMap<BindGroupFormat, usize>,
@@ -411,7 +268,7 @@ impl GraphNode {
 	}
 
 	/// Calculates the inputs/outputs of this graph (is not inexpensive, don't use it often)
-	pub fn calculate_io(&self) -> [HashSet<(String, GraphResourceType)>; 2] {
+	pub fn calculate_io(&self) -> [HashSet<(String, ResourceType)>; 2] {
 
 		let mut collected_inputs = HashSet::new();
 		let mut collected_outputs = HashSet::new();
@@ -436,11 +293,11 @@ impl RunnableNode for GraphNode {
 		&self.name
 	}
 	
-	fn inputs(&self) -> &HashSet<(String, GraphResourceType)> {
+	fn inputs(&self) -> &HashSet<(String, ResourceType)> {
 		&self.inputs
 	}
 	
-	fn outputs(&self) -> &HashSet<(String, GraphResourceType)> {
+	fn outputs(&self) -> &HashSet<(String, ResourceType)> {
 		&self.outputs
 	}
 	
@@ -536,10 +393,10 @@ struct ShaderNode {
 	// The queue index (if initialized) (if necessary)
 	render_queue: Option<QueueType>,
 
-	inputs: HashSet<(String, GraphResourceType)>,
+	inputs: HashSet<(String, ResourceType)>,
 	depth: Option<String>,
 	aliases: HashMap<String, String>,
-	outputs: HashSet<(String, GraphResourceType)>,
+	outputs: HashSet<(String, ResourceType)>,
 
 	fugg_buff: Option<wgpu::Buffer>,
 }
@@ -551,7 +408,7 @@ impl ShaderNode {
 	) -> Result<Self> {
 		let mut inputs = spec.render_inputs.clone();
 		if let Some(depth_id) = &spec.depth {
-			inputs.insert((depth_id.clone(), GraphResourceType::Texture));
+			inputs.insert((depth_id.clone(), ResourceType::Texture));
 		}
 
 		let shader_path = folder_context.join(&spec.shader).canonicalize()
@@ -561,7 +418,7 @@ impl ShaderNode {
 			Some(idx) => idx,
 			None => shaders.register_path(&shader_path),
 		};
-		let shader = shaders.index(shader_idx);
+		let shader = shaders.shader_index(shader_idx);
 
 		/*
 
@@ -681,11 +538,11 @@ impl RunnableNode for ShaderNode {
 		&self.name
 	}
 
-	fn inputs(&self) -> &HashSet<(String, GraphResourceType)> {
+	fn inputs(&self) -> &HashSet<(String, ResourceType)> {
 		&self.inputs
 	}
 	
-	fn outputs(&self) -> &HashSet<(String, GraphResourceType)> {
+	fn outputs(&self) -> &HashSet<(String, ResourceType)> {
 		&self.outputs
 	}
 	
@@ -798,7 +655,7 @@ impl RunnableNode for ShaderNode {
 		debug!("Running shader node {}", &self.name);
 		encoder.push_debug_group(&*format!("Shader node '{}'", &self.name));
 		
-		let shader = data.shaders.index(self.shader_idx);
+		let shader = data.shaders.shader_index(self.shader_idx);
 
 		let colour_attachments = self.colour_attachments.iter().cloned().map(|(idx, store)| {
 			Some(wgpu::RenderPassColorAttachment {
@@ -912,12 +769,12 @@ struct ShaderNodeSpecification {
 	pub name: String,
 	pub shader: PathBuf,
 	// Things pulled from global data and put into this shader's input places
-	pub render_inputs: HashSet<(String, GraphResourceType)>,	// ("resource name", resource type)
+	pub render_inputs: HashSet<(String, ResourceType)>,	// ("resource name", resource type)
 	pub depth: Option<String>,
 	// When assigning resources to the shader inputs we look to see if the input name exists as an alias
 	// If no match is found we look through inputs as a fallback, avoiding manadtory overspecification
 	pub aliases: HashMap<String, String>,	// ("name in resources", "name in shader")
-	pub outputs: HashSet<(String, GraphResourceType)>,
+	pub outputs: HashSet<(String, ResourceType)>,
 }
 
 
@@ -944,8 +801,8 @@ pub struct TextureNode {
 
 	texture_idx: usize,
 
-	inputs: HashSet<(String, GraphResourceType)>,
-	outputs: HashSet<(String, GraphResourceType)>,
+	inputs: HashSet<(String, ResourceType)>,
+	outputs: HashSet<(String, ResourceType)>,
 }
 impl TextureNode {
 	pub fn from_spec(spec: &TextureNodeSpecification) -> Self {
@@ -957,7 +814,7 @@ impl TextureNode {
 			resolution: spec.resolution,
 			fill_with: spec.fill_with.clone(),
 			inputs: HashSet::new(),
-			outputs: [(spec.resource_name.clone(), GraphResourceType::Texture)].iter().cloned().collect::<HashSet<_>>(),
+			outputs: [(spec.resource_name.clone(), ResourceType::Texture)].iter().cloned().collect::<HashSet<_>>(),
 			texture_idx: 0,
 		}
 	}
@@ -993,11 +850,11 @@ impl RunnableNode for TextureNode {
 		&self.name
 	}
 	
-	fn inputs(&self) -> &HashSet<(String, GraphResourceType)> {
+	fn inputs(&self) -> &HashSet<(String, ResourceType)> {
 		&self.inputs
 	}
 	
-	fn outputs(&self) -> &HashSet<(String, GraphResourceType)> {
+	fn outputs(&self) -> &HashSet<(String, ResourceType)> {
 		&self.outputs
 	}
 
@@ -1159,7 +1016,7 @@ struct PolygonShaderNode {
 	
 	bind_group_things: Vec<Option<(ResourceLocation, BindGroupFormat)>>,
 	// Stored indices to bind group data
-	bind_group_indices: Vec<Option<(GraphResourceType, usize)>>,
+	bind_group_indices: Vec<Option<(ResourceType, usize)>>,
 
 	// Index of texture, should store bool
 	colour_attachments: Vec<(usize, bool)>,
@@ -1167,10 +1024,10 @@ struct PolygonShaderNode {
 	// The queue index (if initialized) (if necessary)
 	
 
-	inputs: HashSet<(String, GraphResourceType)>,
+	inputs: HashSet<(String, ResourceType)>,
 	depth: Option<String>,
 	aliases: HashMap<String, String>,
-	outputs: HashSet<(String, GraphResourceType)>,
+	outputs: HashSet<(String, ResourceType)>,
 
 	fugg_buff: Option<wgpu::Buffer>,
 }
@@ -1182,7 +1039,7 @@ impl PolygonShaderNode {
 	) -> Result<Self> {
 		let mut inputs = spec.render_inputs.clone();
 		if let Some(depth_id) = &spec.depth {
-			inputs.insert((depth_id.clone(), GraphResourceType::Texture));
+			inputs.insert((depth_id.clone(), ResourceType::Texture));
 		}
 
 		let shader_path = folder_context.join(&spec.shader).canonicalize()
@@ -1191,7 +1048,7 @@ impl PolygonShaderNode {
 			Some(idx) => idx,
 			None => shaders.register_path(&shader_path),
 		};
-		let shader = shaders.index(shader_idx);
+		let shader = shaders.shader_index(shader_idx);
 
 		/*
 		match shader.pipeline {
@@ -1327,11 +1184,11 @@ impl RunnableNode for PolygonShaderNode {
 		&self.name
 	}
 
-	fn inputs(&self) -> &HashSet<(String, GraphResourceType)> {
+	fn inputs(&self) -> &HashSet<(String, ResourceType)> {
 		&self.inputs
 	}
 	
-	fn outputs(&self) -> &HashSet<(String, GraphResourceType)> {
+	fn outputs(&self) -> &HashSet<(String, ResourceType)> {
 		&self.outputs
 	}
 	
@@ -1445,7 +1302,7 @@ impl RunnableNode for PolygonShaderNode {
 		debug!("Running shader node {}", &self.name);
 		encoder.push_debug_group(&*format!("Shader node '{}'", &self.name));
 		
-		let shader = data.shaders.index(self.shader_idx);
+		let shader = data.shaders.shader_index(self.shader_idx);
 
 		let colour_attachments = self.colour_attachments.iter().cloned().map(|(idx, store)| {
 			Some(wgpu::RenderPassColorAttachment {

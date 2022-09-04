@@ -284,6 +284,20 @@ pub fn dynamic_physics_system(
 }
 
 
+// #[derive(Debug, Component)]
+// pub struct DirectionalGravityComponent {
+// 	pub gravity: Vector3<f32>,
+// }
+// pub fn directional_gravity_system(
+// 	gravity_components: View<DirectionalGravityComponent>,
+// 	dynamic_physics_components: View<DynamicPhysicsComponent>,
+// ) {
+// 	for (gravity, c) in (&gravity_components, dynamic_physics_components).iter() {
+// 		todo!("foce based on mass and stuff");
+// 	}
+// }
+
+
 // // Things affected by gravity
 // #[derive(Component, Debug)]
 // pub struct GravityComponent {

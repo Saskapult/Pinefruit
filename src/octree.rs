@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use nalgebra::*;
 use crate::rays::AABB;
 
-
+/// dd delete line
+/// p paste
+/// ci( change inside ()
 
 
 /// An octree which can holds Option<T>.
@@ -604,101 +606,6 @@ mod tests {
 		assert_range([2,2,0], [3,3,1], None); // ppn
 		assert_range([2,2,2], [3,3,3], None); // ppp
 	}
-
-	#[test]
-	fn test_octree_chunk_sizes() {
-		const CHUNK_SIZE: u32 = 32;
-		const WORLD_SQUARE_RADIUS: i32 = 2;
-
-		let mut chunk = crate::world::Chunk::new([CHUNK_SIZE; 3]);
-		chunk.contents = (0..(32*32*32)).map(|_| {
-			let i = (rand::random::<f32>() * 8.0).floor() as usize;
-			if i > 0 {
-				crate::world::Voxel::Block(i-1)
-			} else {
-				crate::world::Voxel::Empty
-			}
-		}).collect::<Vec<_>>();
-
-		let octree = chunk_to_octree(&chunk).unwrap();
-
-		let tgen = crate::world::TerrainGenerator::new(0);
-		let chunk2 = tgen.chunk_base_3d(
-			[0, -1, 0],
-			crate::world::Chunk::new([CHUNK_SIZE; 3]),
-			crate::world::Voxel::Block(0),
-		);
-		let octree2 = chunk_to_octree(&chunk2).unwrap();
-
-		let chunk3 = tgen.chunk_base_3d(
-			[0, 3, 0],
-			crate::world::Chunk::new([CHUNK_SIZE; 3]),
-			crate::world::Voxel::Block(0),
-		);
-		let octree3 = chunk_to_octree(&chunk3).unwrap();
-
-		let theory_chunk_size: usize = CHUNK_SIZE.pow(3) as usize * std::mem::size_of::<crate::world::Voxel>() + std::mem::size_of::<crate::world::Chunk>();
-		println!("Array chunk size:		{:>16} bytes ({:.2}%)", theory_chunk_size, 100.0);
-
-		let max_octree_size = 
-		std::mem::size_of::<Octree<usize>>() 
-		+ 
-		(8_usize.pow(CHUNK_SIZE.log2() + 1) - 1) * (std::mem::size_of::<OctreeNode>() + std::mem::size_of::<usize>());
-		let op = max_octree_size as f32 / theory_chunk_size as f32 * 100.0;
-		println!("Max octree size:		{:>16} bytes ({:.2}%)", max_octree_size, op);
-
-		let ors = octree.get_size();
-		let orsp = ors as f32 / theory_chunk_size as f32 * 100.0;
-		println!("With random(8) size:	{:>16} bytes ({:.2}%)", ors, orsp);
-
-		let ots = octree2.get_size();
-		let otsp = ots as f32 / theory_chunk_size as f32 * 100.0;
-		println!("With terrain size:	{:>16} bytes ({:.2}%)", ots, otsp);
-
-		let oes = octree3.get_size();
-		let oesp = oes as f32 / theory_chunk_size as f32 * 100.0;
-		println!("Empty size:			{:>16} bytes ({:.2}%)", oes, oesp);
-
-		// return;
-
-		// let coordinates = (-WORLD_SQUARE_RADIUS..=WORLD_SQUARE_RADIUS).flat_map(|x| {
-		// 	(-WORLD_SQUARE_RADIUS..=WORLD_SQUARE_RADIUS).flat_map(move |y| {
-		// 		(-WORLD_SQUARE_RADIUS..=WORLD_SQUARE_RADIUS).map(move |z| {
-		// 			[x, y, z]
-		// 		})
-		// 	})
-		// }).collect::<Vec<_>>();
-
-		// use rayon::prelude::*;
-		// let chunks = coordinates.par_iter().map(|&cp| {
-		// 	let c = tgen.chunk_base_3d(
-		// 		cp,
-		// 		crate::world::Chunk::new([CHUNK_SIZE; 3]),
-		// 		crate::world::Voxel::Block(0),
-		// 	);
-		// 	tgen.cover_chunk(
-		// 		c, 
-		// 		cp, 
-		// 		crate::world::Voxel::Block(1),
-		// 		crate::world::Voxel::Block(2),
-		// 		3,
-		// 	)
-		// }).collect::<Vec<_>>();
-
-		// let octrees = chunks.par_iter().map(|c| {
-		// 	chunk_to_octree(c).unwrap()
-		// }).collect::<Vec<_>>();
-
-		// let total_chunks_size = theory_chunk_size * coordinates.len();
-		// let total_octree_size: usize = octrees.iter().map(|o| o.get_size()).sum();
-
-		// println!("---");
-		// println!("Map arrays size:		{:>16} bytes ({:.2}%)", total_chunks_size, 100.0);
-		// println!("Map octrees size:		{:>16} bytes ({:.2}%)", total_octree_size, total_octree_size as f32 / total_chunks_size as f32 * 100.0);
-
-		// assert!(chunk == decoded_chunk);
-	}
-
 
 	#[test]
 	fn test_octree_get() {

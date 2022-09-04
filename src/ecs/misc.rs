@@ -1,7 +1,7 @@
-use std::{sync::{RwLock, Arc}, time::Instant};
+use std::time::Instant;
 use nalgebra::*;
 use shipyard::*;
-use crate::{mesh::MeshManager, texture::TextureManager};
+
 
 
 #[derive(Unique)]
@@ -62,14 +62,4 @@ impl TransformComponent {
 	pub fn matrix(&self) -> Matrix4<f32> {
 		Matrix4::new_nonuniform_scaling(&self.scale) * self.rotation.to_homogeneous() * Matrix4::new_translation(&self.position)
 	}
-}
-
-
-#[derive(Unique, Debug, Clone)]
-pub struct MeshResource {
-	pub meshes: Arc<RwLock<MeshManager>>,
-}
-#[derive(Unique, Debug, Clone)]
-pub struct TextureResource {
-	pub textures: Arc<RwLock<TextureManager>>,
 }

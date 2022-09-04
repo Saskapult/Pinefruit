@@ -1,9 +1,9 @@
-use std::{time::Duration, path::{Path, PathBuf}, sync::{Mutex, Arc}};
+use std::{time::Duration, path::{Path, PathBuf}, sync::{Mutex, Arc}, cmp::Ordering};
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use image::DynamicImage;
 use anyhow::*;
 use std::process::Command;
 use splines::*;
-use std::sync::mpsc::{channel, Sender, Receiver};
 
 
 
@@ -14,12 +14,12 @@ pub struct DurationHolder {
 	num_to_hold: usize,
 	durations: Vec<Duration>,
 	durations_index: usize,
-	pub sender: Sender<Duration>,
+	sender: Sender<Duration>,
 	receiver: Receiver<Duration>,
 }
 impl DurationHolder {
 	pub fn new(num_to_hold: usize) -> Self {
-		let (sender, receiver) = channel();
+		let (sender, receiver) = unbounded();
 		Self {
 			num_to_hold,
 			durations: Vec::with_capacity(num_to_hold),
@@ -44,14 +44,22 @@ impl DurationHolder {
 		self.num_to_hold = new_size;
 	}
 
-	// Bad because it bypasses timings
-	pub fn get_things(&mut self) {
+	pub fn record(&self, duration: Duration) {
+		self.sender.send(duration).unwrap()
+	}
+
+	pub fn record_later(&self) -> impl FnOnce(Duration) {
+		let sender = self.sender.clone();
+		move |d: Duration| sender.send(d).unwrap()
+	}
+
+	pub fn update(&mut self) {
 		for d in self.receiver.try_iter().collect::<Vec<_>>() {
-			self.record(d);
+			self.record_internal(d);
 		}
 	}
 
-	pub fn record(&mut self, duration: Duration) {
+	fn record_internal(&mut self, duration: Duration) {
 		self.durations_index = (self.durations_index + 1) % self.num_to_hold;
 		if self.durations_index < self.durations.len() {
 			self.durations[self.durations_index] = duration;
@@ -94,35 +102,9 @@ impl DurationHolder {
 }
 
 
-// pub trait RapierConvertable<T> {
-// 	fn to(input: T) -> T;
-// 	fn from(input: T) -> T;
-// }
-
-// impl<V> RapierConvertable<V> for [V; 3] {
-// 	fn to(mut input: [V; 3]) -> [V; 3] {
-// 		input
-// 	}
-// 	fn from(mut input: [V; 3]) -> [V; 3] {
-// 		input
-// 	}
-// }
-
-// Rapier uses a y-up coordinate system
-/// Switches y for z
-pub fn k_tofrom_rapier(mut input: nalgebra::Vector3<f32>) -> nalgebra::Vector3<f32> {
-	let y = input[1];
-	input[1] = input[2];
-	input[2] = y;
-	input
-}
-
-
 
 /// Shows an image by saving it to tmp and opening it with gwenview
-// Todo: Make an iterator of prorams to try?
-
-
+// Todo: Make a list of prorams to try?
 pub fn show_image(image: DynamicImage) -> Result<()> {
 	const IMAGE_VIEWER: &str = "gwenview";
 	const OVERWRITE_T: Duration = Duration::from_secs(10);
@@ -313,6 +295,7 @@ impl<T: std::fmt::Debug> PTCT<T> {
 
 
 /// Maybe. Better. Pollable. Threadish. Checker. Thing.
+/// Essentially a oneshot channel.
 #[derive(Debug)]
 pub struct MBPTCT<T: std::fmt::Debug> {
 	result: Option<T>,
@@ -320,7 +303,7 @@ pub struct MBPTCT<T: std::fmt::Debug> {
 }
 impl<T: std::fmt::Debug> MBPTCT<T> {
 	pub fn new() -> (Self, Sender<T>) {
-		let (sender, receiver) = channel();
+		let (sender, receiver) = bounded(1);
 		let s = Self { 
 			result: None,
 			receiver,
@@ -338,6 +321,37 @@ impl<T: std::fmt::Debug> MBPTCT<T> {
 	pub fn take(self) -> T {
 		self.result.unwrap()
 	}
+}
+
+
+#[derive(Debug, PartialEq, Eq, Default, Clone, Copy)]
+pub struct KGeneration(u64);
+impl KGeneration {
+	pub fn new() -> Self {
+		Self(0)
+	}
+	// If generation difference is greater than this we assume a wrap occurred
+	// At u64::MAX - 64 we allow 64 generations to be missed before things get buggy
+	pub const WRAP_THRESHOLD: u64 = u64::MAX - 64;
+	pub fn increment(&mut self) {
+		self.0 = self.0.wrapping_add(1);
+	}
+}
+impl Ord for KGeneration {
+	fn cmp(&self, other: &Self) -> Ordering {
+		let gd = self.0.abs_diff(other.0);
+		let o = self.0.cmp(&other.0);
+		if gd >= Self::WRAP_THRESHOLD {
+			o.reverse()
+		} else {
+			o
+		}
+	}
+}
+impl PartialOrd for KGeneration {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 
@@ -370,6 +384,16 @@ pub fn insertion_sort<T: PartialOrd>(data: &mut [T]) {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn test_generation() {
+		let g1 = KGeneration(u64::MAX - 24);
+		let mut g2 = KGeneration(u64::MAX);
+
+		assert!(g1 < g2);
+		g2.increment();
+		assert!(g1 < g2);
+	}
 
 	#[test]
 	fn test_sort() {

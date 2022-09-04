@@ -194,7 +194,7 @@ impl std::fmt::Display for Mesh {
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MeshManager {
 	meshes: Arena<Mesh>,
 	index_name: HashMap<String, Index>,
@@ -218,6 +218,17 @@ impl MeshManager {
 			self.index_path.insert(path, idx);
 		}
 		idx
+	}
+
+	pub fn remove(&mut self, i: Index) -> Option<Mesh> {
+		let m = self.meshes.remove(i);
+		if let Some(m) = m.as_ref() {
+			if let Some(p) = m.path.as_ref() {
+				self.index_path.remove(p);
+			}
+			self.index_name.remove(&m.name);
+		}
+		m
 	}
 
 	pub fn index(&self, i: Index) -> Option<&Mesh> {

@@ -1,8 +1,5 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use crate::render::*;
-use crate::mesh::*;
-use crate::texture::*;
-use crate::material::*;
 
 
 pub enum DeviceOptions {
@@ -51,30 +48,24 @@ pub fn acquire_device(
 
 
 /// A thing that stores data and stuff on the GPU.
-pub struct GpuData {
+pub struct GraphicsData {
 	pub textures: BoundTextureManager,
 	pub shaders: ShaderManager,
-	pub materials: BoundMaterialManager,
 	pub meshes: BoundMeshManager,
 }
-impl GpuData {
+impl GraphicsData {
 	pub fn new(
 		device: &Arc::<wgpu::Device>, 
 		queue: &Arc::<wgpu::Queue>,
-		textures_data_manager: &Arc<RwLock<TextureManager>>,
-		meshes_data_manager: &Arc<RwLock<MeshManager>>,
-		materials_data_manager: &Arc<RwLock<MaterialManager>>,
 	) -> Self {
 		let device = device.clone();
 		let queue = queue.clone();
-		let textures = BoundTextureManager::new(&device, &queue, textures_data_manager);
-		let materials = BoundMaterialManager::new(&device, &queue, materials_data_manager);
-		let meshes = BoundMeshManager::new(&device, &queue, meshes_data_manager);
+		let textures = BoundTextureManager::new(&device, &queue);
+		let meshes = BoundMeshManager::new(&device, &queue);
 		let shaders = ShaderManager::new(&device, &queue);
 
 		Self {
 			textures,
-			materials,
 			meshes,
 			shaders,
 		}

@@ -12,19 +12,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum GenerationError {
-	#[error("a chunk ({chunk_position:?}) containing data requisite for generation was not loaded to the minimum stage of {stage_min:?}")]
-	ChunkStageLtError {
-		chunk_position: [i32; 3], 
-		stage_min: GenerationStage,
-	},
-	#[error("a chunk ({chunk_position:?}) should be of stage {stage_desired:?} but is of stage {stage_current:?}")]
-	ChunkStageNeError {
-		chunk_position: [i32; 3], 
-		stage_current: GenerationStage,
-		stage_desired: GenerationStage,
-	},
-	#[error("this error is generic, if you see this please remove it")]
-	GenericError,
+	#[error("failed to find block entry for '{0}'")]
+	BlockNotFoundError(String),
 }
 
 
