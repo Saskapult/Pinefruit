@@ -101,10 +101,10 @@ pub fn input_control_system(
 			&input.input,
 			&control.map,
 		);
-		for cid in control.data.control_presses.keys() {
-			let name = control.map.cid_name_map.get(&cid).unwrap();
-			println!("\t{cid} - {name}");
-		}
+		// for cid in control.data.control_presses.keys() {
+		// 	let name = control.map.cid_name_map.get(&cid).unwrap();
+		// 	println!("\t{cid} - {name}");
+		// }
 		// println!("-");
 	}
 }

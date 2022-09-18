@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 use crossbeam_channel::{Receiver, Sender, unbounded};
+use nalgebra::Vector3;
 use shipyard::*;
 use crate::octree::{Octree, chunk_to_octree};
 use crate::world::*;
@@ -111,11 +112,21 @@ impl MapResource {
 
 
 
+#[derive(Debug, Component)]
+pub struct MapLoadingComponent {
+	pub radius: i32,
+}
+impl MapLoadingComponent {
+	pub fn new(radius: i32) -> Self {
+		Self { radius, }
+	}
+}
 const MAP_LOAD_RADIUS: i32 = MAP_MODEL_RADIUS + 2;
 pub fn map_loading_system(
 	blocks: UniqueView<BlockResource>,
 	mut map: UniqueViewMut<MapResource>,
-	cameras: View<CameraComponent>,
+	
+	map_loaders: View<MapLoadingComponent>,
 	transforms: View<TransformComponent>,
 ) { 
 	let loading_st = std::time::Instant::now();
@@ -123,9 +134,9 @@ pub fn map_loading_system(
 	map.map.receive_generated_chunks();
 
 	let mut chunks_to_load = HashSet::new();
-	for (_, transform_c) in (&cameras, &transforms).iter() {
-		let camera_chunk = map.map.point_chunk(&transform_c.position);
-		let cposs = voxel_sphere(camera_chunk, MAP_LOAD_RADIUS);
+	for (loader, transform) in (&map_loaders, &transforms).iter() {
+		let camera_chunk = map.map.point_chunk(&transform.position);
+		let cposs = voxel_sphere(camera_chunk, loader.radius);
 		for cpos in cposs {
 			chunks_to_load.insert(cpos);
 		}			
@@ -133,9 +144,9 @@ pub fn map_loading_system(
 
 	let mut chunks_to_unload = Vec::new();
 	for chunk_position in map.chunk_meshes.keys() {
-		let should_remove = (&cameras, &transforms).iter().any(|(_, transform)| {
+		let should_remove = (&map_loaders, &transforms).iter().any(|(loader, transform)| {
 			let camera_chunk = map.map.point_chunk(&transform.position);
-			!within_voxel_sphere(camera_chunk, MAP_LOAD_RADIUS+1, *chunk_position)
+			!within_voxel_sphere(camera_chunk, loader.radius+1, *chunk_position)
 		});
 		if should_remove {
 			chunks_to_unload.push(*chunk_position)
@@ -363,11 +374,19 @@ pub fn map_collider_system(
 
 
 
+#[derive(Debug, Component)]
+pub struct MapOctreeLoadingComponent {
+	pub radius: i32,
+}
+impl MapOctreeLoadingComponent {
+	pub fn new(radius: i32) -> Self {
+		Self { radius, }
+	}
+}
 // Makes octrees, also puts them on the gpu
-const MAP_OCTREE_RADIUS: i32 = MAP_MODEL_RADIUS;
 pub fn map_octree_system(
 	mut map: UniqueViewMut<MapResource>,
-	cameras: View<CameraComponent>,
+	loaders: View<MapOctreeLoadingComponent>,
 	transforms: View<TransformComponent>,
 	mut voxel_data: UniqueViewMut<VoxelRenderingResource>,
 	gpu: UniqueView<GraphicsHandleResource>,
@@ -375,19 +394,19 @@ pub fn map_octree_system(
 	let map = &mut *map;
 
 	let mut chunks_to_tree = HashSet::new();
-	for (_, transform_c) in (&cameras, &transforms).iter() {
+	for (loader, transform_c) in (&loaders, &transforms).iter() {
 		let camera_chunk = map.map.point_chunk(&transform_c.position);
-		let cposs = voxel_sphere(camera_chunk, MAP_MODEL_RADIUS);
+		let cposs = voxel_sphere(camera_chunk, loader.radius);
 		for cpos in cposs {
 			chunks_to_tree.insert(cpos);
-		}				
+		}
 	}
 
 	let mut chunks_to_untree = Vec::new();
 	for &chunk_position in map.chunk_meshes.keys() {
-		let should_remove = (&cameras, &transforms).iter().any(|(_, transform)| {
+		let should_remove = (&loaders, &transforms).iter().any(|(loader, transform)| {
 			let camera_chunk = map.map.point_chunk(&transform.position);
-			!within_voxel_sphere(camera_chunk, MAP_MODEL_RADIUS+1, chunk_position)
+			!within_voxel_sphere(camera_chunk, loader.radius+1, chunk_position)
 		});
 		if should_remove {
 			chunks_to_untree.push(chunk_position)
@@ -411,6 +430,51 @@ pub fn map_octree_system(
 			voxel_data.insert_chunk(&gpu.queue, chunk_position, &tree);
 			map.chunk_octrees.insert(chunk_position, (tree, mce.generation));
 			info!("Buffer is now at {:.2}% capacity", voxel_data.buffer.capacity_frac() * 100.0);
+		}
+	}
+}
+
+
+
+#[derive(Debug, Component)]
+pub struct MapLookAtComponent {
+	pub max_distance: f32,
+	pub hit: Option<String>,
+	pub distance: Option<f32>,
+	pub normal: Option<Vector3<f32>>,
+}
+impl MapLookAtComponent {
+	pub fn new(max_distance: f32) -> Self {
+		Self {
+			max_distance,
+			hit: None,
+			distance: None,
+			normal: None,
+		}
+	}
+}
+pub fn map_lookat_system(
+	map: UniqueView<MapResource>,
+	blocks: UniqueView<BlockResource>,
+	mut lookers: ViewMut<MapLookAtComponent>,
+	transforms: View<TransformComponent>,
+) {
+	for (looker, transform) in (&mut lookers, &transforms).iter() {
+
+		let origin = transform.position;
+		let direction = transform.rotation * Vector3::new(0.0, 0.0, 1.0);
+		
+		let res = map.map.ray(origin, direction, 100.0);
+
+		if let Some((v, d, n)) = res {
+			let s = v.id().and_then(|i| Some(blocks.blocks.index(i).name.clone()));
+			looker.hit = s;
+			looker.distance = Some(d);
+			looker.normal = Some(n);
+		} else {
+			looker.hit = None;
+			looker.distance = None;
+			looker.normal = None;
 		}
 	}
 }

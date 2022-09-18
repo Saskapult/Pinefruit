@@ -71,7 +71,7 @@ impl GameWidget {
 			info!("Creating game widgit entity");
 			let mut cc = ControlMap::new(); // TEMPORARY
 			game.world.add_entity((
-				CameraComponent::new(),
+				CameraComponent::new().with_fovy_degrees(75.0),
 				TransformComponent::new()
 					.with_position(Vector3::new(0.5, 0.5, 0.5)),
 				MovementComponent::new(&mut cc),
@@ -79,7 +79,10 @@ impl GameWidget {
 				MouseComponent::new(),
 				// KeysComponent::new(),
 				ControlComponent::from_map(cc),
+				MapLoadingComponent::new(11),
+				MapOctreeLoadingComponent::new(11),
 				VoxelRenderingComponent::new(11),
+				MapLookAtComponent::new(100.0),
 			))
 		});
 		// Apply input
@@ -113,16 +116,12 @@ impl GameWidget {
 
 			// Camera
 			let ccs = world.borrow::<View<CameraComponent>>().unwrap();
-			let _camera_camera = ccs.get(entity)
+			let camera_camera = ccs.get(entity)
 				.expect("Render point has no camera!");
 			let tcs = world.borrow::<View<TransformComponent>>().unwrap();
 			let camera_transform = tcs.get(entity)
 				.expect("Render camera has no transform!");
-			let camera_data = Camera {
-				position: camera_transform.position.to_homogeneous().into(),
-				rotation: camera_transform.rotation.to_homogeneous().into(),
-				near: 1.0 / (90.0_f32.to_radians() / 2.0).tan(),
-			};
+			let camera_data = camera_camera.rendercamera(&camera_transform);
 
 
 			// Textures and stuff
@@ -141,15 +140,12 @@ impl GameWidget {
 			let shader_pt = gpu_data.shaders.prototype(shader_idx).unwrap();
 
 			// Camera
+			let aspect = self.last_size[0] / self.last_size[1];
 			let camera_buffer = self.camera_buffer.get_or_insert_with(|| {
 				info!("Making camera buffer");
-				device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-					label: Some("camera buffer"),
-					contents: bytemuck::bytes_of(&camera_data),
-					usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-				})
+				camera_data.make_buffer(device, aspect)
 			});
-			queue.write_buffer(&*camera_buffer, 0, bytemuck::bytes_of(&camera_data));
+			camera_data.update_buffer(queue, &*camera_buffer, aspect);
 			let uniform_bg = self.unfiform_bg.get_or_insert_with(|| {
 				let shader_idx = gpu_data.shaders.index_from_path(&PathBuf::from("resources/shaders/voxel_scene.ron")).unwrap();
 				let shader_pt = gpu_data.shaders.prototype(shader_idx).unwrap();
@@ -309,6 +305,16 @@ impl EntityMovementWidget {
 	pub fn display(&mut self, ui: &mut egui::Ui, movement_component: &mut MovementComponent) {
 		// ui.text_edit_single_line();
 		ui.add(egui::Slider::new(&mut movement_component.max_speed, 0.1..=20.0).text("Maximum Speed"));
+	}
+}
+
+pub struct EntityMapLookComponent;
+impl EntityMapLookComponent {
+	pub fn display(&self, ui: &mut egui::Ui, looking_component: &mut MapLookAtComponent) {
+		let n = looking_component.hit.as_ref()
+			.and_then(|s| Some(format!("'{s}'")))
+			.unwrap_or("None".to_string());
+		ui.label(format!("Hit {n}"));
 	}
 }
 

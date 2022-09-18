@@ -47,6 +47,21 @@ pub struct Material {
 	pub floats: HashMap<String, Vec<f32>>,
 	pub sounds: HashMap<String, Vec<PathBuf>>, // step sounds, break sounds
 }
+impl Material {
+	pub fn mean_albedo(&self, tm: &TextureManager) -> Option<[f32; 4]> {
+		if let Some(g) = self.floats.get("mean_albedo") {
+			let g = g.clone().try_into().unwrap();
+			Some(g)
+		} else {
+			let g = self.textures.get("albedo")
+				.and_then(|p| p.get(0))
+				.and_then(|p| tm.index_path(p))
+				.and_then(|i| tm.index(i))
+				.and_then(|t| Some(t.mean_rgba()));
+			g
+		}
+	}
+}
 impl std::fmt::Display for Material {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{}", &self.name)
@@ -55,6 +70,7 @@ impl std::fmt::Display for Material {
 
 
 
+/// Material instance manager?
 #[derive(Debug, Default)]
 pub struct MaterialManager {
 	materials: Arena<Material>,

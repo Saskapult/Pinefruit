@@ -5,6 +5,7 @@
 		faces: { // Options: every, front, back, left, right, up, down
 			"every": "materials/kmaterials.ron::dirt",
 		},
+		floats: {},
 		sounds: {},
 	), 
 	(
@@ -12,6 +13,7 @@
 		faces: {
 			"every": "materials/kmaterials.ron::stone",
 		},
+		floats: {},
 		sounds: {},
 	), 
 	(
@@ -19,6 +21,7 @@
 		faces: {
 			"every": "materials/kmaterials.ron::cobblestone",
 		},
+		floats: {},
 		sounds: {},
 	), 
 	(
@@ -26,6 +29,7 @@
 		faces: {
 			"every": "materials/kmaterials.ron::sand",
 		},
+		floats: {},
 		sounds: {},
 	), 
 	(
@@ -38,6 +42,9 @@
 			"back": "materials/kmaterials.ron::grass_side",
 			"down": "materials/kmaterials.ron::dirt",
 		},
+		floats: {
+			"flat_albedo": [0.197, 0.500, 0.170, 1.0],
+		},
 		sounds: {},
 	), 
 	(
@@ -45,6 +52,7 @@
 		faces: {
 			"every": "materials/kmaterials.ron::leaves",
 		},
+		floats: {},
 		sounds: {},
 	), 
 	(
@@ -57,6 +65,7 @@
 			"back": "materials/kmaterials.ron::log_side",
 			"down": "materials/kmaterials.ron::log_top",
 		},
+		floats: {},
 		sounds: {},
 	), 
 	(
@@ -64,6 +73,7 @@
 		faces: {
 			"every": "materials/kmaterials.ron::glass",
 		},
+		floats: {},
 		sounds: {},
 	),
 ]

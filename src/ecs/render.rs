@@ -4,7 +4,7 @@ use nalgebra::{Point3, Matrix4, Translation3};
 use shipyard::*;
 use crate::material::MaterialManager;
 use crate::mesh::MeshManager;
-use crate::render::ShaderManager;
+use crate::render::{ShaderManager, RenderCamera};
 use crate::texture::TextureManager;
 use crate::{world::*, octree::Octree};
 use crate::ecs::*;
@@ -47,6 +47,13 @@ impl ArrayVolumeHeader {
 	pub fn new(size: [u32; 3]) -> Self {
 		Self { size: [size[0], size[1], size[2], 42], }
 	}
+}
+
+
+#[repr(C)]
+#[derive(Debug, bytemuck::Pod, bytemuck::Zeroable, Clone, Copy)]
+pub struct CubeColours {
+	pub colours: [[u8; 3]; 6],
 }
 
 
@@ -101,10 +108,10 @@ pub struct VoxelRenderingComponent {
 	pub array_volumes: (usize, usize),
 }
 impl VoxelRenderingComponent {
-	pub fn new(distance: u32) -> Self {
+	pub fn new(radius: u32) -> Self {
 		Self {
 			chunk_as_centre: [0; 3],
-			chunk_as_header: ArrayVolumeHeader::new([distance; 3]),
+			chunk_as_header: ArrayVolumeHeader::new([radius*2+1; 3]),
 			chunk_size: 0,
 			chunk_as_idx: (0, 0),	
 			colours_idx: (0, 0),
@@ -143,8 +150,9 @@ pub struct VoxelRenderingResource {
 	// Header and contents
 	pub entity_array_volumes: HashMap<EntityId, Index>,
 	pub array_volumes: Arena<(usize, usize)>,
+	
 	// Limited to u8 for simplicity
-	pub colours: Vec<[u8; 3]>,
+	pub colours: Vec<[u8; 4]>,
 	pub colours_idx: (usize, usize),
 
 	pub scene_shader_index: Index,
@@ -206,8 +214,25 @@ impl VoxelRenderingResource {
 
 		let nodes = octree.nodes.iter()
 			.map(|n| AccelOctreeNode {
-				octants: n.octants,
-				content: n.content,
+				// Extract data and store it directly
+				octants: {
+					let mut octants = n.octants;
+					for i in 0..8 {
+						let v = n.octants[i];
+
+						if n.is_leaf(i) && v != 0 {
+							octants[i] = octree.data[v as usize - 1] as u32 + 1
+						}
+					}
+					octants
+				},
+				content: { 
+					if n.content != 0 {
+						octree.data[n.content as usize - 1] as u32 + 1
+					} else {
+						0
+					}
+				},
 				leaf_mask: n.leaf_mask as u32,
 			})
 			.collect::<Vec<_>>();
@@ -248,9 +273,33 @@ impl VoxelRenderingResource {
 		self.entity_array_volumes.get(&entity).and_then(|&i| self.array_volumes.get(i).cloned())
 	}
 
-	pub fn update_colours(&mut self, _block_manager: &BlockManager) {
-		// Pull colours after end of self, reallocate colour buffer adn change location
-		todo!()
+	pub fn update_colours(&mut self, queue: &wgpu::Queue, blocks: &BlockManager, materials: &MaterialManager, textures: &TextureManager) {
+		// Pull colours after end of self, reallocate colour buffer and change location
+		let new_stuff = blocks.colours(materials, textures, self.colours.len());
+		if new_stuff.len() == 0 {
+			return;
+		}
+
+		let g = new_stuff.iter()
+			.map(|f| {
+				let g: [u8; 4] = (0..4).map(|i| (f[i] * u8::MAX as f32).floor() as u8).collect::<Vec<_>>().try_into().unwrap();
+				g
+			});
+		self.colours.extend(g);
+
+		let (st, en) = self.colours_idx;
+		self.buffer.remove(st..en);
+
+		let cs = self.colours.iter().cloned().flatten().collect::<Vec<_>>();
+		let [ns, ne] = self.buffer.insert_direct(queue, &cs[..]);
+		self.colours_idx = (ns, ne);
+
+		// println!("{:?}", cs);
+		// panic!();
+		println!("Colours:");
+		for (i, c) in self.colours.iter().enumerate() {
+			println!("{i} = {c:?}")
+		}
 	}
 
 	pub fn update_uniform(&mut self, queue: &wgpu::Queue, vrc: &VoxelRenderingComponent) {
@@ -275,7 +324,9 @@ pub fn voxel_render_system(
 		
 		// Fetch voxel volume data (obb, st of entry (header, data))
 		let (ost, oen) = voxel_info.array_volumes;
-		voxel_data.buffer.remove(ost..oen); // Remove old volume data
+		if ost != oen {
+			voxel_data.buffer.remove(ost..oen); // Remove old volume data
+		}
 		let mut view_data_entries = 0;
 		let mut view_data = Vec::new();
 		for (eid, (volume, transform)) in (&vvolumes, &transforms).iter().with_id() {
@@ -307,7 +358,9 @@ pub fn voxel_render_system(
 		// Fetch map data
 		// We will do this every frame for convinience (it's not much data)
 		let (ost, oen) = voxel_info.chunk_as_idx;
-		voxel_data.buffer.remove(ost..oen); // Remove old chunk as data
+		if ost != oen {
+			voxel_data.buffer.remove(ost..oen); // Remove old chunk as data
+		}
 		let centre = map.map.point_chunk(&transform.position);
 		let llc = [
 			centre[0] - voxel_info.chunk_as_header.size[0] as i32 / 2,
@@ -379,18 +432,48 @@ impl CameraComponent {
 		self.fovy = degrees.to_radians();
 		self.near = Self::near_from_fovy_degrees(self.fovy);
 	}
+
+	pub fn rendercamera(&self, transform: &TransformComponent) -> RenderCamera {
+		RenderCamera::new(transform.position, transform.rotation, self.fovy.to_degrees(), self.near, self.far)
+	}
 }
 
 
 #[derive(Unique, Debug)]
-struct PolygonRenderingResource {
+pub struct PolygonRenderingResource {
 	// graphs?
 	// fugg buffer!
 }
 #[derive(Component, Debug)]
-struct PolygonRenderingComponent {
-	// List of visible models?
+pub struct PolygonRenderingComponent {
+	// Indices should be bound indices, but I don't have that accessible to the ecs right now
+	// We could also include interpolation information
+	pub models: Vec<(Index, bool, TransformComponent)>, // Mesh, material (unused for now), transform
 }
+
+pub fn polygon_render_system(
+	gpu: UniqueView<GraphicsHandleResource>,
+	cameras: View<CameraComponent>,
+	transforms: View<TransformComponent>,
+	models: View<ModelComponent>,
+	mut infos: ViewMut<PolygonRenderingComponent>,
+) {
+	for (_camera, _transform, info) in (&cameras, &transforms, &mut infos).iter() {
+
+		info.models.clear();
+		for (model, transform) in (&models, &transforms).iter() {
+			let (mesh, _) = model.mesh;
+			
+
+			info.models.push((mesh, false, transform.clone()));
+		}
+	}
+}
+
+
+
+// To be used with a texture rendering system
+// Attach to a camera with rendering components
 #[derive(Component, Debug)]
 struct TextureRenderComponent {
 	pub texture_id: usize,
@@ -400,24 +483,16 @@ struct TextureRenderComponent {
 
 #[derive(Component, Debug)]
 pub struct ModelComponent {
-	pub mesh_idx: usize,
-	pub material_idx: usize,
-}
-impl ModelComponent {
-	pub fn new(
-		mesh_idx: usize,
-		material_idx: usize,
-	) -> Self {
-		Self {
-			mesh_idx,
-			material_idx,
-		}
-	}
+	// Includes name of mesh/material for debugging and maybe reloading
+	pub mesh: (Index, String),
+	pub material: Option<(Index, String)>,
 }
 
 
+// If something uses this it is expected that its mesh is skinned and its shader uses this stuff
 #[derive(Component, Debug)]
 pub struct SkeletonComponent {
+	// Base bone positions
 	pub bones: Vec<Matrix4<f32>>,
 }
 

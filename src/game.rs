@@ -92,6 +92,7 @@ impl Game {
 		self.world.run(map_loading_system);
 		self.world.run(map_octree_system);
 
+		self.world.run(map_lookat_system);
 
 		self.world.run(voxel_render_system);
 	}
@@ -121,9 +122,11 @@ fn load_test_octree(
 
 
 fn setup_system(
+	gpu: UniqueView<GraphicsHandleResource>,
 	mut textures: UniqueViewMut<TextureResource>,
 	mut materials: UniqueViewMut<MaterialResource>,
 	mut blocks: UniqueViewMut<BlockResource>,
+	mut voxel_data: UniqueViewMut<VoxelRenderingResource>,
 ) {
 	load_materials_file(
 		"resources/materials/kmaterials.ron",
@@ -137,4 +140,6 @@ fn setup_system(
 		&mut textures.textures,
 		&mut materials.materials,
 	).unwrap();
+
+	voxel_data.update_colours(&gpu.queue, &blocks.blocks, &materials.materials, &textures.textures);
 }

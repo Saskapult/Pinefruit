@@ -21,7 +21,7 @@ Todo: Add push constant ranges specification
 pub struct ShaderSpecification {
 	pub name: String,
 	pub base: ShaderBaseDescriptor,
-	pub bind_groups: BTreeMap<u32, BTreeMap<u32, (String, SpecificationBindingTypeUsages)>>
+	pub bind_groups: BTreeMap<u32, BTreeMap<u32, (ShaderDataSource, SpecificationBindingTypeUsages)>>
 }
 impl ShaderSpecification {
 	pub fn from_path(
@@ -43,6 +43,14 @@ pub enum ShaderLanguage {
 	Spirv,
 	Glsl,
 	Wgsl,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum ShaderDataSource {
+	Texture(String),
+	Buffer(String),
+	MaterialTexture(String),
+	MaterialBuffer(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -505,7 +513,7 @@ pub struct ShaderPrototype {
 	pub specification_path: PathBuf,
 	pub name: String,
 	pub base: ShaderBaseDescriptor,
-	pub bind_groups: BTreeMap<u32, BTreeMap<u32, (String, ResourceDescriptor, wgpu::BindGroupLayoutEntry)>>,
+	pub bind_groups: BTreeMap<u32, BTreeMap<u32, (ShaderDataSource, ResourceDescriptor, wgpu::BindGroupLayoutEntry)>>,
 	pub push_constant_ranges: Vec<wgpu::PushConstantRange>,
 }
 impl ShaderPrototype {
@@ -547,13 +555,13 @@ impl ShaderPrototype {
 		})
 	}
 
-	pub fn get_resources<'a>(&'a self) -> Vec<(&'a String, ResourceDescriptor)> {
+	pub fn get_resources(&self) -> Vec<(ShaderDataSource, ResourceDescriptor)> {
 		let mut resources = Vec::new();
 
 		// Get binding resources
 		for (_, bg) in self.bind_groups.iter() {
 			for (_, (n, rd, _)) in bg.iter() {
-				resources.push((n, rd.clone()));
+				resources.push((n.clone(), rd.clone()));
 			}
 		}
 
@@ -566,41 +574,41 @@ impl ShaderPrototype {
 					usages: wgpu::TextureUsages::RENDER_ATTACHMENT,
 					storage_access_type: None,
 				});
-				resources.push((&attachment.usage, rd));
+				resources.push((ShaderDataSource::Texture(attachment.usage.clone()), rd));
 			}
 		}
 
 		resources
 	}
 
-	pub fn merge_resources(
-		&self, 
-		aliases: &HashMap<String, String>, 
-		destination: &mut HashMap<String, Vec<ResourceDescriptor>>,
-	) {
-		// Insert into big thing
-		for (name, descriptor) in self.get_resources() {
-			let name = aliases.get(name).unwrap_or(name);
-			if let Some(btus) = destination.get_mut(name) {
-				// Try combine with each existing resource descriptor
-				let mut found_place = false;
-				for o_btu in btus.iter_mut() {
+	// pub fn merge_resources(
+	// 	&self, 
+	// 	aliases: &HashMap<String, String>, 
+	// 	destination: &mut HashMap<String, Vec<ResourceDescriptor>>,
+	// ) {
+	// 	// Insert into big thing
+	// 	for (name, descriptor) in self.get_resources() {
+	// 		let name = aliases.get(name).unwrap_or(name);
+	// 		if let Some(btus) = destination.get_mut(name) {
+	// 			// Try combine with each existing resource descriptor
+	// 			let mut found_place = false;
+	// 			for o_btu in btus.iter_mut() {
 	
-					let combine = o_btu.try_combine(&descriptor);
+	// 				let combine = o_btu.try_combine(&descriptor);
 
-					if combine {
-						found_place = true;
-						break
-					}
-				}
-				if !found_place {
-					btus.push(descriptor);
-				}
-			} else {
-				destination.insert(name.clone(), vec![descriptor]);
-			}
-		}
-	}
+	// 				if combine {
+	// 					found_place = true;
+	// 					break
+	// 				}
+	// 			}
+	// 			if !found_place {
+	// 				btus.push(descriptor);
+	// 			}
+	// 		} else {
+	// 			destination.insert(name.clone(), vec![descriptor]);
+	// 		}
+	// 	}
+	// }
 }
 
 

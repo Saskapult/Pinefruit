@@ -3,10 +3,6 @@ use nalgebra::*;
 use serde::{Serialize, Deserialize};
 
 
-/*
-Vertex data is divided into various categories (positional, texture, instance) in order to maximize flexibility
-A shader can specify the format of its vertex data
-*/
 
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,7 +10,8 @@ pub enum VertexProperty {
 	VertexPosition,
 	VertexColour,
 	VertexUV,
-	VertexTextureID,
+	VertexTexture,
+	VertexSkin,
 }
 impl VertexProperty {
 	pub fn attribute_segment(self) -> AttributeSegment {
@@ -22,7 +19,8 @@ impl VertexProperty {
 			Self::VertexPosition => VertexPosition::attributes(),
 			Self::VertexColour => VertexColour::attributes(),
 			Self::VertexUV => VertexUV::attributes(),
-			_ => panic!("Unimplemented vertex property"),
+			Self::VertexTexture => VertexTexture::attributes(),
+			Self::VertexSkin => VertexSkin::attributes(),
 		}
 	}
 }
@@ -34,89 +32,18 @@ pub type VertexProperties = Vec<VertexProperty>;
 pub enum InstanceProperty {
 	InstanceModelMatrix,
 	InstanceColour,
+	InstanceTexture,
 }
 impl InstanceProperty {
 	pub fn attribute_segment(self) -> AttributeSegment {
 		match self {
 			Self::InstanceModelMatrix => InstanceModelMatrix::attributes(),
 			Self::InstanceColour => InstanceColour::attributes(),
+			Self::InstanceTexture => InstanceTexture::attributes(),
 		}
 	}
 }
 pub type InstanceProperties = Vec<InstanceProperty>;
-
-
-
-#[derive(Debug, Copy, Clone)]
-pub struct Instance {
-	position: Vector3<f32>,
-	rotation: UnitQuaternion<f32>,
-	scale: Vector3<f32>,
-	colour: Option<Vector3<f32>>,
-}
-impl Instance {
-	pub fn new() -> Self {
-		Self {
-			position: Vector3::from_element(0.0),
-			rotation: UnitQuaternion::identity(),
-			scale: Vector3::from_element(1.0),
-			colour: None,
-		}
-	}
-
-	pub fn with_position(self, position: Vector3<f32>) -> Self {
-		Self {
-			position,
-			rotation: self.rotation,
-			scale: self.scale,
-			colour: self.colour,
-		}
-	}
-
-	pub fn with_rotation(self, rotation: impl Into<UnitQuaternion<f32>>) -> Self {
-		Self {
-			rotation: rotation.into(),
-			..self
-		}
-	}
-
-	pub fn lerp(&self, other: &Self, t: f32) -> Self {
-		let colour = {
-			if self.colour.is_some() && other.colour.is_some() {
-				Some(self.colour.unwrap().lerp(&other.colour.unwrap(), t))
-			} else {
-				None
-			}
-		};
-		Self {
-			position: self.position.lerp(&other.position, t),
-			rotation: self.rotation.slerp(&other.rotation, t),
-			scale: self.scale.lerp(&other.scale, t),
-			colour,
-		}
-	}
-	
-	pub fn data(&self, instance_properties: &Vec<InstanceProperty>) -> Vec<u8> {
-		let mut bytes = Vec::new();
-		for property in instance_properties {
-			match property {
-				InstanceProperty::InstanceModelMatrix => {
-					bytes.extend_from_slice(bytemuck::bytes_of(&InstanceModelMatrix::from_pr(&self.position, &self.rotation)));
-				},
-				InstanceProperty::InstanceColour => {
-					if let Some(colour) = self.colour {
-						bytes.extend_from_slice(bytemuck::bytes_of(&VertexColour {
-							colour: colour.into(),
-						}));
-					} else {
-						panic!("instance colour not given!")
-					}
-				},
-			}
-		}
-		bytes
-	}
-}
 
 
 
@@ -192,11 +119,46 @@ impl Vertexable for VertexUV {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct VertexTextureID {
+pub struct VertexTexture {
 	pub id: u32,
 }
-impl Vertexable for VertexTextureID {
+impl Vertexable for VertexTexture {
 	const ASEG: AttributeSegment = &[(mem::size_of::<u32>(), wgpu::VertexFormat::Uint32)];
+	fn attributes() -> AttributeSegment {
+		Self::ASEG
+	}
+}
+
+
+
+const MAX_BONE_INFLUENCE: usize = 4;
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct VertexSkin {
+	pub n: u32,
+	pub bones: [u32; MAX_BONE_INFLUENCE],
+	pub weights: [f32; MAX_BONE_INFLUENCE],
+}
+impl VertexSkin {
+	const fn get_mbi_aseg() -> [(usize, wgpu::VertexFormat); MAX_BONE_INFLUENCE*2+1] {
+		let mut res = [(mem::size_of::<u32>(), wgpu::VertexFormat::Uint32); MAX_BONE_INFLUENCE*2+1];
+
+		let mut i = 1;
+		while i <= MAX_BONE_INFLUENCE {
+			res[i] = (mem::size_of::<u32>(), wgpu::VertexFormat::Uint32);
+			i += 1;
+		}
+		while i <= MAX_BONE_INFLUENCE*2 {
+			res[i] = (mem::size_of::<f32>(), wgpu::VertexFormat::Float32);
+			i += 1;
+		}
+
+		res
+	}
+	const MBI_ASEG: [(usize, wgpu::VertexFormat); MAX_BONE_INFLUENCE*2+1] = Self::get_mbi_aseg();
+}
+impl Vertexable for VertexSkin {
+	const ASEG: AttributeSegment = &Self::MBI_ASEG;
 	fn attributes() -> AttributeSegment {
 		Self::ASEG
 	}
@@ -246,6 +208,27 @@ impl InstanceColour {
 }
 impl Vertexable for InstanceColour {
 	const ASEG: AttributeSegment = &[(mem::size_of::<[f32; 3]>(), wgpu::VertexFormat::Float32x3)];
+	fn attributes() -> AttributeSegment {
+		Self::ASEG
+	}
+}
+
+
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct InstanceTexture {
+	pub id: u32,
+}
+impl InstanceTexture {
+	pub fn new(id: u32) -> Self {
+		Self {
+			id,
+		}
+	}
+}
+impl Vertexable for InstanceTexture {
+	const ASEG: AttributeSegment = &[(mem::size_of::<u32>(), wgpu::VertexFormat::Uint32)];
 	fn attributes() -> AttributeSegment {
 		Self::ASEG
 	}

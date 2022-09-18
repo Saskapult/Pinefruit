@@ -6,6 +6,8 @@ I am too stupid to make that work.
 We store attributes in bytes.
 */
 
+use std::collections::HashMap;
+
 
 pub struct VoxelVolumeHeader {
 	pub attributes: Vec<VoxelAttribute>,
@@ -221,6 +223,181 @@ impl<T: std::fmt::Debug + Clone + PartialEq + Eq + Default> TypedArrayVoxelVolum
 		&self, 
 		_grouping_function: impl Fn(&T) -> Option<usize>,
 	) -> [Vec<(usize, Vec<[[u32; 3]; 2]>)>; 6] {
+
+		// let [xs, ys, zs] = self.size;
+
+		// fn adda3<T: std::ops::Add<Output=T> + Copy>(a: [T; 3], b: [T; 3]) -> [T; 3] {
+		// 	[a[0]+b[0], a[1]+b[1], a[2]+b[2]]
+		// }
+
+		// let directions = [
+		// 	[ 1, 0, 0 ],
+		// 	[ 0, 1, 0 ],
+		// 	[ 0, 0, 1 ],
+		// 	[-1, 0, 0 ],
+		// 	[ 0,-1, 0 ],
+		// 	[ 0, 0,-1 ],
+		// ];
+
+		
+		// for direction in 0..3 {
+		// 	let mut this_direction: HashMap<usize, Vec<[[u32; 3]; 2]>> = HashMap::new();
+		// 	let kd = directions[(direction+0) % 3];
+		// 	let id = directions[(direction+1) % 3];
+		// 	let jd = directions[(direction+2) % 3];
+		// 	let is = self.size[(direction+1) % 3];
+		// 	let js = self.size[(direction+2) % 3];
+		// 	let mut used = vec![false; (is * js) as usize];
+
+		// 	for x in 0..xs as i32 {
+		// 		for y in 0..ys as i32 {
+		// 			for z in 0..zs as i32 {
+		// 				let v = self.get([x, y, z].map(|v| v as u32)).unwrap();
+		// 				// If has some group
+		// 				if let Some(group) = grouping_function(v) {
+		// 					// Check if not blocked by other
+		// 					if let Some(v2) = self.get(adda3([x,y,z], kd).map(|v| v as u32)) {
+		// 						if grouping_function(v2).is_some() {
+		// 							continue
+		// 						}
+		// 					}
+		// 					let st = [x, y, z];
+		// 					let mut end = [x, y, z];
+		// 					loop {
+
+		// 					}
+
+		// 				}
+		// 			}
+		// 		}
+
+		// 		// Reset used
+		// 		used.iter_mut().for_each(|v| *v = false);
+		// 	}
+		// }
+
 		todo!()
 	}
 }
+
+
+
+fn indexof(position: [u32; 2], scales: [u32; 2]) -> Option<usize> {
+	if position[0] >= scales[0] || position[1] >= scales[1] {
+		None
+	} else {
+		Some((position[0] * scales[1] + position[1]) as usize)
+	}
+}
+
+
+
+#[test]
+fn test_greedy2d() {
+	let extent = [5, 5];
+	let slice = vec![
+		0, 0, 0, 0, 0,
+		1, 1, 0, 0, 0,
+		1, 1, 0, 2, 0,
+		0, 0, 0, 2, 0,
+		1, 1, 0, 2, 0,
+	];
+
+	for row in slice.chunks(extent[0]).map(|r| r.iter().map(|&v| format!("{v}")).collect::<Vec<_>>().join(", ")) {
+		println!("{row}");
+	}
+
+	// Starting positions
+	let [xs, ys] = extent.map(|v| v as u32);
+	let mut used = vec![false; (xs * ys) as usize];
+	let mut results: HashMap<usize, Vec<[[u32; 2]; 2]>> = HashMap::new();
+	for x in 0..xs {
+		for y in 0..ys {
+			// Used things can't be start position
+			if used[indexof([x, y], [xs, ys]).unwrap()] {
+				continue
+			}
+			let group = slice[indexof([x, y], [xs, ys]).unwrap()];
+			let st = [x, y];
+			println!("st = {st:?}");
+			let mut end_x = x;
+			loop {
+				// Used or out of bounds
+				if indexof([end_x+1, y], [xs, ys]).and_then(|i| Some(used[i])).unwrap_or(true) {
+					println!("used or out of bounds");
+					break
+				}
+				// Different group or out of bounds
+				if indexof([end_x+1, y], [xs, ys]).and_then(|i| Some(slice[i] != group)).unwrap_or(true) {
+					let group = indexof([end_x+1, y], [xs, ys]).and_then(|i| Some(slice[i])).unwrap();
+					println!("different group ({group})");
+					break
+				}
+				// Increment
+				end_x += 1;
+				used[indexof([end_x, y], [xs, ys]).unwrap()] = true;
+				println!("ex++ ({end_x})");
+			}
+			let mut end_y = y;
+			loop {
+				let mut should_break = false;
+				for inner_x in x..=end_x {
+					// Used or out of bounds
+					if indexof([inner_x, end_y+1], [xs, ys]).and_then(|i| Some(used[i])).unwrap_or(true) {
+						should_break = true;
+						println!("used or out of bounds");
+						break
+					}
+					// Different group or out of bounds
+					if indexof([inner_x, end_y+1], [xs, ys]).and_then(|i| Some(slice[i] != group)).unwrap_or(true) {
+						should_break = true;
+						println!("different group");
+						break
+					}
+				}
+				if should_break { break }
+				end_y += 1;
+				for inner_x in x..=end_x {
+					used[indexof([inner_x, end_y], [xs, ys]).unwrap()] = true;
+				}
+				println!("ey++ ({end_y})");
+				// std::thread::sleep(std::time::Duration::from_secs_f32(0.5));
+			}
+			let en = [end_x, end_y];
+
+			// Append segment
+			if let Some(v) = results.get_mut(&group) {
+				v.push([st, en]);
+			} else {
+				results.insert(group, vec![[st, en]]);
+			}
+		}
+	}
+	println!("{results:#?}");
+
+	let mut reconstructed = vec![None; extent.iter().fold(1, |a, &v| a * v as usize)];
+
+	for (&k, v) in results.iter() {
+		for &[[sx, sy], [ex, ey]] in v {
+			for x in sx..=ex {
+				for y in sy..=ey {
+					let g = &mut reconstructed[indexof([x, y], [xs, ys]).unwrap()];
+					if g.is_some() {
+						panic!("{:?} is already {g:?}!", [x, y]);
+					}
+					*g = Some(k);
+				}
+			}
+		}
+	}
+
+	for row in reconstructed.chunks(extent[0]).map(|r| r.iter().map(|&v| v.and_then(|v| Some(format!("{v}"))).unwrap_or("#".to_string())).collect::<Vec<_>>().join(", ")) {
+		println!("{row}");
+	}
+
+	let reconstructed = reconstructed.iter().map(|v| v.unwrap()).collect::<Vec<_>>();
+
+	assert_eq!(slice, reconstructed);
+
+}
+

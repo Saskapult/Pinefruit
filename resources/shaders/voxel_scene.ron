@@ -7,14 +7,14 @@
     )),
     bind_groups: {
 		0: {
-            0: ("camera", UniformBuffer(([Compute]))),
+            0: (Buffer("camera"), UniformBuffer(([Compute]))),
 		},
         1: {
-            0: ("colour", StorageTexture(([Compute]), (format: Rgba8Unorm, dimension: D2, count: 1, sample_type: Float), WriteOnly)),
+            0: (Texture("colour"), StorageTexture(([Compute]), (format: Rgba8Unorm, dimension: D2, count: 1, sample_type: Float), WriteOnly)),
         },
         2: {
-            0: ("voxel_scene_data", StorageBuffer(([Compute]), true)),
-            1: ("voxel_scene_uniform", UniformBuffer(([Compute]))),
+            0: (Buffer("voxel_scene_data"), StorageBuffer(([Compute]), true)),
+            1: (Buffer("voxel_scene_uniform"), UniformBuffer(([Compute]))),
         }
 	},
 )

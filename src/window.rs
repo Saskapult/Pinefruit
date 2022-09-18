@@ -10,7 +10,7 @@ use std::time::{Instant, Duration};
 use egui;
 use crate::ecs::*;
 use crate::game::Game;
-use crate::gui::{GameWidget, MessageWidget};
+use crate::gui::{GameWidget, MessageWidget, EntityMapLookComponent};
 use generational_arena::{Arena, Index};
 use crate::gpu::*;
 use egui_wgpu_backend::RenderPass;
@@ -194,6 +194,14 @@ impl GameWindow {
 								let c = tc.position / 16.0;
 								ui.label(format!("Chunk: [{}, {}, {}]", c[0].floor() as i32, c[1].floor() as i32, c[2].floor() as i32));
 							}
+
+							let emlc = world.borrow::<View<MapLookAtComponent>>().unwrap();
+							if let Ok(looking_component) = emlc.get(entity) {
+								let n = looking_component.hit.as_ref()
+									.and_then(|s| Some(format!("'{s}'")))
+									.unwrap_or("None".to_string());
+								ui.label(format!("Hit {n}"));
+							}
 						} else {
 							ui.label("Tracked entity not set!");
 						}
@@ -352,7 +360,8 @@ impl GameWindow {
 			let submit_st = Instant::now();
 			let gts = self.game_times.record_later();
 			queue.on_submitted_work_done(move || {
-				gts(submit_st.elapsed());
+				let submit_en = Instant::now();
+				gts(submit_en - submit_st);
 			});
 		}
 

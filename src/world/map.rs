@@ -94,7 +94,7 @@ impl Map {
 
 			generated_chunk_sender,
 			generated_chunk_receiver,
-			max_generation_jobs: 4,
+			max_generation_jobs: 16,
 			cur_generation_jobs: 0,
 
 			chunk_size, 
@@ -710,15 +710,17 @@ fn map_mesh(
 								Direction::Yn => a_block.yn_material_idx,
 								Direction::Zn => a_block.zn_material_idx,
 							};
-							let mesh_part = {
-								if mesh_parts.contains_key(&material_id) {
-									mesh_parts.get_mut(&material_id).unwrap()
-								} else {
-									mesh_parts.insert(material_id, ChunkMeshSegment::new());
-									mesh_parts.get_mut(&material_id).unwrap()
-								}
-							};
-							append_face(mesh_part, [x,y,z], direction);
+							if let Some(material_id) = material_id {
+								let mesh_part = {
+									if mesh_parts.contains_key(&material_id) {
+										mesh_parts.get_mut(&material_id).unwrap()
+									} else {
+										mesh_parts.insert(material_id, ChunkMeshSegment::new());
+										mesh_parts.get_mut(&material_id).unwrap()
+									}
+								};
+								append_face(mesh_part, [x,y,z], direction);
+							}
 						}
 
 						// Slice faces backward
@@ -733,15 +735,17 @@ fn map_mesh(
 								Direction::Yn => b_block.yn_material_idx,
 								Direction::Zn => b_block.zn_material_idx,
 							};
-							let mesh_part = {
-								if mesh_parts.contains_key(&material_id) {
-									mesh_parts.get_mut(&material_id).unwrap()
-								} else {
-									mesh_parts.insert(material_id, ChunkMeshSegment::new());
-									mesh_parts.get_mut(&material_id).unwrap()
-								}
-							};
-							append_face(mesh_part, [bx,by,bz], &direction.flip());
+							if let Some(material_id) = material_id {
+								let mesh_part = {
+									if mesh_parts.contains_key(&material_id) {
+										mesh_parts.get_mut(&material_id).unwrap()
+									} else {
+										mesh_parts.insert(material_id, ChunkMeshSegment::new());
+										mesh_parts.get_mut(&material_id).unwrap()
+									}
+								};
+								append_face(mesh_part, [bx,by,bz], &direction.flip());
+							}
 						}
 					}
 				}

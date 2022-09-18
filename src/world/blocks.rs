@@ -25,23 +25,10 @@ pub struct BlockSpecification {
 	pub name: String,
 	// pub script: PathBuf,
 	pub faces: HashMap<String, PathBuf>,
+	pub floats: HashMap<String, Vec<f32>>,
 	pub sounds: HashMap<String, PathBuf>,
 }
 
-
-/// It's just for testing, do not use this
-pub fn load_blocks_file_messy(
-	path: impl AsRef<Path>,
-	bm: &mut BlockManager,
-) {
-	let path  = path.as_ref();
-	let f = std::fs::File::open(path).unwrap();
-	let block_specs: Vec<BlockSpecification> = ron::de::from_reader(f).unwrap();
-	for spec in block_specs {
-		let block = Block::new(&spec.name);
-		bm.insert(block);
-	}
-}
 
 
 pub fn load_blocks_file(
@@ -63,6 +50,7 @@ pub fn load_blocks_file(
 
 	for spec in block_specs {
 		let mut block = Block::new(&spec.name);
+		block.floats = spec.floats;
 		for (face, material_path) in spec.faces {
 			
 			let full_thing = material_path.into_os_string().into_string().unwrap();
@@ -84,20 +72,20 @@ pub fn load_blocks_file(
 
 			match &*face {
 				"every" => {
-					block.xp_material_idx = material_idx;
-					block.yp_material_idx = material_idx;
-					block.zp_material_idx = material_idx;
-					block.xn_material_idx = material_idx;
-					block.yn_material_idx = material_idx;
-					block.zn_material_idx = material_idx;
+					block.xp_material_idx = Some(material_idx);
+					block.yp_material_idx = Some(material_idx);
+					block.zp_material_idx = Some(material_idx);
+					block.xn_material_idx = Some(material_idx);
+					block.yn_material_idx = Some(material_idx);
+					block.zn_material_idx = Some(material_idx);
 					break
 				},
-				"zp" | "front" 	=> block.zp_material_idx = material_idx,
-				"zn" | "back" 	=> block.zn_material_idx = material_idx,
-				"xn" | "left" 	=> block.xn_material_idx = material_idx,
-				"xp" | "right" 	=> block.xp_material_idx = material_idx,
-				"yp" | "up" 	=> block.yp_material_idx = material_idx,
-				"yn" | "down" 	=> block.yn_material_idx = material_idx,
+				"zp" | "front" 	=> block.zp_material_idx = Some(material_idx),
+				"zn" | "back" 	=> block.zn_material_idx = Some(material_idx),
+				"xn" | "left" 	=> block.xn_material_idx = Some(material_idx),
+				"xp" | "right" 	=> block.xp_material_idx = Some(material_idx),
+				"yp" | "up" 	=> block.yp_material_idx = Some(material_idx),
+				"yn" | "down" 	=> block.yn_material_idx = Some(material_idx),
 				_ => warn!("Weird block face material spec (what is '{face}'?), doing nothing"),
 			}
 		}
@@ -108,28 +96,71 @@ pub fn load_blocks_file(
 }
 
 
+enum BlockDisplayType {
+	Model {
+		mesh: (PathBuf, Option<Index>),
+		material: (PathBuf, Option<Index>),
+	},
+	Cube {
+		materials: [(PathBuf, Option<Index>); 6], // xp, ..., xn, ...
+	}, 
+}
+
 
 #[derive(Debug, Clone)]
 pub struct Block {
 	pub name: String,
-	pub xp_material_idx: Index,
-	pub yp_material_idx: Index,
-	pub zp_material_idx: Index,
-	pub xn_material_idx: Index,
-	pub yn_material_idx: Index,
-	pub zn_material_idx: Index,
+	pub xp_material_idx: Option<Index>,
+	pub yp_material_idx: Option<Index>,
+	pub zp_material_idx: Option<Index>,
+	pub xn_material_idx: Option<Index>,
+	pub yn_material_idx: Option<Index>,
+	pub zn_material_idx: Option<Index>,
+	pub floats: HashMap<String, Vec<f32>>,
+	pub sounds: HashMap<String, PathBuf>,
 }
 impl Block {
 	pub fn new(name: &String) -> Self {
 		Self {
 			name: name.clone(),
-			xp_material_idx: Index::from_raw_parts(0, 0),
-			yp_material_idx: Index::from_raw_parts(0, 0),
-			zp_material_idx: Index::from_raw_parts(0, 0),
-			xn_material_idx: Index::from_raw_parts(0, 0),
-			yn_material_idx: Index::from_raw_parts(0, 0),
-			zn_material_idx: Index::from_raw_parts(0, 0),
+			xp_material_idx: None,
+			yp_material_idx: None,
+			zp_material_idx: None,
+			xn_material_idx: None,
+			yn_material_idx: None,
+			zn_material_idx: None,
+			floats: HashMap::new(),
+			sounds: HashMap::new(),
 		}
+	}
+
+	pub fn flat_albedo(&self, materials: &MaterialManager, textures: &TextureManager) -> [f32; 4] {
+		if let Some(v) = self.floats.get(&"flat_albedo".to_string()) {
+			if let Ok(v) = v.clone().try_into() {
+				println!("FOUND FLAT_ALBEDO");
+				return v;
+			}
+		}
+
+		let mut summ = [0.0; 4];
+		let mut count = 0.0;
+		let mut g = |i: Option<Index>| if let Some(i) = i {
+			let m = materials.index(i).unwrap();
+			if let Some(c) = m.mean_albedo(&textures) {
+				count += 1.0;
+				(0..4).for_each(|i| summ[i] += c[i]);
+			}
+		};
+		g(self.xp_material_idx);
+		g(self.yp_material_idx);
+		g(self.zp_material_idx);
+		g(self.xn_material_idx);
+		g(self.yn_material_idx);
+		g(self.zn_material_idx);
+
+		(0..4).for_each(|i| summ[i] /= count);
+		
+		summ
 	}
 
 	// The following are here to remind you that they should exist
@@ -207,6 +238,25 @@ impl BlockManager {
 		} else {
 			None
 		}
+	}
+
+	// Colours(4..)
+	pub fn colours(
+		&self, 
+		materials: &MaterialManager, 
+		textures: &TextureManager, 
+		st: usize,
+	) -> Vec<[f32; 4]> {
+
+		let g = (&self.blocks[st..]).iter()
+			.map(|b| {
+				let flat = b.flat_albedo(materials, textures);
+				println!("{:?} - {flat:?}", &b.name);
+				flat
+			})
+			.collect::<Vec<_>>();
+
+		g
 	}
 
 	/// Creates an encoding map for a run-length encoding.
