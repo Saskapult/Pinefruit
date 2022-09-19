@@ -456,6 +456,8 @@ pub fn chunk_to_octree(chunk: &crate::world::Chunk) -> Option<Octree<usize>> {
 	let idim = dim;
 	while dim != 1 {
 
+		// println!("Dim = {dim}");
+
 		for x in (0..dim).step_by(2) {
 			let xn = x * idim * idim;
 			let xp = (x+1) * idim * idim;
@@ -466,6 +468,8 @@ pub fn chunk_to_octree(chunk: &crate::world::Chunk) -> Option<Octree<usize>> {
 					let zn = z;
 					let zp = z+1;
 
+					// println!("Group of  {:?}", [x,y,z]);
+
 					let nnn = trees[(xn + yn + zn) as usize].take().unwrap();
 					let nnp = trees[(xn + yn + zp) as usize].take().unwrap();
 					let npn = trees[(xn + yp + zn) as usize].take().unwrap();
@@ -475,8 +479,9 @@ pub fn chunk_to_octree(chunk: &crate::world::Chunk) -> Option<Octree<usize>> {
 					let ppn = trees[(xp + yp + zn) as usize].take().unwrap();
 					let ppp = trees[(xp + yp + zp) as usize].take().unwrap();
 
-					let dest_coords = [x, y, z].map(|c| c / (dim / 2));
+					let dest_coords = [x, y, z].map(|c| c / 2);
 					let dest_idx = dest_coords[0]*idim*idim + dest_coords[1]*idim + dest_coords[2];
+					// println!("\t-> {dest_coords:?} ({dest_idx})");
 
 					trees[dest_idx as usize] = Some(Octree::combine(nnn, nnp, npn, npp, pnn, pnp, ppn, ppp, &mix_fn));
 				}
@@ -610,7 +615,7 @@ mod tests {
 
 	#[test]
 	fn test_octree_get() {
-		const CHUNK_SIZE: u32 = 4;
+		const CHUNK_SIZE: u32 = 8;
 		const N_BLOCKS: u32 = 4;
 
 		let mut chunk = crate::world::Chunk::new([CHUNK_SIZE; 3]);
