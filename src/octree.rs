@@ -445,7 +445,7 @@ pub fn chunk_to_octree(chunk: &crate::world::Chunk) -> Option<Octree<usize>> {
 		(0..dim).flat_map(move |y| {
 			let y = y * dim;
 			(0..dim).map(move |z| {
-				Octree::base(chunk.contents[(x + y + z) as usize].id(), 0)
+				Some(Octree::base(chunk.contents[(x + y + z) as usize].id(), 0))
 			})
 		})
 	}).collect::<Vec<_>>();
@@ -453,39 +453,40 @@ pub fn chunk_to_octree(chunk: &crate::world::Chunk) -> Option<Octree<usize>> {
 	let mix_fn = |_: &[Option<&usize>]| Some(0_usize);
 
 	// Reduce until one octree remains
+	let idim = dim;
 	while dim != 1 {
-		let mut reduced_trees = Vec::new();
 
 		for x in (0..dim).step_by(2) {
-			let xn = x * dim * dim;
-			let xp = (x+1) * dim * dim;
+			let xn = x * idim * idim;
+			let xp = (x+1) * idim * idim;
 			for y in (0..dim).step_by(2) {
-				let yn = y * dim;
-				let yp = (y+1) * dim;
+				let yn = y * idim;
+				let yp = (y+1) * idim;
 				for z in (0..dim).step_by(2) {
 					let zn = z;
 					let zp = z+1;
 
-					let nnn = trees[(xn + yn + zn) as usize].clone();
-					let nnp = trees[(xn + yn + zp) as usize].clone();
-					let npn = trees[(xn + yp + zn) as usize].clone();
-					let npp = trees[(xn + yp + zp) as usize].clone();
-					let pnn = trees[(xp + yn + zn) as usize].clone();
-					let pnp = trees[(xp + yn + zp) as usize].clone();
-					let ppn = trees[(xp + yp + zn) as usize].clone();
-					let ppp = trees[(xp + yp + zp) as usize].clone();
-					
-					
-					reduced_trees.push(Octree::combine(nnn, nnp, npn, npp, pnn, pnp, ppn, ppp, &mix_fn));
+					let nnn = trees[(xn + yn + zn) as usize].take().unwrap();
+					let nnp = trees[(xn + yn + zp) as usize].take().unwrap();
+					let npn = trees[(xn + yp + zn) as usize].take().unwrap();
+					let npp = trees[(xn + yp + zp) as usize].take().unwrap();
+					let pnn = trees[(xp + yn + zn) as usize].take().unwrap();
+					let pnp = trees[(xp + yn + zp) as usize].take().unwrap();
+					let ppn = trees[(xp + yp + zn) as usize].take().unwrap();
+					let ppp = trees[(xp + yp + zp) as usize].take().unwrap();
+
+					let dest_coords = [x, y, z].map(|c| c / (dim / 2));
+					let dest_idx = dest_coords[0]*idim*idim + dest_coords[1]*idim + dest_coords[2];
+
+					trees[dest_idx as usize] = Some(Octree::combine(nnn, nnp, npn, npp, pnn, pnp, ppn, ppp, &mix_fn));
 				}
 			}
 		}
 
-		trees = reduced_trees;
 		dim /= 2;
 	}
 
-	Some(trees[0].clone())
+	Some(trees[0].take().unwrap())
 }
 
 
