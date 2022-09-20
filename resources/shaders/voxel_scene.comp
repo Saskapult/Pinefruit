@@ -151,12 +151,12 @@ vec3 bl_ray(uint chunk_byte_index, vec3 origin, vec3 direction, float tlimit, ou
 	// That stack-based ray thing we saw a while ago would not need this
 	// This 'solution' is suboptimal because it will still waste cycles on chunks with little content
 	// I don't have profiling data for this but it seems to make things noticably faster
-	if (tree_is_empty(chunk_byte_index)) {
-		t = 0.0;
-		hit = 0.0;
-		normal = vec3(0.0);
-		return vec3(0.0, 0.86, 1.0);
-	}
+	// BROKEN FOR SOME REASON
+	// if (tree_is_empty(chunk_byte_index)) {
+	// 	t = 0.0;
+	// 	hit = 0.0;
+	// 	return vec3(0.0, 1.0, 0.0);
+	// }
 	
 
 	ivec3 vpos = ivec3(floor(origin));
@@ -173,9 +173,10 @@ vec3 bl_ray(uint chunk_byte_index, vec3 origin, vec3 direction, float tlimit, ou
 	t = 0.0;
 	hit = 0.0;
 	int iters = 0;
+	bvec3 dmask;
 	while (true) {
-		if (iters >= 50) return vec3(0.0, 0.86, 1.0);
-		if (t >= tlimit) return vec3(0.0, 0.0, 1.0);
+		if (iters >= 50) return vec3(0.0, 0.86, 1.0); // Debug purple
+		if (t >= tlimit) return vec3(0.0, 0.0, 1.0); // Red
 		iters += 1;
 
 		bool inbounds = all(lessThanEqual(vpos, ivec3(15))) && all(greaterThanEqual(vpos, ivec3(0)));
@@ -187,34 +188,11 @@ vec3 bl_ray(uint chunk_byte_index, vec3 origin, vec3 direction, float tlimit, ou
 			return vec3(read_colour_rgba8(actual_content));
 		}
 
-		if (tmax.x < tmax.y) {
-			if (tmax.x < tmax.z) {
-				normal = vec3(-vstep.x, 0.0, 0.0);
-				vpos.x += vstep.x;
-				t = tmax.x;
-				tmax.x += tdelta.x;
-			}
-			else {
-				normal = vec3(0.0, 0.0, -vstep.z);
-				vpos.z += vstep.z;
-				t = tmax.z;
-				tmax.z += tdelta.z;
-			}
-		}
-		else {
-			if (tmax.y < tmax.z) {
-				normal = vec3(0.0, -vstep.y, 0.0);
-				vpos.y += vstep.y;
-				t = tmax.y;
-				tmax.y += tdelta.y;
-			}
-			else {
-				normal = vec3(0.0, 0.0, -vstep.z);
-				vpos.z += vstep.z;
-				t = tmax.z;
-				tmax.z += tdelta.z;
-			}
-		}
+		dmask = lessThanEqual(tmax.xyz, min(tmax.yzx, tmax.zxy));
+		normal = vec3(dmask) * vec3(-vstep); // Doesn't actually need to be computed until hit something
+		t = min(tmax.x, min(tmax.y, tmax.z));
+		vpos += ivec3(vec3(dmask)) * vstep;
+		tmax += vec3(dmask) * tdelta;
 	}
 	return vec3(0.0);
 }
@@ -240,15 +218,14 @@ vec3 hl_ray(vec3 origin, vec3 direction, float tlimit, out float hit, out uint i
 	vec3 normal = vec3(0.0);
 	float hitany = 0.0;
 	int iters = 0;
+	bvec3 mask;
 	while (true) {
-		if (iters >= 100) return vec3(1.0, 0.0, 0.86);	// Debug purple
-		if (t >= tlimit) return vec3(1.0, 0.0, 0.0);	// Red
+		if (iters >= 100) return vec3(1.0, 1.0, 0.86); // Off white
+		if (t >= tlimit) return vec3(1.0, 1.0, 0.0); // Yellow
 		iters += 1;
 
 		uint chunk_res = chunk_at(vpos);
-		// if (chunk_res == 42) return vec3(1.0, 1.0, 1.0);
 		if (chunk_res != 0) {
-			// return vec3(0.0, 1.0, 1.0);
 			uint chunk_index = chunk_res - 1;
 
 			// Hit position relative to voxel origin
@@ -263,39 +240,15 @@ vec3 hl_ray(vec3 origin, vec3 direction, float tlimit, out float hit, out uint i
 				float perc = 1.0 - light_angle / 3.15;
 
 				hit = 1.0;
-				// return mix(bl_result, vec3(0.0), abs(bl_normal));
 				return bl_result * perc;
 			}
 		};
 
-		if (tmax.x < tmax.y) {
-			if (tmax.x < tmax.z) {
-				normal = vec3(-vstep.x, 0.0, 0.0);
-				vpos.x += vstep.x;
-				t = tmax.x;
-				tmax.x += tdelta.x;
-			}
-			else {
-				normal = vec3(0.0, 0.0, -vstep.z);
-				vpos.z += vstep.z;
-				t = tmax.z;
-				tmax.z += tdelta.z;
-			}
-		}
-		else {
-			if (tmax.y < tmax.z) {
-				normal = vec3(0.0, -vstep.y, 0.0);
-				vpos.y += vstep.y;
-				t = tmax.y;
-				tmax.y += tdelta.y;
-			}
-			else {
-				normal = vec3(0.0, 0.0, -vstep.z);
-				vpos.z += vstep.z;
-				t = tmax.z;
-				tmax.z += tdelta.z;
-			}
-		}
+		mask = lessThanEqual(tmax.xyz, min(tmax.yzx, tmax.zxy));
+		normal = vec3(mask) * vec3(-vstep);
+		t = min(tmax.x, min(tmax.y, tmax.z));
+		vpos += ivec3(vec3(mask)) * vstep;
+		tmax += vec3(mask) * tdelta;
 	}
 }
 
@@ -321,8 +274,6 @@ void main() {
 
 	vec4 result = vec4(ppr, 1.0);
 
-	// vec4 result = vec4(read_colour_rgba8(4).rgb, 1.0);
-	
 	imageStore(resultImage, ivec2(gl_GlobalInvocationID.xy), result);
 	// imageStore(resultImage, ivec2(gl_GlobalInvocationID.xy), vec4(0.5, 0.5, 0.1, 1.0));
 }
