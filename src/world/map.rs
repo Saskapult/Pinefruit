@@ -94,7 +94,7 @@ impl Map {
 
 			generated_chunk_sender,
 			generated_chunk_receiver,
-			max_generation_jobs: 16,
+			max_generation_jobs: 32,
 			cur_generation_jobs: 0,
 
 			chunk_size, 
@@ -185,7 +185,7 @@ impl Map {
 			}
 			match mce {
 				MapChunkEntry::UnLoaded => {
-					info!("Generating chunk {chunk_position:?}");
+					// info!("Generating chunk {chunk_position:?}");
 					queued_chunks.push(chunk_position);
 					self.cur_generation_jobs += 1;
 					let f = self.chunk_generation_function(chunk_position, blocks)?;
@@ -206,7 +206,7 @@ impl Map {
 	}
 	pub fn receive_generated_chunks(&mut self) {
 		for (chunk_position, chunk, block_mods) in self.generated_chunk_receiver.try_iter().collect::<Vec<_>>() {
-			info!("Received generated chunk {chunk_position:?}");
+			// info!("Received generated chunk {chunk_position:?}");
 			self.cur_generation_jobs -= 1;
 			self.insert_chunk(chunk_position, chunk, KGeneration::new());
 			self.apply_chunkblockmods(block_mods);

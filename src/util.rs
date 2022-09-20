@@ -77,11 +77,9 @@ impl DurationHolder {
 	}
 
 	pub fn average(&self) -> Option<Duration> {
-		if self.durations.len() == 0 {
-			None
-		} else {
-			Some(self.durations.iter().sum::<Duration>() / (self.durations.len() as u32))
-		}
+		self.durations.iter().cloned()
+			.reduce(|a, v| a + v)
+			.and_then(|d| Some(d / self.durations.len() as u32))
 	}
 
 	pub fn median(&self) -> Option<Duration> {

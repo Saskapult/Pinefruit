@@ -1,3 +1,4 @@
+use wgpu_profiler::{GpuProfiler, GpuTimerScopeResult};
 use winit::{
 	event::*,
 	event_loop::*,
@@ -10,7 +11,7 @@ use std::time::{Instant, Duration};
 use egui;
 use crate::ecs::*;
 use crate::game::Game;
-use crate::gui::{GameWidget, MessageWidget, EntityMapLookComponent};
+use crate::gui::{GameWidget, MessageWidget, RenderProfilingWidget, VoxelProfilingWidget};
 use generational_arena::{Arena, Index};
 use crate::gpu::*;
 use egui_wgpu_backend::RenderPass;
@@ -47,16 +48,20 @@ pub struct GameWindow {
 	input: InputFilter,
 	last_redraw: Option<Instant>,
 	redraw_delay: Duration,
+	redraw_times: crate::util::DurationHolder,
 
 	pub platform: egui_winit_platform::Platform,
 	start_time: Instant, // Used for egui animations
 	test_texture: Option<egui::TextureHandle>,
-
 	pub game_widget: GameWidget,
 	message_widget: MessageWidget,
-	game_times: crate::util::DurationHolder,
+	
+	last_render_profile: Option<Vec<GpuTimerScopeResult>>,
+	profiling_widget: RenderProfilingWidget,
 
 	pub settings: WindowSettings,
+
+	profiler: Option<GpuProfiler>
 }
 impl GameWindow {
 	pub fn new(
@@ -80,12 +85,12 @@ impl GameWindow {
 			height: 720,
 		});
 
-		let size = window.inner_size();
+		let inner_size = window.inner_size();
 		let surface_config = wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
 			format: surface.get_supported_formats(&adapter)[0],
-			width: size.width,
-			height: size.height,
+			width: inner_size.width,
+			height: inner_size.height,
 			present_mode: wgpu::PresentMode::Fifo,
 		};
 		info!("Created new game window with format {:?}", &surface_config.format);
@@ -93,30 +98,13 @@ impl GameWindow {
 		window.set_title("kkraft time");
 		window.set_window_icon(None);
 
+		let outer_size = window.outer_size();
 		let platform = egui_winit_platform::Platform::new(egui_winit_platform::PlatformDescriptor {
-			physical_width: size.width as u32,
-			physical_height: size.height as u32,
+			physical_width: outer_size.width as u32,
+			physical_height: outer_size.height as u32,
 			scale_factor: window.scale_factor(),
 			font_definitions: egui::FontDefinitions::default(),
-			style: egui::Style {
-				visuals: egui::style::Visuals {
-					widgets: egui::style::Widgets {
-						noninteractive: egui::style::WidgetVisuals {
-							// window background
-							bg_fill: egui::Color32::TRANSPARENT, 
-							// separators, indentation lines, windows outlines
-							bg_stroke: egui::Stroke::none(),
-							// normal text color
-							fg_stroke: egui::Stroke::new(1.0, egui::Color32::WHITE), 
-							rounding: egui::Rounding::none(),
-							expansion: 0.0,
-						},
-						..Default::default()
-					},
-					..Default::default()
-				},
-				..Default::default()
-			},
+			style: egui::Style::default(),
 		});
 
 		Self {
@@ -131,6 +119,7 @@ impl GameWindow {
 			input: InputFilter::new(),
 			last_redraw: None,
 			redraw_delay: Duration::from_secs_f32(1.0 / 60.0),
+			redraw_times: crate::util::DurationHolder::new(30),
 			
 			platform,
 			start_time: Instant::now(),
@@ -138,9 +127,12 @@ impl GameWindow {
 
 			game_widget: GameWidget::new(None),
 			message_widget: MessageWidget::new(),
-			game_times: crate::util::DurationHolder::new(30),
+			last_render_profile: None,
+			profiling_widget: RenderProfilingWidget::new(),
 
 			settings: WindowSettings::new(),
+
+			profiler: None,
 		}
 	}
 
@@ -161,88 +153,89 @@ impl GameWindow {
 		destination_view: &wgpu::TextureView,
 		world: &shipyard::World,
 	) -> egui::TexturesDelta {
+		self.profiler.as_mut().unwrap().begin_scope("egui", encoder, device);
+
 		self.platform.update_time(self.start_time.elapsed().as_secs_f64());
 		self.platform.begin_frame();
 		let ctx = self.platform.context();
 
-		self.game_times.update();
+		egui::SidePanel::left("left panel")
+			.resizable(false)
+			.default_width(220.0)
+			.max_width(220.0)
+			.min_width(220.0)
+			.show(&ctx, |ui| {
+				ui.vertical(|ui| {
+					ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
 
-		egui::CentralPanel::default().show(&ctx, |ui| {
-			egui::Frame::none()
-				.fill(egui::Color32::DARK_GRAY)
-				.outer_margin(egui::style::Margin::same(0.0))
-				.show(ui, |ui| {
-			egui::SidePanel::left("left panel")
-				.resizable(false)
-				.default_width(200.0)
-				.max_width(200.0)
-				.min_width(200.0)
-				.show_inside(ui, |ui| {
-					ui.vertical(|ui| {
-						ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
+					self.redraw_times.update();
+					ui.label(format!("~{}Hz", (1.0 / self.redraw_times.average().unwrap_or(Duration::ZERO).as_secs_f32()).round()));
 
-						ui.label(format!("projected ~{}Hz", (1.0 / self.game_times.average().unwrap_or(Duration::ZERO).as_secs_f32().round())));
-
-						if let Some(entity) = self.game_widget.tracked_entity {
-							ui.label(format!("Entity: {entity:?}"));
-							let tcs = world.borrow::<View<TransformComponent>>().unwrap();
-							if let Ok((tc,)) = (&tcs,).get(entity) {
-								ui.label(format!("Position: [{:.1}, {:.1}, {:.1}]", tc.position[0], tc.position[1], tc.position[2]));
-								let (r, p, y) = tc.rotation.euler_angles();
-								ui.label(format!("Rotation: [{:.1}, {:.1}, {:.1}]", r, p, y));
-								
-								let c = tc.position / 16.0;
-								ui.label(format!("Chunk: [{}, {}, {}]", c[0].floor() as i32, c[1].floor() as i32, c[2].floor() as i32));
-							}
-
-							let emlc = world.borrow::<View<MapLookAtComponent>>().unwrap();
-							if let Ok(looking_component) = emlc.get(entity) {
-								let n = looking_component.hit.as_ref()
-									.and_then(|s| Some(format!("'{s}'")))
-									.unwrap_or("None".to_string());
-								ui.label(format!("Hit {n}"));
-							}
-						} else {
-							ui.label("Tracked entity not set!");
-						}
-		
-						let texture: &egui::TextureHandle = self.test_texture.get_or_insert_with(|| {
-							// Load the texture only once.
-							ui.ctx().load_texture("my-image", egui::ColorImage::example())
-						});
-						ui.image(texture, texture.size_vec2());
-		
-						if ui.button("Send test message!").clicked() {
-							println!("Hey!");
-							self.message_widget.add_message("Hey!".to_string(), Instant::now() + Duration::from_secs_f32(5.0));
+					if let Some(entity) = self.game_widget.tracked_entity {
+						ui.label(format!("Entity: {entity:?}"));
+						let tcs = world.borrow::<View<TransformComponent>>().unwrap();
+						if let Ok((tc,)) = (&tcs,).get(entity) {
+							ui.label(format!("Position: [{:.1}, {:.1}, {:.1}]", tc.position[0], tc.position[1], tc.position[2]));
+							let (r, p, y) = tc.rotation.euler_angles();
+							ui.label(format!("Rotation: [{:.1}, {:.1}, {:.1}]", r, p, y));
+							
+							let c = tc.position / 16.0;
+							ui.label(format!("Chunk: [{}, {}, {}]", c[0].floor() as i32, c[1].floor() as i32, c[2].floor() as i32));
 						}
 
+						let emlc = world.borrow::<View<MapLookAtComponent>>().unwrap();
+						if let Ok(looking_component) = emlc.get(entity) {
+							let n = looking_component.hit.as_ref()
+								.and_then(|s| Some(format!("'{s}'")))
+								.unwrap_or("None".to_string());
+							ui.label(format!("Hit {n}"));
+						}
+					} else {
+						ui.label("Tracked entity not set!");
+					}
+	
+					let texture: &egui::TextureHandle = self.test_texture.get_or_insert_with(|| {
+						// Load the texture only once.
+						ui.ctx().load_texture("my-image", egui::ColorImage::example())
 					});
-				});
-			egui::SidePanel::right("right panel")
-				.resizable(false)
-				.default_width(200.0)
-				.max_width(200.0)
-				.min_width(200.0)
-				.show_inside(ui, |ui| {
-					ui.vertical(|ui| {
-						ui.label("Right panel");
+					ui.image(texture, texture.size_vec2());
+	
+					if ui.button("Send test message!").clicked() {
+						println!("Hey!");
+						self.message_widget.add_message("Hey!".to_string(), Instant::now() + Duration::from_secs_f32(5.0));
+					}
 
-						self.message_widget.display(ui);
+					if let Some(profile_data) = self.last_render_profile.as_ref() {
+						self.profiling_widget.display(ui, profile_data);
+					}
 
-						if ui.button("Refresh shaders").clicked() {
-							self.message_widget.add_message("Todo: re-add shader reloading", Instant::now() + Duration::from_secs_f32(5.0));
-						}
-					});
-				});
-			egui::CentralPanel::default()
-				.show_inside(ui, |ui| {
-					ui.vertical_centered_justified(|ui| {
-						self.game_widget.display(ui, &mut self.settings);
-					})
+					if let Ok(vrr) = world.borrow::<UniqueView<VoxelRenderingResource>>() {
+						VoxelProfilingWidget::display(ui, &vrr);
+					}
 				});
 			});
-		});
+		egui::SidePanel::right("right panel")
+			.resizable(false)
+			.default_width(200.0)
+			.max_width(200.0)
+			.min_width(200.0)
+			.show(&ctx, |ui| {
+				ui.vertical(|ui| {
+					ui.label("Right panel");
+
+					self.message_widget.display(ui);
+
+					if ui.button("Refresh shaders").clicked() {
+						self.message_widget.add_message("Todo: re-add shader reloading", Instant::now() + Duration::from_secs_f32(5.0));
+					}
+				});
+			});
+		egui::CentralPanel::default()
+			.show(&ctx, |ui| {
+				ui.vertical_centered_justified(|ui| {
+					self.game_widget.display(ui, &mut self.settings);
+				})
+			});
 		
 		let full_output = self.platform.end_frame(Some(&self.window));
 		let paint_jobs = self.platform.context().tessellate(full_output.shapes);
@@ -270,6 +263,8 @@ impl GameWindow {
 			None,
 		).unwrap();
 
+		self.profiler.as_mut().unwrap().end_scope(encoder);
+
 		tdelta
 	}
 
@@ -293,6 +288,9 @@ impl GameWindow {
 				return;
 			}
 		}
+		if let Some(t) = self.last_redraw {
+			self.redraw_times.record(t.elapsed());
+		}
 		self.last_redraw = Some(Instant::now());
 
 		// If size changed then reconfigure
@@ -301,6 +299,12 @@ impl GameWindow {
 			self.size_changed = false;
 		}		
 
+		if self.profiler.is_none() {
+			self.profiler = Some(GpuProfiler::new(5, queue.get_timestamp_period(), wgpu::Features::all_webgpu_mask() 
+				| wgpu::Features::TIMESTAMP_QUERY
+				| wgpu::Features::WRITE_TIMESTAMP_INSIDE_PASSES,
+			));
+		}
 		let frame = match self.surface.get_current_texture() {
 			Ok(tex) => tex,
 			Err(wgpu::SurfaceError::Outdated) => {
@@ -317,9 +321,10 @@ impl GameWindow {
 		});
 
 		// Game?
-		let redraw_game = self.game_widget.maybe_encode_render(
+		let _redraw_game = self.game_widget.maybe_encode_render(
 			device,
 			queue,
+			self.profiler.as_mut().unwrap(),
 			egui_rpass,
 			&mut encoder,
 			world,
@@ -355,18 +360,20 @@ impl GameWindow {
 		}
 
 		// Submit to GPU
+		self.profiler.as_mut().unwrap().resolve_queries(&mut encoder);
 		queue.submit(std::iter::once(encoder.finish()));
-		if redraw_game {
-			let submit_st = Instant::now();
-			let gts = self.game_times.record_later();
-			queue.on_submitted_work_done(move || {
-				let submit_en = Instant::now();
-				gts(submit_en - submit_st);
-			});
-		}
-
+		
 		// Show
 		frame.present();
+
+		self.profiler.as_mut().unwrap().end_frame().unwrap();
+		
+		if let Some(g) = self.profiler.as_mut().unwrap().process_finished_frame() {
+			// Indicates that game redrew
+			if g.len() > 1 {
+				self.last_render_profile = Some(g);
+			}
+		}
 
 		// Egui cleanup
 		egui_rpass.remove_textures(tdelta)

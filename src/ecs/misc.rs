@@ -24,6 +24,7 @@ impl TimeResource {
 }
 
 
+// Todo: Rename to WorldTransform
 #[derive(Component, Debug, Clone)]
 pub struct TransformComponent {
 	pub position: Vector3<f32>,
@@ -63,3 +64,12 @@ impl TransformComponent {
 		Matrix4::new_nonuniform_scaling(&self.scale) * self.rotation.to_homogeneous() * Matrix4::new_translation(&self.position)
 	}
 }
+
+
+// How work with (local -> local -> world)?
+// pub struct LocalTransformComponent {
+// 	pub relative_to: EntityId,
+// 	pub position: Vector3<f32>,
+// 	pub rotation: UnitQuaternion<f32>,
+// 	pub scale: Vector3<f32>,
+// }

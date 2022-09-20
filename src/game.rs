@@ -23,6 +23,7 @@ pub struct Game {
 	
 	last_tick: Instant,
 	tick_delay: Duration,
+	pub last_tick_time: Option<Duration>,
 }
 impl Game {
 	pub fn new(
@@ -58,7 +59,9 @@ impl Game {
 			device, queue, gpu_data, 
 			event_loop_proxy,
 			last_tick: Instant::now(),
-			tick_delay: Duration::from_secs_f32(1.0 / 60.0),
+			tick_delay: Duration::from_secs_f32(1.0 / 120.0),
+			last_tick_time: None,
+
 		}
 	}
 
@@ -70,8 +73,6 @@ impl Game {
 		self.world.add_unique(MapResource::new([16; 3], 0));
 
 		self.gpu_data.shaders.update_shaders();
-
-		// self.world.run(load_test_octree);
 	}
 
 	pub fn should_tick(&self) -> bool {
@@ -95,6 +96,8 @@ impl Game {
 		self.world.run(map_lookat_system);
 
 		self.world.run(voxel_render_system);
+
+		self.last_tick_time = Some(self.last_tick.elapsed());
 	}
 
 	pub fn new_window(&mut self) {

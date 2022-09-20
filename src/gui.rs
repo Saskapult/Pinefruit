@@ -1,27 +1,16 @@
 use std::{time::{Instant, Duration}, sync::mpsc::{Receiver, SyncSender}};
-use bytemuck::{Pod, Zeroable};
 use egui;
 use egui_wgpu_backend::RenderPass;
 use shipyard::*;
+use wgpu_profiler::{GpuProfiler, GpuTimerScopeResult};
 use std::sync::mpsc::sync_channel;
 use crate::{render::*, gpu::GraphicsData, game::Game, input::ControlMap, ecs::InputComponent};
 use crate::window::WindowSettings;
 use crate::ecs::*;
 use nalgebra::*;
-use wgpu::util::DeviceExt;
 use crate::input::*;
 use std::path::PathBuf;
 
-
-
-
-#[repr(C)]
-#[derive(Debug, Pod, Zeroable, Clone, Copy)]
-struct Camera {
-	position: [f32; 4],
-	rotation: [[f32; 4]; 4],
-	near: f32,
-}
 
 
 
@@ -79,9 +68,9 @@ impl GameWidget {
 				MouseComponent::new(),
 				// KeysComponent::new(),
 				ControlComponent::from_map(cc),
-				MapLoadingComponent::new(11),
-				MapOctreeLoadingComponent::new(11),
-				VoxelRenderingComponent::new(11),
+				MapLoadingComponent::new(3),
+				MapOctreeLoadingComponent::new(7),
+				VoxelRenderingComponent::new(7),
 				MapLookAtComponent::new(100.0),
 			))
 		});
@@ -99,6 +88,7 @@ impl GameWidget {
 		&mut self,
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
+		profiler: &mut GpuProfiler,
 		egui_rpass: &mut RenderPass,
 		encoder: &mut wgpu::CommandEncoder,
 		// Maybe take game instead?
@@ -111,6 +101,8 @@ impl GameWidget {
 			}
 		}
 		self.last_render = Some(Instant::now());
+
+		profiler.begin_scope("View Texture", encoder, device);
 
 		if let Some(entity) = self.tracked_entity {
 
@@ -182,6 +174,8 @@ impl GameWidget {
 				let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
 					label: Some("voxel scene pass"),
 				});
+
+				profiler.begin_scope("Voxel Scene", &mut cp, device);
 				
 				cp.set_pipeline(shader_pl.compute().unwrap());
 
@@ -190,9 +184,13 @@ impl GameWidget {
 				cp.set_bind_group(2, &vrr.scene_bg, &[]);
 				
 				cp.dispatch_workgroups(rgba.size.width.div_ceil(16), rgba.size.height.div_ceil(16), 1);
+
+				profiler.end_scope(&mut cp);
 			}
 
+			profiler.begin_scope("sRGB Blit", encoder, device);
 			blitter.blit(device, encoder, &rgba.view, &srgba.view);
+			profiler.end_scope(encoder);
 
 			match self.display_texture {
 				Some(id) => {
@@ -213,6 +211,8 @@ impl GameWidget {
 			};
 
 		}
+
+		profiler.end_scope(encoder);
 
 		true
 	}
@@ -308,13 +308,76 @@ impl EntityMovementWidget {
 	}
 }
 
-pub struct EntityMapLookComponent;
-impl EntityMapLookComponent {
-	pub fn display(&self, ui: &mut egui::Ui, looking_component: &mut MapLookAtComponent) {
+pub struct EntityMapLookAtWidget;
+impl EntityMapLookAtWidget {
+	pub fn display(ui: &mut egui::Ui, looking_component: &mut MapLookAtComponent) {
 		let n = looking_component.hit.as_ref()
 			.and_then(|s| Some(format!("'{s}'")))
 			.unwrap_or("None".to_string());
 		ui.label(format!("Hit {n}"));
+	}
+}
+
+
+#[derive(Debug)]
+pub struct RenderProfilingWidget {
+	trace_path: String,
+	errs: Option<String>,
+}
+impl RenderProfilingWidget {
+	pub fn new() -> Self {
+		Self { 
+			trace_path: "/tmp/trace.json".to_string(), 
+			errs: None,
+		}
+	}
+
+	fn recursive_thing(ui: &mut egui::Ui, sr: &GpuTimerScopeResult) {
+		ui.collapsing(&sr.label, |ui| {
+			let ft = sr.time.end - sr.time.start;
+			ui.label(format!("{:.10}s", ft));
+			ui.label(format!("~{:.2}Hz", 1.0 / ft));
+			for ns in sr.nested_scopes.iter() {
+				Self::recursive_thing(ui, ns);
+			}
+		});		
+	}
+
+	pub fn display(&mut self, ui: &mut egui::Ui, profile_data: &Vec<GpuTimerScopeResult>) {
+		let tft = profile_data.iter().fold(0.0, |a, p| a + (p.time.end - p.time.start));
+
+		ui.label(format!("Frame Time: ~{:.2}Hz", 1.0 / tft));
+		ui.collapsing("Frame Details", |ui| {
+			ui.label(format!("{tft:.10}s"));
+			for sr in profile_data {
+				Self::recursive_thing(ui, sr);
+			}
+
+			ui.text_edit_singleline(&mut self.trace_path);
+
+			let mut text = egui::RichText::new("Output Trace File");
+			if self.errs.is_some() {
+				text = text.color(egui::Color32::RED);
+			}
+			let mut button = ui.button(text);
+			if let Some(es) = self.errs.as_ref() {
+				button = button.on_hover_text(es);
+			}
+			if button.clicked() {
+				self.errs = wgpu_profiler::chrometrace::write_chrometrace(std::path::Path::new(&*self.trace_path), profile_data).err().and_then(|e| Some(e.to_string()));
+			}
+		});
+	}
+}
+
+
+#[derive(Debug)]
+pub struct VoxelProfilingWidget;
+impl VoxelProfilingWidget {
+	pub fn display(ui: &mut egui::Ui, vrr: &VoxelRenderingResource) {
+		ui.label(format!("Buffer: {:.2}%", vrr.buffer.capacity_frac() * 100.0));
+		ui.label(format!("{} chunk octrees", vrr.chunks_octrees.len()));
+		ui.label(format!("{} array volumes", vrr.array_volumes.len()));
 	}
 }
 

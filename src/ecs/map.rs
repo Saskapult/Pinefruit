@@ -10,6 +10,7 @@ use rapier3d::prelude::*;
 use crate::mesh::Mesh;
 use crate::util::KGeneration;
 use generational_arena::Index;
+use rayon::prelude::*;
 
 
 
@@ -416,6 +417,10 @@ pub fn map_octree_system(
 	// 	map.chunk_octrees.remove(&chunk_position);
 	// }
 
+	// Todo: Make it better
+	// Remove clone from chunk to octree?
+	// Mutlithread chunk to octree (already did that for this, probably won't help)
+	let mut chunks_for_par = Vec::new();
 	for chunk_position in chunks_to_tree {
 		// If map chunk exists
 		if let Ok(mce) = map.map.chunk_map(chunk_position) {
@@ -425,13 +430,22 @@ pub fn map_octree_system(
 					continue
 				}
 			}
-			println!("Creating octree for chunk {chunk_position:?}");
-			let tree = chunk_to_octree(&mce.chunk).unwrap();
-			voxel_data.insert_chunk(&gpu.queue, chunk_position, &tree);
-			map.chunk_octrees.insert(chunk_position, (tree, mce.generation));
-			info!("Buffer is now at {:.2}% capacity", voxel_data.buffer.capacity_frac() * 100.0);
+			// println!("Creating octree for chunk {chunk_position:?}");
+			chunks_for_par.push((chunk_position, &mce.chunk, mce.generation));			
 		}
 	}
+	let fini = chunks_for_par.par_iter()
+		.map(|&(cp, cr, g)| (cp, chunk_to_octree(cr).unwrap(), g))
+		.collect::<Vec<_>>();
+	for (chunk_position, tree, generation) in fini {
+		voxel_data.insert_chunk(&gpu.queue, chunk_position, &tree);
+		map.chunk_octrees.insert(chunk_position, (tree, generation));
+	}
+	// if chunks_for_par.len() > 0 {
+	// 	info!("Tree'd {} chunks", chunks_for_par.len());
+	// 	info!("Buffer is now at {:.2}% capacity", voxel_data.buffer.capacity_frac() * 100.0);
+	// }
+
 }
 
 
