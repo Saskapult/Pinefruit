@@ -1,4 +1,4 @@
-use nalgebra::*;
+use glam::*;
 
 
 pub trait Intersect<Other> {
@@ -9,7 +9,7 @@ pub trait Intersect<Other> {
 
 
 struct RayPointLight {
-	pub position: Vector3<f32>,
+	pub position: Vec3,
 	pub radius: f32,
 	pub colour: [f32; 3],
 }
@@ -17,20 +17,19 @@ struct RayPointLight {
 
 
 pub struct Ray {
-	pub origin: Vector3<f32>,
-	pub direction: Vector3<f32>,
+	pub origin: Vec3,
+	pub direction: Vec3,
 }
 impl Ray {
-	pub fn new(origin: Vector3<f32>, mut direction: Vector3<f32>) -> Self {
-		direction.normalize_mut();
-		Self { origin, direction }
+	pub fn new(origin: Vec3, direction: Vec3) -> Self {
+		Self { origin, direction: direction.normalize() }
 	}
 }
 
 
 
 pub struct Sphere {
-	pub position: Vector3<f32>,
+	pub position: Vec3,
 	pub radius: f32,
 }
 
@@ -39,20 +38,20 @@ pub struct Sphere {
 #[derive(Debug, Clone)]
 pub struct OBB {
 	pub aabb: AABB,
-	pub orientation: UnitQuaternion<f32>,
+	pub orientation: Quat,
 }
 impl OBB {
-	pub fn corners(&self) -> [Vector3<f32>; 8] {
+	pub fn corners(&self) -> [Vec3; 8] {
 		let n = &self.aabb.min;
 		let p = &self.aabb.max;
-		let nnn = Vector3::new(n[0], n[1], n[2]);
-		let nnp = Vector3::new(n[0], n[1], p[2]);
-		let npn = Vector3::new(n[0], p[1], n[2]);
-		let npp = Vector3::new(n[0], p[1], p[2]);
-		let pnn = Vector3::new(p[0], n[1], n[2]);
-		let pnp = Vector3::new(p[0], n[1], p[2]);
-		let ppn = Vector3::new(p[0], p[1], n[2]);
-		let ppp = Vector3::new(p[0], p[1], p[2]);
+		let nnn = Vec3::new(n[0], n[1], n[2]);
+		let nnp = Vec3::new(n[0], n[1], p[2]);
+		let npn = Vec3::new(n[0], p[1], n[2]);
+		let npp = Vec3::new(n[0], p[1], p[2]);
+		let pnn = Vec3::new(p[0], n[1], n[2]);
+		let pnp = Vec3::new(p[0], n[1], p[2]);
+		let ppn = Vec3::new(p[0], p[1], n[2]);
+		let ppp = Vec3::new(p[0], p[1], p[2]);
 		[nnn, nnp, npn, npp, pnn, pnp, ppn, ppp]
 	}
 
@@ -76,9 +75,9 @@ impl OBB {
 	// Untested
 	pub fn ray_intersect(
 		&self, 
-		origin: Vector3<f32>, 
-		direction: Vector3<f32>, 
-		position: Vector3<f32>, 
+		origin: Vec3, 
+		direction: Vec3, 
+		position: Vec3, 
 		t0: f32, 
 		t1: f32, 
 	) -> Option<(f32, f32)> {
@@ -88,13 +87,13 @@ impl OBB {
 		let mut t_max = t1;
 
 		for i in 0..3 {
-			let axis = self.orientation * Vector3::new(
+			let axis = self.orientation * Vec3::new(
 				if i==0 { 1.0 } else { 0.0 }, 
 				if i==1 { 1.0 } else { 0.0 }, 
 				if i==2 { 1.0 } else { 0.0 },
 			);
-			let e = axis.dot(&poisiton_relative_to_ray);
-			let f = direction.dot(&axis);
+			let e = axis.dot(poisiton_relative_to_ray);
+			let f = direction.dot(axis);
 			if f.abs() > 0.00000001 {
 				let (t1, t2) = {
 					let t1 = (e + self.aabb.min[i]) / f;
@@ -131,24 +130,24 @@ impl OBB {
 
 #[derive(Debug, Clone)]
 pub struct AABB {
-	pub min: Vector3<f32>,
-	pub max: Vector3<f32>,
+	pub min: Vec3,
+	pub max: Vec3,
 }
 impl AABB {
 	pub fn new(
-		aabb_min: Vector3<f32>,
-		aabb_max: Vector3<f32>,
+		aabb_min: Vec3,
+		aabb_max: Vec3,
 	) -> Self {
 		Self {
 			min: aabb_min, max: aabb_max,
 		}
 	}
 
-	pub fn extent(&self) -> Vector3<f32> {
+	pub fn extent(&self) -> Vec3 {
 		(self.max - self.min).abs() / 2.0
 	}
 
-	pub fn centre(&self) -> Vector3<f32> {
+	pub fn centre(&self) -> Vec3 {
 		self.min + self.extent()
 	}
 
@@ -157,9 +156,9 @@ impl AABB {
 	#[inline]
 	pub fn ray_intersect(
 		&self, 
-		origin: Vector3<f32>,
-		direction: Vector3<f32>,
-		position: Vector3<f32>, 
+		origin: Vec3,
+		direction: Vec3,
+		position: Vec3, 
 		t0: f32, // Min distance
 		t1: f32, // Max distance
 	) -> Option<(f32, f32)> {
@@ -228,30 +227,23 @@ impl AABB {
 		}
 	}
 
-	pub fn contains(&self, point: Vector3<f32>) -> bool {
-		point >= self.min && point <= self.max
-
-		// point[0] >= self.p0[0] &&
-		// point[1] >= self.p0[1] &&
-		// point[2] >= self.p0[2] &&
-		// point[0] <= self.p1[0] &&
-		// point[1] <= self.p1[1] &&
-		// point[2] <= self.p1[2]
+	pub fn contains(&self, point: Vec3) -> bool {
+		point.cmpge(self.min).all() && point.cmple(self.max).all()
 	}
 
 	pub fn mid_planes(&self) -> [Plane; 3] {
 		let centre = self.centre();
 		[
 			Plane {
-				normal: *Vector3::z_axis(),
+				normal: Vec3::Z,
 				distance: centre[2],
 			},
 			Plane {
-				normal: *Vector3::y_axis(),
+				normal: Vec3::Y,
 				distance: centre[1],
 			},
 			Plane {
-				normal: *Vector3::x_axis(),
+				normal: Vec3::X,
 				distance: centre[0],
 			},
 		]
@@ -262,23 +254,23 @@ impl AABB {
 
 #[derive(Debug, Clone)]
 pub struct Plane {
-	pub normal: Vector3<f32>,
+	pub normal: Vec3,
 	pub distance: f32,
 }
 impl Plane {
 	// Restricted to along positive line direction
 	pub fn ray_intersect(
 		&self, 
-		origin: Vector3<f32>,
-		direction: Vector3<f32>,
-		position: Vector3<f32>, 
+		origin: Vec3,
+		direction: Vec3,
+		position: Vec3, 
 		t0: f32, // Min distance
 		t1: f32, // Max distance
 	) -> Option<f32> {
-		let d = self.normal.dot(&direction);
+		let d = self.normal.dot(direction);
 		if d > f32::EPSILON {
 			let g = position - origin;
-			let t = g.dot(&self.normal) / d;
+			let t = g.dot(self.normal) / d;
 			if t > t0 && t < t1 {
 				return Some(t)
 			}
@@ -291,17 +283,17 @@ impl Plane {
 
 /// Generates ray directions for each pixel in a thingy
 pub fn ray_spread(
-	rotation: UnitQuaternion<f32>,
+	rotation: Quat,
 	width: u32, 
 	height: u32, 
 	fovy: f32,
-) -> Vec<Vector3<f32>> {
+) -> Vec<Vec3> {
 	let coords = (0..height).flat_map(|y| (0..width).map(move |x| (x, y))).collect::<Vec<_>>();
 
 	let near = 1.0 / (fovy.to_radians() / 2.0).tan();
 	// println!("near is {near}");
 	let directions = coords.iter().map(|&(x, y)| {
-		rotation * Vector3::new(
+		rotation * Vec3::new(
 			(((x as f32 + 0.5) / width as f32) - 0.5) * 2.0,
 			-(((y as f32 + 0.5) / height as f32) - 0.5) * 2.0,
 			near,
@@ -312,83 +304,19 @@ pub fn ray_spread(
 }
 
 
-
-pub fn trace_octree(
-	origin: Vector3<f32>,
-	directions: &Vec<Vector3<f32>>,
-	albedo: &mut Vec<[f32; 4]>,
-	depth: &mut Vec<f32>,
-	volume: &crate::octree::Octree<usize>,
-	volume_position: Vector3<f32>,
-	volume_palette: &Vec<[f32; 4]>,
-	distance: f32,
-) {
-	let new_data = directions.iter().enumerate()
-		.filter_map(|(i, &direction)| {
-			if let Some((st, en)) = volume.aa_intersect(origin, direction, volume_position, 0.0, distance) {
-				// Filter nothingburgers
-				if depth[i] < st {
-					None
-				} else {
-					Some((i, direction, (st, en)))
-				}
-			} else {
-				None
-			}
-		})
-		.map(|(i, direction, (st, en))| {
-			let hit_pos = origin + direction * (st + 0.05);
-			let rel_hit_pos = hit_pos - volume_position;
-
-			let max1 = en - st;
-			let max2 = distance - st;
-
-			let mut iiter = AWIter::new(
-				rel_hit_pos, 
-				direction, 
-				0.0, 
-				f32::min(max1, max2),
-				1.0,
-			);
-
-			// Mark initial miss as red
-			if !volume.in_bounds([iiter.vx, iiter.vy, iiter.vz]) {
-				return (i, [1.0, 0.0, 0.0, 0.0], st+iiter.t)
-			}
-			loop {
-				if let Some(&g) = volume.get([iiter.vx, iiter.vy, iiter.vz]) {
-					return (i, volume_palette[g], st+iiter.t)
-					// return (i, [0.0, 0.0, 1.0, 0.0], st+iiter.t)
-				}
-
-				// Mark out of cast length as green
-				if !iiter.next().is_some() {
-					return (i, [0.0, 1.0, 0.0, 0.0], st+iiter.t)
-				}
-
-				// Mark out of bounds as white
-				if !volume.in_bounds([iiter.vx, iiter.vy, iiter.vz]) {
-					return (i, [1.0, 1.0, 1.0, 0.0], st+iiter.t)
-				}
-			}
-		}).collect::<Vec<_>>();
-	
-	for (i, new_albedo, new_depth) in new_data {
-		if depth[i] > new_depth {
-			depth[i] = new_depth;
-			albedo[i] = new_albedo;
-		}
-	}
-
+#[derive(Debug, Clone, Copy)]
+pub struct FVTIteratorItem {
+	pub voxel: IVec3,
+	pub t: f32,
+	pub normal: IVec3,
 }
-
 
 
 /// An iterator for Fast Voxel Traversal
 #[derive(Debug)]
-pub struct AWIter {
-	origin: Vector3<f32>,
-	direction: Vector3<f32>,
+pub struct FVTIterator {
+	origin: Vec3,
+	direction: Vec3,
 	pub vx: i32,
 	pub vy: i32,
 	pub vz: i32,
@@ -403,12 +331,12 @@ pub struct AWIter {
 	t_max_z: f32,
 	pub t: f32,
 	t_max: f32,
-	pub normal: Vector3<f32>,
+	pub normal: IVec3,
 }
-impl AWIter {
+impl FVTIterator {
 	pub fn new(
-		origin: Vector3<f32>,
-		direction: Vector3<f32>,
+		origin: Vec3,
+		direction: Vec3,
 		_t_min: f32, // Could do origin = origin + direction * t_min but that loses normal data
 		t_max: f32,
 		voxel_scale: f32,
@@ -464,36 +392,36 @@ impl AWIter {
 			t_max_x, t_max_y, t_max_z, 
 			t: 0.0,
 			t_max,
-			normal: Vector3::zeros(),
+			normal: IVec3::ZERO,
 		}
 	}
 }
-impl Iterator for AWIter {
-	type Item = ();
+impl Iterator for FVTIterator {
+	type Item = FVTIteratorItem;
 
 	fn next(&mut self) -> Option<Self::Item> {
 
 		if self.t_max_x < self.t_max_y {
 			if self.t_max_x < self.t_max_z {
-				self.normal = Vector3::new(-self.v_step_x as f32, 0.0, 0.0);
+				self.normal = IVec3::new(-self.v_step_x, 0, 0);
 				self.vx += self.v_step_x;
 				self.t = self.t_max_x;
 				self.t_max_x += self.t_delta_x;
 				
 			} else {
-				self.normal = Vector3::new(0.0, 0.0, -self.v_step_z as f32);
+				self.normal = IVec3::new(0, 0, -self.v_step_z);
 				self.vz += self.v_step_z;
 				self.t = self.t_max_z;
 				self.t_max_z += self.t_delta_z;
 			}
 		} else {
 			if self.t_max_y < self.t_max_z {
-				self.normal = Vector3::new(0.0, -self.v_step_y as f32, 0.0);
+				self.normal = IVec3::new(0, -self.v_step_y, 0);
 				self.vy += self.v_step_y;
 				self.t = self.t_max_y;
 				self.t_max_y += self.t_delta_y;
 			} else {
-				self.normal = Vector3::new(0.0, 0.0, -self.v_step_z as f32);
+				self.normal = IVec3::new(0, 0, -self.v_step_z);
 				self.vz += self.v_step_z;
 				self.t = self.t_max_z;
 				self.t_max_z += self.t_delta_z;
@@ -501,7 +429,11 @@ impl Iterator for AWIter {
 		}
 
 		if self.t <= self.t_max {
-			Some(())
+			Some(FVTIteratorItem {
+				voxel: IVec3::new(self.vx, self.vy, self.vz),
+				t: self.t,
+				normal: self.normal,
+			})
 		} else {
 			None
 		}

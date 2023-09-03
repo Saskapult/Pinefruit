@@ -1,10 +1,8 @@
-use winit::{
-	event::*,
-};
+use arrayvec::ArrayVec;
+use winit::event::VirtualKeyCode;
 use crate::{ecs::*, input::KeyKey};
-use nalgebra::*;
-use shipyard::*;
-use crate::input::*;
+use glam::*;
+use eks::prelude::*;
 
 
 
@@ -15,82 +13,75 @@ const KEY_LEFT: KeyKey = KeyKey::BoardKey(VirtualKeyCode::A);
 const KEY_UP: KeyKey = KeyKey::BoardKey(VirtualKeyCode::Space);
 const KEY_DOWN: KeyKey = KeyKey::BoardKey(VirtualKeyCode::LShift);
 
-const COMBO_FORWARD: KeyCombo = KeyCombo {
-	modifiers: KeyModifiers::EMPTY,
-	key: KEY_FORWARD,
-};
-const COMBO_BACKWARD: KeyCombo = KeyCombo {
-	modifiers: KeyModifiers::EMPTY,
-	key: KEY_BACKWARD,
-};
-const COMBO_RIGHT: KeyCombo = KeyCombo {
-	modifiers: KeyModifiers::EMPTY,
-	key: KEY_RIGHT,
-};
-const COMBO_LEFT: KeyCombo = KeyCombo {
-	modifiers: KeyModifiers::EMPTY,
-	key: KEY_LEFT,
-};
-const COMBO_UP: KeyCombo = KeyCombo {
-	modifiers: KeyModifiers::EMPTY,
-	key: KEY_UP,
-};
-const COMBO_DOWN: KeyCombo = KeyCombo {
-	modifiers: KeyModifiers::EMPTY,
-	key: KEY_DOWN,
-};
 
-
-
-#[derive(Debug, Component)]
+#[derive(Debug, ComponentIdent)]
 pub struct MovementComponent {
-	pub cid_right: ControlId,
-	pub cid_left: ControlId,
-	pub cid_up: ControlId,
-	pub cid_down: ControlId,
-	pub cid_forward: ControlId,
-	pub cid_backward: ControlId,
-	movement_velocity: Vector3<f32>,
+	pub cid_right: ControlKey,
+	pub cid_left: ControlKey,
+	pub cid_up: ControlKey,
+	pub cid_down: ControlKey,
+	pub cid_forward: ControlKey,
+	pub cid_backward: ControlKey,
+
+	movement_velocity: Vec3,
 	pub max_speed: f32,
 	pub acceleration: f32,
 	pub anti_acceleration: f32,
 }
 impl MovementComponent {
 	pub fn new(control_map: &mut ControlMap) -> Self {
-		let cid_right = control_map.new_cid(
+		let cid_right = control_map.new_control(
 			"Move Right", 
 			"Moves the entity rightward.",
 		);
-		control_map.add_cid_key(cid_right, COMBO_RIGHT);
-		let cid_left = control_map.new_cid(
+		control_map.add_control_binding(cid_right, KeyCombo {
+			modifiers: KeyModifiers::EMPTY,
+			keys: ArrayVec::try_from([KEY_RIGHT].as_slice()).unwrap(),
+		});
+		let cid_left = control_map.new_control(
 			"Move Left", 
 			"Moves the entity leftward.",
 		);
-		control_map.add_cid_key(cid_left, COMBO_LEFT);
-		let cid_up = control_map.new_cid(
+		control_map.add_control_binding(cid_left, KeyCombo {
+			modifiers: KeyModifiers::EMPTY,
+			keys: ArrayVec::try_from([KEY_LEFT].as_slice()).unwrap(),
+		});
+		let cid_up = control_map.new_control(
 			"Move Up", 
 			"Moves the entity upward.",
 		);
-		control_map.add_cid_key(cid_up, COMBO_UP);
-		let cid_down = control_map.new_cid(
+		control_map.add_control_binding(cid_up, KeyCombo {
+			modifiers: KeyModifiers::EMPTY,
+			keys: ArrayVec::try_from([KEY_UP].as_slice()).unwrap(),
+		});
+		let cid_down = control_map.new_control(
 			"Move Down", 
 			"Moves the entity downward.",
 		);
-		control_map.add_cid_key(cid_down, COMBO_DOWN);
-		let cid_forward = control_map.new_cid(
+		control_map.add_control_binding(cid_down, KeyCombo {
+			modifiers: KeyModifiers::EMPTY,
+			keys: ArrayVec::try_from([KEY_DOWN].as_slice()).unwrap(),
+		});
+		let cid_forward = control_map.new_control(
 			"Move Forward", 
 			"Moves the entity forward.",
 		);
-		control_map.add_cid_key(cid_forward, COMBO_FORWARD);
-		let cid_backward = control_map.new_cid(
+		control_map.add_control_binding(cid_forward, KeyCombo {
+			modifiers: KeyModifiers::EMPTY,
+			keys: ArrayVec::try_from([KEY_FORWARD].as_slice()).unwrap(),
+		});
+		let cid_backward = control_map.new_control(
 			"Move Back", 
 			"Moves the entity backward.",
 		);
-		control_map.add_cid_key(cid_backward, COMBO_BACKWARD);
+		control_map.add_control_binding(cid_backward, KeyCombo {
+			modifiers: KeyModifiers::EMPTY,
+			keys: ArrayVec::try_from([KEY_BACKWARD].as_slice()).unwrap(),
+		});
 
 		MovementComponent {
 			cid_right, cid_left, cid_up, cid_down, cid_forward, cid_backward, 
-			movement_velocity: Vector3::new(0.0, 0.0, 0.0),
+			movement_velocity: Vec3::ZERO,
 			max_speed: 10.0,
 			acceleration: 1.0,
 			anti_acceleration: 3.0,
@@ -118,121 +109,45 @@ impl MovementComponent {
 }
 
 
-
+// Doesn't do mouse movment anymore
+// Please make it do that
 pub fn movement_system(
-	time: UniqueView<TimeResource>,
-	mice: View<MouseComponent>, 
-	keys: View<KeysComponent>, 
-	mut transforms: ViewMut<TransformComponent>,
-	mut movements: ViewMut<MovementComponent>,
-) {
-	let apply_duration_secs = (time.this_tick_start - time.last_tick_start).as_secs_f32();
-	// println!("ads: {apply_duration_secs}");
-
-	for (mouse, key, transform, movement) in (&mice, &keys, &mut transforms, &mut movements).iter() {
-
-		let rx = mouse.data.total_movement[0] as f32 * 0.001;
-		let ry = mouse.data.total_movement[1] as f32 * 0.001;
-		let quat_ry = UnitQuaternion::from_euler_angles(ry, 0.0, 0.0);
-		let quat_rx = UnitQuaternion::from_euler_angles(0.0, rx, 0.0);
-		transform.rotation = quat_rx * transform.rotation * quat_ry;
-
-		let mut kpdv = Vector3::from_element(0.0);
-		let mut n_keys = 0.0;
-		if let Some(kp) = key.data.key_duration(KEY_FORWARD) {
-			kpdv.z += kp.as_secs_f32();
-			n_keys += 1.0;
-		}
-		if let Some(kp) = key.data.key_duration(KEY_BACKWARD) {
-			kpdv.z -= kp.as_secs_f32();
-			n_keys += 1.0;
-		}
-		if let Some(kp) = key.data.key_duration(KEY_RIGHT) {
-			kpdv.x += kp.as_secs_f32();
-			n_keys += 1.0;
-		}
-		if let Some(kp) = key.data.key_duration(KEY_LEFT) {
-			kpdv.x -= kp.as_secs_f32();
-			n_keys += 1.0;
-		}
-		if let Some(kp) = key.data.key_duration(KEY_UP) {
-			kpdv.y += kp.as_secs_f32();
-			n_keys += 1.0;
-		}
-		if let Some(kp) = key.data.key_duration(KEY_DOWN) {
-			kpdv.y -= kp.as_secs_f32();
-			n_keys += 1.0;
-		}
-		if n_keys > 0.01 {
-			kpdv /= n_keys;
-		}
-		// println!("kpdv = {kpdv:?}");
-		let added_velocity = transform.rotation * kpdv * movement.acceleration;
-		// println!("added_velocity = {added_velocity:?}");
-
-		// Apply damping opposite to old movement
-		let signs_before = (0..3).map(|i| movement.movement_velocity[i] >= 0.0).collect::<Vec<_>>();
-		println!("nmv = {}", movement.movement_velocity.normalize());
-		let anti_velocity = movement.movement_velocity.normalize() * movement.anti_acceleration * apply_duration_secs;
-		println!("anti_velocity = {anti_velocity}");
-		let mut damped_velocity = movement.movement_velocity - anti_velocity;
-		let signs_after = (0..3).map(|i| damped_velocity[i] >= 0.0).collect::<Vec<_>>();
-		// If any elements changed signs due to damping set them to zero
-		signs_before.iter().zip(signs_after.iter()).enumerate().for_each(|(i, (b, a))| {
-			if b != a {
-				damped_velocity[i] = 0.0;
-			}
-		});
-		
-		// Cap speed
-		let final_velocity = (damped_velocity + added_velocity).cap_magnitude(movement.max_speed);
-		println!("final velocity = {final_velocity}");
-
-		movement.movement_velocity = final_velocity;
-		transform.position += final_velocity;
-	}
-}
-
-
-
-pub fn control_movement_system(
-	// time: UniqueView<TimeResource>,
-	mice: View<MouseComponent>, 
-	controls: View<ControlComponent>, 
-	mut transforms: ViewMut<TransformComponent>,
-	mut movements: ViewMut<MovementComponent>,
+	controls: Comp<ControlComponent>, 
+	mut transforms: CompMut<TransformComponent>,
+	mut movements: CompMut<MovementComponent>,
 ) {
 	// let apply_duration_secs = (time.this_tick_start - time.last_tick_start).as_secs_f32();
 	// println!("ads: {apply_duration_secs}");
 
-	for (mouse, control, transform, movement) in (&mice, &controls, &mut transforms, &mut movements).iter() {
+	for (control, transform, movement) in (&controls, &mut transforms, &mut movements).iter() {
 
-		let rx = mouse.data.total_movement[0] as f32 * 0.001;
-		let ry = mouse.data.total_movement[1] as f32 * 0.001;
-		let quat_ry = UnitQuaternion::from_euler_angles(ry, 0.0, 0.0);
-		let quat_rx = UnitQuaternion::from_euler_angles(0.0, rx, 0.0);
+		let [rx, ry] = control.last_tick_mouse_movement();
+		let rx = rx as f32 * 0.001;
+		let ry = ry as f32 * 0.001;
+		let quat_ry = Quat::from_euler(EulerRot::XYZ, ry, 0.0, 0.0);
+		let quat_rx = Quat::from_euler(EulerRot::XYZ, 0.0, rx, 0.0);
 		transform.rotation = quat_rx * transform.rotation * quat_ry;
 
-		let mut kpdv = Vector3::from_element(0.0);
-		if let Some(kp) = control.data.control_duration(movement.cid_forward) {
+		let mut kpdv = Vec3::ZERO;
+		if let Some(kp) = control.last_tick_duration(movement.cid_forward) {
 			kpdv.z += kp.as_secs_f32();
 		}
-		if let Some(kp) = control.data.control_duration(movement.cid_backward) {
+		if let Some(kp) = control.last_tick_duration(movement.cid_backward) {
 			kpdv.z -= kp.as_secs_f32();
 		}
-		if let Some(kp) = control.data.control_duration(movement.cid_right) {
+		if let Some(kp) = control.last_tick_duration(movement.cid_right) {
 			kpdv.x += kp.as_secs_f32();
 		}
-		if let Some(kp) = control.data.control_duration(movement.cid_left) {
+		if let Some(kp) = control.last_tick_duration(movement.cid_left) {
 			kpdv.x -= kp.as_secs_f32();
 		}
-		if let Some(kp) = control.data.control_duration(movement.cid_up) {
+		if let Some(kp) = control.last_tick_duration(movement.cid_up) {
 			kpdv.y += kp.as_secs_f32();
 		}
-		if let Some(kp) = control.data.control_duration(movement.cid_down) {
+		if let Some(kp) = control.last_tick_duration(movement.cid_down) {
 			kpdv.y -= kp.as_secs_f32();
 		}
 
-		transform.position += transform.rotation * kpdv * movement.max_speed;
+		transform.translation += transform.rotation * kpdv * movement.max_speed;
 	}
 }

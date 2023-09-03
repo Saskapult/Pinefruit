@@ -1,10 +1,11 @@
 use std::time::Instant;
-use nalgebra::*;
-use shipyard::*;
+use glam::*;
+// use shipyard::*;
+use eks::prelude::*;
 
 
 
-#[derive(Unique)]
+#[derive(ResourceIdent, Debug)]
 pub struct TimeResource {
 	pub this_tick_start: Instant,
 	pub last_tick_start: Instant,
@@ -25,51 +26,52 @@ impl TimeResource {
 
 
 // Todo: Rename to WorldTransform
-#[derive(Component, Debug, Clone)]
+#[repr(C)]
+#[derive(ComponentIdent, Debug, Clone, Copy)]
 pub struct TransformComponent {
-	pub position: Vector3<f32>,
-	pub rotation: UnitQuaternion<f32>,
-	pub scale: Vector3<f32>,
+	pub translation: Vec3,
+	pub rotation: Quat,
+	pub scale: Vec3,
 }
 impl TransformComponent {
 	pub fn new() -> Self {
 		Self {
-			position: Vector3::from_element(0.0),
-			rotation: UnitQuaternion::identity(),
-			scale: Vector3::from_element(1.0),
+			translation: Vec3::ZERO,
+			rotation: Quat::IDENTITY,
+			scale: Vec3::ONE,
 		}
 	}
-	pub fn with_position(self, position: Vector3<f32>) -> Self {
+	pub fn with_position(self, position: Vec3) -> Self {
 		Self {
-			position,
+			translation: position,
 			rotation: self.rotation,
 			scale: self.scale,
 		}
 	}
-	pub fn with_rotation(self, rotation: UnitQuaternion<f32>) -> Self {
+	pub fn with_rotation(self, rotation: Quat) -> Self {
 		Self {
-			position: self.position,
+			translation: self.translation,
 			rotation,
 			scale: self.scale,
 		}
 	}
-	pub fn with_scale(self, scale: Vector3<f32>) -> Self {
+	pub fn with_scale(self, scale: Vec3) -> Self {
 		Self {
-			position: self.position,
+			translation: self.translation,
 			rotation: self.rotation,
 			scale,
 		}
 	}
-	pub fn matrix(&self) -> Matrix4<f32> {
-		Matrix4::new_nonuniform_scaling(&self.scale) * self.rotation.to_homogeneous() * Matrix4::new_translation(&self.position)
+	pub fn matrix(&self) -> Mat4 {
+		Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
 	}
 }
-
-
-// How work with (local -> local -> world)?
-// pub struct LocalTransformComponent {
-// 	pub relative_to: EntityId,
-// 	pub position: Vector3<f32>,
-// 	pub rotation: UnitQuaternion<f32>,
-// 	pub scale: Vector3<f32>,
-// }
+impl Default for TransformComponent {
+	fn default() -> Self {
+		Self {
+			translation: Vec3::ZERO,
+			rotation: Quat::IDENTITY,
+			scale: Vec3::ONE,
+		}
+	}
+}

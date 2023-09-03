@@ -1,0 +1,12 @@
+(
+	name: "octree chunks material",
+	shader: "../shaders/octree_chunks.ron",
+	mappings: {
+		"albedo": Context("output_texture"),
+		"camera": Context("camera"),
+		"voxel scene uniform": Context("idk"),
+		"voxel scene data": Global(Label("big buffer")),
+		"block colours buffer": Global(Label("block colours buffer")),
+	},
+	array_mappings: {},
+)

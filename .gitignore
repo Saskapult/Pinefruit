@@ -1,7 +1,6 @@
 /target
 /resources/not_for_git
-/_stuff
 .vscode
 /map_saved
 *.spv
-/wgpu
+*.xcf

@@ -1,0 +1,30 @@
+[package]
+name = "krender"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+wgpu = "0.16.1"
+slotmap = "1.0.6"
+serde = "1.0.132"
+ron = "0.7.0"
+image = "0.24"
+derivative = "2.2.0"
+wgpu-profiler = "0.12.1"
+thiserror = "1.0.30"
+bytemuck = { version = "1.13.1", features = ["derive"] }
+anyhow = "1.0.71"
+log = "0.4.18"
+env_logger = "0.10.0"
+tobj = "4.0.0"
+parking_lot = "0.12.1"
+crossbeam-channel = "0.5.8"
+dashmap = "5.4.0"
+arrayvec = { version = "0.7.4", features = ["serde"] }
+rand = "0.8.5"
+
+[dev-dependencies]
+pollster = "0.3.0"
+winit = { version = "0.28.6", features = ["x11"]}

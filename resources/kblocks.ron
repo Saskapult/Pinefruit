@@ -2,78 +2,91 @@
 [
 	(
 		name: "dirt",
-		faces: { // Options: every, front, back, left, right, up, down
-			"every": "materials/kmaterials.ron::dirt",
+		render_type: Cube(
+			xp: Path("materials/dirt.ron"),
+			xn: Path("materials/dirt.ron"),
+			yp: Path("materials/dirt.ron"),
+			yn: Path("materials/dirt.ron"),
+			zp: Path("materials/dirt.ron"),
+			zn: Path("materials/dirt.ron"),
+		),
+		floats: {
+			"colour": [0.200, 0.154, 0.108, 1.0],
 		},
-		floats: {},
 		sounds: {},
 	), 
 	(
 		name: "stone",
-		faces: {
-			"every": "materials/kmaterials.ron::stone",
+		render_type: Cube(
+			xp: Path("materials/stone.ron"),
+			xn: Path("materials/stone.ron"),
+			yp: Path("materials/stone.ron"),
+			yn: Path("materials/stone.ron"),
+			zp: Path("materials/stone.ron"),
+			zn: Path("materials/stone.ron"),
+		),
+		floats: {
+			"colour": [0.230, 0.230, 0.230, 1.0],
 		},
-		floats: {},
-		sounds: {},
-	), 
-	(
-		name: "cobblestone",
-		faces: {
-			"every": "materials/kmaterials.ron::cobblestone",
-		},
-		floats: {},
 		sounds: {},
 	), 
 	(
 		name: "sand",
-		faces: {
-			"every": "materials/kmaterials.ron::sand",
+		render_type: Cube(
+			xp: Path("materials/box_material.ron"),
+			xn: Path("materials/box_material.ron"),
+			yp: Path("materials/box_material.ron"),
+			yn: Path("materials/box_material.ron"),
+			zp: Path("materials/box_material.ron"),
+			zn: Path("materials/box_material.ron"),
+		),
+		floats: {
+			"colour": [0.720, 0.651, 0.461, 1.0],
 		},
-		floats: {},
 		sounds: {},
 	), 
 	(
 		name: "grass",
-		faces: {
-			"up": "materials/kmaterials.ron::grass",
-			"left": "materials/kmaterials.ron::grass_side",
-			"right": "materials/kmaterials.ron::grass_side",
-			"front": "materials/kmaterials.ron::grass_side",
-			"back": "materials/kmaterials.ron::grass_side",
-			"down": "materials/kmaterials.ron::dirt",
-		},
+		render_type: Cube(
+			xp: Path("materials/grass.ron"),
+			xn: Path("materials/grass.ron"),
+			yp: Path("materials/grass_top.ron"),
+			yn: Path("materials/dirt.ron"),
+			zp: Path("materials/grass.ron"),
+			zn: Path("materials/grass.ron"),
+		),
 		floats: {
-			"flat_albedo": [0.197, 0.500, 0.170, 1.0],
+			"colour": [0.197, 0.500, 0.170, 1.0],
 		},
 		sounds: {},
 	), 
-	(
-		name: "leaves",
-		faces: {
-			"every": "materials/kmaterials.ron::leaves",
-		},
-		floats: {},
-		sounds: {},
-	), 
-	(
-		name: "log",
-		faces: {
-			"up": "materials/kmaterials.ron::log_top",
-			"left": "materials/kmaterials.ron::log_side",
-			"right": "materials/kmaterials.ron::log_side",
-			"front": "materials/kmaterials.ron::log_side",
-			"back": "materials/kmaterials.ron::log_side",
-			"down": "materials/kmaterials.ron::log_top",
-		},
-		floats: {},
-		sounds: {},
-	), 
-	(
-		name: "glass",
-		faces: {
-			"every": "materials/kmaterials.ron::glass",
-		},
-		floats: {},
-		sounds: {},
-	),
+	// (
+	// 	name: "leaves",
+	// 	faces: {
+	// 		"every": "materials/kmaterials.ron::leaves",
+	// 	},
+	// 	floats: {},
+	// 	sounds: {},
+	// ), 
+	// (
+	// 	name: "log",
+	// 	faces: {
+	// 		"up": "materials/kmaterials.ron::log_top",
+	// 		"left": "materials/kmaterials.ron::log_side",
+	// 		"right": "materials/kmaterials.ron::log_side",
+	// 		"front": "materials/kmaterials.ron::log_side",
+	// 		"back": "materials/kmaterials.ron::log_side",
+	// 		"down": "materials/kmaterials.ron::log_top",
+	// 	},
+	// 	floats: {},
+	// 	sounds: {},
+	// ), 
+	// (
+	// 	name: "glass",
+	// 	faces: {
+	// 		"every": "materials/kmaterials.ron::glass",
+	// 	},
+	// 	floats: {},
+	// 	sounds: {},
+	// ),
 ]

@@ -1,0 +1,11 @@
+(
+	name: "box material",
+	shader: "../shaders/object_albedo.ron",
+	mappings: {
+		"albedo": Context("output_texture"),
+		"texture": Global(Path("../textures/skybox/x.png")),
+		"camera": Context("camera"),
+		"depth": Context("depth"),
+	},
+	array_mappings: {},
+)

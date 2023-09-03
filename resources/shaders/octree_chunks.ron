@@ -1,0 +1,43 @@
+(
+    name: "octree chunks shader",
+    base: Polygonal((
+		vertex: (
+			language: Glsl,
+			path: "fullquad.vert",
+			entry: "main",
+		),
+		fragment: Some((
+			language: Glsl,
+			path: "octree_chunks.frag",
+			entry: "main",
+		)),
+		polygon_input: Generative(3),
+		polygon_mode: Fill,
+		instance_attributes: [],
+		attachments: [
+			(
+				source: "albedo",
+				format: Rgba8UnormSrgb,
+				blend_colour: Replace,
+				blend_alpha: Replace,
+			)
+		],
+		depth: None,
+		multisample_count: 1,
+		topology: TriangleList,
+		face_culling: Back,
+		unclipped_depth: false,
+		conservative: false,
+	)),
+	bind_groups: {
+		0: {
+            0: UniformBuffer("camera", [Fragment]),
+		},
+		1: {
+			0: UniformBuffer("voxel scene uniform", [Fragment]),
+			1: StorageBuffer("voxel scene data", true, [Fragment]),
+			2: StorageBuffer("block colours buffer", true, [Fragment]),
+		},
+	},
+	push_constant_range: [],
+)

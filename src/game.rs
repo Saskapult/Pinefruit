@@ -1,148 +1,461 @@
-use shipyard::*;
+use crossbeam_channel::Receiver;
+use glam::{Vec3, Mat4};
+use krender::prelude::Mesh;
+use krender::{RenderContextKey, prepare_for_render};
+use wgpu_profiler::GpuProfiler;
 use winit::event_loop::*;
+use std::ops::{Deref, DerefMut};
+use std::path::Path;
 use std::time::{Instant, Duration};
 use std::sync::Arc;
 use crate::ecs::*;
-use crate::octree::chunk_to_octree;
+use crate::ecs::loading::{map_loading_system, ChunkLoadingResource};
+use crate::ecs::model::{map_modelling_system, map_model_rendering_system, MapModelResource};
+use crate::ecs::modification::map_modification_system;
+use crate::ecs::octree::{gpu_chunk_loading_system, chunk_rays_system, BigBufferResource, GPUChunksResource, block_colours_system};
+use crate::rendering_integration::WorldWrapper;
+use crate::util::RingDataHolder;
+use crate::voxel::load_all_blocks_in_file;
 use crate::window::*;
-use crate::material::*;
-use crate::world::{load_blocks_file, Chunk};
-use crate::gpu::*;
+use eks::prelude::*;
+use krender::prelude::*;
 
 
+
+#[derive(Debug, ResourceIdent)]
+pub struct DeviceResource(Arc<wgpu::Device>);
+impl Deref for DeviceResource {
+	type Target = Arc<wgpu::Device>;
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
+
+#[derive(Debug, ResourceIdent)]
+pub struct QueueResource(Arc<wgpu::Queue>);
+impl Deref for QueueResource {
+	type Target = Arc<wgpu::Queue>;
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
+
+#[derive(Debug, ResourceIdent, Default)]
+pub struct MaterialResource { pub materials: MaterialManager }
+impl Deref for MaterialResource {
+	type Target = MaterialManager;
+	fn deref(&self) -> &Self::Target {
+		&self.materials
+	}
+}
+impl DerefMut for MaterialResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.materials
+	}
+}
+
+
+#[derive(Debug, ResourceIdent)]
+pub struct BufferResource { pub buffers: BufferManager }
+impl Deref for BufferResource {
+	type Target = BufferManager;
+	fn deref(&self) -> &Self::Target {
+		&self.buffers
+	}
+}
+impl DerefMut for BufferResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.buffers
+	}
+}
+
+
+#[derive(Debug, ResourceIdent, Default)]
+pub struct TextureResource { pub textures: TextureManager }
+impl Deref for TextureResource {
+	type Target = TextureManager;
+	fn deref(&self) -> &Self::Target {
+		&self.textures
+	}
+}
+impl DerefMut for TextureResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.textures
+	}
+}
+
+
+#[derive(Debug, ResourceIdent, Default)]
+pub struct MeshResource { pub meshes: MeshManager }
+impl Deref for MeshResource {
+	type Target = MeshManager;
+	fn deref(&self) -> &Self::Target {
+		&self.meshes
+	}
+}
+impl DerefMut for MeshResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.meshes
+	}
+}
+
+
+#[derive(Debug, ResourceIdent, Default)]
+pub struct ContextResource { pub contexts: RenderContextManager<Entity> }
+impl Deref for ContextResource {
+	type Target = RenderContextManager<Entity>;
+	fn deref(&self) -> &Self::Target {
+		&self.contexts
+	}
+}
+impl DerefMut for ContextResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.contexts
+	}
+}
+
+
+/// Sent to the window manager to track game status
+pub enum GameStatus {
+	Exit(i32),
+	Continue(Instant), // Time of next tick 
+	// Maybe include time to next tick
+	// Or instant of next tick
+	// Or tick deficit?
+	// Argh
+}
+
+
+#[derive(Debug)]
+pub struct TickData {
+	pub start: Instant,
+	pub end: Instant,
+}
+impl TickData {
+	pub fn delta(&self) -> Duration {
+		self.end.duration_since(self.start)
+	}
+}
 
 
 pub struct Game {
 	pub world: World,
-
-	pub device: Arc<wgpu::Device>,
-	pub queue: Arc<wgpu::Queue>,
-	pub gpu_data: GraphicsData,
-
-	event_loop_proxy: EventLoopProxy<WindowCommand>, 
 	
-	last_tick: Instant,
-	tick_delay: Duration,
-	pub last_tick_time: Option<Duration>,
+	next_tick: u64,
+	first_tick: Option<Instant>,
+	tick_period: Duration,
+	pub tick_times: RingDataHolder<TickData>,
+
+	device: Arc<wgpu::Device>,
+	queue: Arc<wgpu::Queue>,
+
+	commands_receiver: Receiver<GameCommand>,
+	commands_sender: EventLoopProxy<WindowCommand>,
+
+	shaders: ShaderManager,
+	bind_groups: BindGroupManager,
 }
 impl Game {
+	/// Creating the game should be fast because it is done on the main thread. 
+	/// Intensive work should be saved for [Game::initialize]
 	pub fn new(
-		device: &Arc<wgpu::Device>,
-		queue: &Arc<wgpu::Queue>,
-		event_loop_proxy: EventLoopProxy<WindowCommand>, 
+		device: Arc<wgpu::Device>,
+		queue: Arc<wgpu::Queue>,
+		commands_receiver: Receiver<GameCommand>,
+		commands_sender: EventLoopProxy<WindowCommand>,
 	) -> Self {
-		let device = device.clone();
-		let queue = queue.clone();
+		let shaders = ShaderManager::new();
+		let bind_groups = BindGroupManager::new();
 
-		let mut gpu_data = GraphicsData::new(&device, &queue);
+		let materials = MaterialManager::new();
+		let textures = TextureManager::new();
+		let buffers = BufferManager::new();
+		let meshes = MeshManager::new();
+		let contexts = RenderContextManager::new();
 
-		let world = World::new();
-		world.add_unique(PhysicsResource::new());
-		world.add_unique(TimeResource::new());
-		world.add_unique(TextureResource::default());
-		world.add_unique(MeshResource::default());
-		world.add_unique(MaterialResource::default());
-		world.add_unique(BlockResource::default());
-		world.add_unique(GraphicsHandleResource {
-			device: device.clone(),
-			queue: queue.clone(),
-		});
-		world.add_unique(VoxelRenderingResource::new(
-			&device,
-			&mut gpu_data.shaders,
-		));
+		let mut world = World::new();
 
-		world.add_workload(input_workload);
+		world.insert_resource(MaterialResource { materials });
+		world.insert_resource(TextureResource { textures });
+		world.insert_resource(BufferResource { buffers });
+		world.insert_resource(MeshResource { meshes });
+		world.insert_resource(ContextResource { contexts });
+		world.insert_resource(DeviceResource(device.clone()));
+		world.insert_resource(QueueResource(queue.clone()));
 
 		Self {
 			world,
-			device, queue, gpu_data, 
-			event_loop_proxy,
-			last_tick: Instant::now(),
-			tick_delay: Duration::from_secs_f32(1.0 / 120.0),
-			last_tick_time: None,
-
+			next_tick: 0,
+			first_tick: None,
+			tick_period: Duration::from_secs_f32(1.0 / 30.0),
+			tick_times: RingDataHolder::new(30),
+			device, queue, 
+			commands_receiver, commands_sender, 
+			shaders, bind_groups, 
 		}
 	}
 
-	pub fn setup(&mut self) {
-		// self.gpu_data.shaders.register_path("./resources/shaders/acceleration_test.ron");
+	/// Every setup thing that is computationally expensive should go here. 
+	pub fn initialize(&mut self) {
+		self.world.insert_resource(ControlMap::new());
 		
-		self.world.run(setup_system);
+		self.world.insert_resource(MapResource::new());
 
-		self.world.add_unique(MapResource::new([16; 3], 0));
+		self.world.insert_resource(MapModelResource::new(8));
 
-		self.gpu_data.shaders.update_shaders();
-	}
+		self.world.insert_resource({
+			let blocks = BlockResource::default();
+			let mut g = blocks.write();
+			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+			load_all_blocks_in_file(&mut g, "resources/kblocks.ron", &mut materials).unwrap();
+			drop(g);
+			blocks
+		});
 
-	pub fn should_tick(&self) -> bool {
-		self.last_tick.elapsed() >= self.tick_delay
-	}
+		self.world.insert_resource(ChunkLoadingResource::new(42));
 
-	pub fn tick(&mut self) {
-		self.last_tick = Instant::now();
-
-		{
-			let mut time_resource = self.world.borrow::<UniqueViewMut<TimeResource>>().unwrap();
-			(*time_resource).next_tick();
+		{ // Octree thing
+			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+			let r = GPUChunksResource::new(&mut materials);
+			drop(materials);
+			self.world.insert_resource(r);
+		}
+		
+		{ // Big buffer
+			let mut buffers = self.world.borrow::<ResMut<BufferResource>>();
+			let big_buffer = BigBufferResource::new(&mut buffers);
+			drop(buffers);
+			self.world.insert_resource(big_buffer);
 		}
 
-		self.world.run_workload(input_workload).unwrap();
-		self.world.run(control_movement_system);
+		let material = {
+			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+			materials.read("resources/materials/grass.ron")
+		};
+		let mesh = {
+			let mut meshes = self.world.borrow::<ResMut<MeshResource>>();
+			meshes.read_or("resources/meshes/star.obj", || Mesh::read_obj("resources/meshes/star.obj"))
+		};
+		self.world.spawn()
+			.with(TransformComponent::new()
+				.with_position(Vec3::new(0.0, 0.0, 5.0)))
+			.with(ModelComponent {
+				material,
+				mesh,
+			})
+			.with(ModelMatrixComponent::new())
+			.finish();
+
+	}
+
+	pub fn tick(&mut self) -> GameStatus {
+		while let Ok(command) = self.commands_receiver.try_recv() {
+			info!("Game receives command {command:?}");
+			match command {
+				GameCommand::Shutdown => return GameStatus::Exit(0),
+				_ => {},
+			}
+		}
+
+		info!("Tick {}", self.next_tick);
+		let tick_start = Instant::now();
+		self.first_tick.get_or_insert(tick_start);
+		
+		self.world.run(raw_control_system);
+		self.world.run(movement_system);
 
 		self.world.run(map_loading_system);
-		self.world.run(map_octree_system);
+		self.world.run(map_modification_system);
 
-		self.world.run(map_lookat_system);
+		self.world.run(gpu_chunk_loading_system); // Could be moved to render, but that'd give frame out of date issues
 
-		self.world.run(voxel_render_system);
+		self.world.run(map_modelling_system);
 
-		self.last_tick_time = Some(self.last_tick.elapsed());
+		self.world.run(model_matrix_system);
+
+		let tick_end = Instant::now();
+		info!("Ticked in {}ms", tick_end.duration_since(tick_start).as_millis());
+
+		self.tick_times.insert(TickData { start: tick_start, end: tick_end });
+		self.next_tick += 1;
+
+		let next_tick_time = self.first_tick.unwrap() + self.tick_period.mul_f64(self.next_tick as f64);
+		GameStatus::Continue(next_tick_time)
 	}
 
 	pub fn new_window(&mut self) {
 		info!("Requesting new game window");
-		self.event_loop_proxy.send_event(WindowCommand::NewWindow).unwrap();
+		self.commands_sender.send_event(WindowCommand::NewWindow).unwrap();
+	}
+
+	// In the final thing we'd run a bunch of scripts which do stuff
+	// In this version we will just insert a result texture
+	pub fn render(&mut self, context: RenderContextKey, profiler: &mut GpuProfiler) -> wgpu::CommandBuffer {
+		
+		// Render resource systems
+		{
+			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
+			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+			self.world.run_with_data((context_mut,), output_texture_system);
+
+			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+			self.world.run_with_data((context_mut,), context_camera_system);
+
+			self.world.run(block_colours_system);
+		}
+
+		// Retain this?
+		// In a resource?
+		// In the context? That does seem best
+		let mut input = RenderInput::new();
+		// Collect stuff
+
+		let d = {
+			let textures = self.world.borrow::<Res<TextureResource>>();
+			textures.key_by_name(&"depth".to_string()).unwrap()
+		};
+		input.clear_depth("models", d);
+		// input.add_dependency("models", "depth clear");
+		
+		self.world.run_with_data((&mut input,), uv_test_system);
+		
+		input.add_dependency("models", "uv");
+		self.world.run_with_data((&mut input,), model_render_system);
+		self.world.run_with_data((&mut input,), map_model_rendering_system);
+
+		input.add_dependency("models", "voxels");
+		input.add_dependency("voxels", "uv");
+		{
+			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
+			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+			self.world.run_with_data((context_mut, &mut input), chunk_rays_system);
+		}
+		
+		let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+		let mut meshes = self.world.borrow::<ResMut<MeshResource>>();
+		let mut textures = self.world.borrow::<ResMut<TextureResource>>();
+		let mut buffers = self.world.borrow::<ResMut<BufferResource>>();
+		let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
+		prepare_for_render(
+			&self.device, 
+			&self.queue, 
+			&mut self.shaders, 
+			&mut materials.materials, 
+			&mut meshes.meshes, 
+			&mut textures.textures, 
+			&mut buffers.buffers, 
+			&mut self.bind_groups, 
+			&mut contexts.contexts,
+		);
+
+		let storage_provider = WorldWrapper { world: &self.world, };
+		let bundle = input.bundle(&self.device, &mut meshes.meshes, &materials.materials, &self.shaders, context, &storage_provider);
+
+		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: None,
+		});
+
+		bundle.execute(&self.shaders, &self.bind_groups, &meshes.meshes, &textures.textures, &mut encoder, &self.device, profiler);
+
+		encoder.finish()
 	}
 }
 
 
-fn load_test_octree(
-	gpu: UniqueView<GraphicsHandleResource>,
-	blocks: UniqueView<BlockResource>,
-	mut voxel_data: UniqueViewMut<VoxelRenderingResource>,
-) {
-	let chunk = Chunk::from_compressed_mapped_rle("./map_saved/0/-3.-2.1.cmrle", [16; 3], &blocks.blocks).unwrap();
-	let octree = chunk_to_octree(&chunk).unwrap();
-
-	voxel_data.insert_chunk(&gpu.queue, [0, 0, 2], &octree);
-	voxel_data.insert_chunk(&gpu.queue, [1, 0, 2], &octree);
-
-	// println!("{voxel_data:#?}");
-
-	info!("Buffer is now at {:.2}% capacity", voxel_data.buffer.capacity_frac() * 100.0);
+#[derive(Debug, ComponentIdent)]
+pub struct OutputResolutionComponent {
+	pub width: u32,
+	pub height: u32,
 }
 
 
-fn setup_system(
-	gpu: UniqueView<GraphicsHandleResource>,
-	mut textures: UniqueViewMut<TextureResource>,
-	mut materials: UniqueViewMut<MaterialResource>,
-	mut blocks: UniqueViewMut<BlockResource>,
-	mut voxel_data: UniqueViewMut<VoxelRenderingResource>,
+pub fn output_texture_system(
+	(context,): (&mut RenderContext<Entity>,), 
+	mut textures: ResMut<TextureResource>,
+	output_resolutions: Comp<OutputResolutionComponent>,
 ) {
-	load_materials_file(
-		"resources/materials/kmaterials.ron",
-		&mut textures.textures,
-		&mut materials.materials,
-	).unwrap();
+	if let Some(entity) = context.entity {
+		if let Some(resolution) = output_resolutions.get(entity) {
+			if let Some(key) = context.texture("output_texture") {
+				// If resolution matches then terminate
+				let t = textures.get_mut(key).unwrap();
+				if resolution.width == t.data.size.width && resolution.height == t.data.size.height {
+					return
+				}
 
-	load_blocks_file(
-		"resources/kblocks.ron",
-		&mut blocks.blocks,
-		&mut textures.textures,
-		&mut materials.materials,
-	).unwrap();
+				info!("Rebuild output texure to size {}x{}", resolution.width, resolution.height);
+				t.set_size(resolution.width, resolution.height, 1);
 
-	voxel_data.update_colours(&gpu.queue, &blocks.blocks, &materials.materials, &textures.textures);
+				// This is bad
+				let k = textures.key_by_name(&"depth".to_string()).unwrap();
+				let d = textures.get_mut(k).unwrap();
+				d.set_size(resolution.width, resolution.height, 1);
+			} else {
+				let t = Texture::new(
+					"output_texture", 
+					wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
+					resolution.width, resolution.height, 
+					1, false,
+				).with_usages(wgpu::TextureUsages::TEXTURE_BINDING);
+				let key = textures.insert(t);
+				context.insert_texture("output_texture", key);
+
+				let d = textures.insert(Texture::new(
+					"depth", 
+					wgpu::TextureFormat::Depth32Float.into(), 
+					resolution.width, resolution.height, 
+					1, false,
+				).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
+				context.insert_texture("depth", d);
+			}
+		}
+	}
+}
+
+fn uv_test_system(
+	(input,): (&mut RenderInput<Entity>,), 
+	mut materials: ResMut<MaterialResource>,
+) {
+	let p = Path::new("resources/materials/uv.ron");
+	let uv_material = materials.materials.key_by_path(p)
+		.unwrap_or_else(|| materials.materials.read(p));
+
+
+	input.insert_item("uv", uv_material, None, Entity::new(0_u32, 0));
+}
+
+fn model_render_system(
+	(input,): (&mut RenderInput<Entity>,), 
+	models: Comp<ModelComponent>,
+) {
+	for (entity, (model,)) in (&models,).iter().with_entities() {
+		input.insert_item("models", model.material, Some(model.mesh), entity);
+	}
+}
+
+
+// Used to put transform into shader
+#[repr(C)]
+#[derive(Debug, ComponentIdent)]
+pub struct ModelMatrixComponent {
+	pub model_matrix: Mat4,
+}
+impl ModelMatrixComponent {
+	pub fn new() -> Self {
+		Self {
+			model_matrix: Mat4::IDENTITY,
+		}
+	}
+}
+
+
+fn model_matrix_system(
+	transforms: Comp<TransformComponent>,
+	mut model_matrices: CompMut<ModelMatrixComponent>,
+) {
+	for (transform, model_matrix) in (&transforms, &mut model_matrices).iter() {
+		model_matrix.model_matrix = Mat4::from_rotation_translation(transform.rotation, transform.translation);
+	}
 }

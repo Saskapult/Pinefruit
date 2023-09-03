@@ -1,0 +1,8 @@
+(
+	name: "position",
+	source: Component("position"),
+	attributes: [
+		Float32x3,
+	],
+	default: None,
+)

@@ -1,0 +1,8 @@
+(
+	name: "screen uv material",
+	shader: "../shaders/uv.ron",
+	mappings: {
+		"albedo": Context("output_texture"),
+	},
+	array_mappings: {},
+)

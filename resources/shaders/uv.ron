@@ -1,0 +1,34 @@
+(
+    name: "uv shader",
+    base: Polygonal((
+		vertex: (
+			language: Glsl,
+			path: "fullquad.vert",
+			entry: "main",
+		),
+		fragment: Some((
+			language: Glsl,
+			path: "uv.frag",
+			entry: "main",
+		)),
+		polygon_input: Generative(3),
+		polygon_mode: Fill,
+		instance_attributes: [],
+		attachments: [
+			(
+				source: "albedo",
+				format: Rgba8UnormSrgb,
+				blend_colour: Replace,
+				blend_alpha: Replace,
+			),
+		],
+		depth: None,
+		multisample_count: 1,
+		topology: TriangleList,
+		face_culling: Back,
+		unclipped_depth: false,
+		conservative: false,
+	)),
+    bind_groups: {},
+	push_constant_range: [],
+)

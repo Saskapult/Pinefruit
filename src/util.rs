@@ -1,14 +1,52 @@
-use std::{time::Duration, path::{Path, PathBuf}, sync::{Mutex, Arc}, cmp::Ordering};
+use std::{time::Duration, path::{Path, PathBuf}, sync::{Mutex, Arc}, cmp::Ordering, collections::VecDeque};
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use image::DynamicImage;
-use anyhow::*;
 use std::process::Command;
 use splines::*;
 
 
 
+#[derive(Debug)]
+pub struct RingDataHolder<T: std::fmt::Debug> {
+	data: VecDeque<T>,
+	maximum: usize,
+}
+impl<T: std::fmt::Debug> RingDataHolder<T> {
+	pub fn new(maximum: usize) -> Self {
+		Self { 
+			data: VecDeque::with_capacity(maximum), 
+			maximum, 
+		}
+	}
+	
+	pub fn insert(&mut self, value: T) {
+		if self.data.len() == self.maximum {
+			self.data.pop_back();
+		}
+		self.data.push_front(value);
+	}
+
+	pub fn latest(&self) -> Option<&T> {
+		self.data.front()
+	}
+
+	pub fn clear(&mut self) {
+		self.data.clear()
+	}
+
+	pub fn iter(&self) -> impl Iterator<Item = &T> {
+		self.data.iter()
+	}
+
+	pub fn len(&self) -> usize {
+		self.data.len()
+	}
+}
+
 
 /// Holds durations, can find average and median
+// It would be best to only let the channel store num_to_hold items
+// If it had more it could overwrite the last one
 #[derive(Debug)]
 pub struct DurationHolder {
 	num_to_hold: usize,
@@ -103,7 +141,7 @@ impl DurationHolder {
 
 /// Shows an image by saving it to tmp and opening it with gwenview
 // Todo: Make a list of prorams to try?
-pub fn show_image(image: DynamicImage) -> Result<()> {
+pub fn show_image(image: DynamicImage) -> anyhow::Result<()> {
 	const IMAGE_VIEWER: &str = "gwenview";
 	const OVERWRITE_T: Duration = Duration::from_secs(10);
 
@@ -122,7 +160,7 @@ pub fn show_image(image: DynamicImage) -> Result<()> {
 	
 	Ok(())
 }
-pub fn save_image(image: DynamicImage, path: &impl AsRef<Path>) -> Result<()> {
+pub fn save_image(image: DynamicImage, path: &impl AsRef<Path>) -> anyhow::Result<()> {
 	image.save(path.as_ref())?;
 
 	Ok(())
@@ -134,13 +172,11 @@ pub fn save_image(image: DynamicImage, path: &impl AsRef<Path>) -> Result<()> {
 pub fn save_spline(
 	spline: &Spline<f64, f64>, 
 	path: impl AsRef<Path>,
-) -> Result<()> {
+) -> anyhow::Result<()> {
 	let path = path.as_ref();
 
-	let f = std::fs::File::create(&path)
-		.with_context(|| format!("Failed to write file path '{:?}'", &path))?;
-	ron::ser::to_writer(f, spline)
-		.with_context(|| format!("Failed to write spline ron file '{:?}'", &path))?;
+	let f = std::fs::File::create(&path)?;
+	ron::ser::to_writer(f, spline)?;
 	
 	Ok(())
 }
@@ -148,21 +184,18 @@ pub fn save_spline(
 
 
 /// Loads a spline from a ron file
-pub fn load_spline(path: impl AsRef<Path>) -> Result<Spline<f64, f64>> {
+pub fn load_spline(path: impl AsRef<Path>) -> anyhow::Result<Spline<f64, f64>> {
 	let path = path.as_ref();
-	let canonical_path = path.canonicalize()
-		.with_context(|| format!("Failed to canonicalize path '{:?}'", &path))?;
+	let canonical_path = path.canonicalize()?;
 	
-	let f = std::fs::File::open(&path)
-		.with_context(|| format!("Failed to read from file path '{:?}'", &canonical_path))?;
-	let spline: Spline<f64, f64> = ron::de::from_reader(f)
-		.with_context(|| format!("Failed to parse spline ron file '{:?}'", &canonical_path))?;
+	let f = std::fs::File::open(&canonical_path)?;
+	let spline: Spline<f64, f64> = ron::de::from_reader(f)?;
 	
 	Ok(spline)
 }
 
 
-pub fn show_spline(s: Spline<f64, f64>, height: u32, width: Option<u32>) -> Result<()> {
+pub fn show_spline(s: Spline<f64, f64>, height: u32, width: Option<u32>) -> anyhow::Result<()> {
 	let x_min = s.keys().iter().map(|k| k.t).reduce(|accum, v| accum.min(v)).unwrap();
 	let x_max = s.keys().iter().map(|k| k.t).reduce(|accum, v| accum.max(v)).unwrap();
 	let y_min = s.keys().iter().map(|k| k.value).reduce(|accum, v| accum.min(v)).unwrap();

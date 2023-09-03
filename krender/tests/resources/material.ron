@@ -1,0 +1,15 @@
+(
+	name: "mtl01",
+	shader: "shader.ron",
+	mappings: {
+		"albedo": ("albedo", Context),
+		"colour": ("colour", Global),
+	},
+	array_mappings: {
+		"colours": [
+			("red", Global), 
+			("blue", Global),
+		],
+	},
+	// Could have Buffer(String) -> whatever in inder to avoid shared names
+)

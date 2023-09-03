@@ -1,0 +1,11 @@
+(
+	name: "grass",
+	shader: "../shaders/object_albedo.ron",
+	mappings: {
+		"albedo": Context("output_texture"),
+		"camera": Context("camera"),
+		"texture": Global(Path("../textures/grass.png")),
+		"depth": Context("depth"),
+	},
+	array_mappings: {},
+)

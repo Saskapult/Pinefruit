@@ -116,5 +116,6 @@ pub fn input_workload() -> Workload {
 		input_mouse_system, 
 		input_keys_system, 
 		input_control_system,
-	).into_workload()
+	)
+	.into_workload()
 }

@@ -5,8 +5,6 @@ use rand::prelude::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
 
-/// Various noisy things
-
 
 pub fn octave_perlin_2d(
 	perlin: &Perlin,
@@ -30,6 +28,8 @@ pub fn octave_perlin_2d(
 	}
 	total / max_total
 }
+
+
 pub fn octave_perlin_3d(
 	perlin: &Perlin,
 	input: [f64; 3],
@@ -54,7 +54,6 @@ pub fn octave_perlin_3d(
 }
 
 
-
 fn squashfactor_fn(
 	val: f64, 
 	pt: f64,
@@ -65,7 +64,6 @@ fn squashfactor_fn(
 	let output = val * squash_function(distance);
 	output
 }
-
 
 
 fn squashup_linear(
@@ -85,7 +83,6 @@ fn squashup_linear(
 }
 
 
-
 fn squashfactor_spline(
 	pt: f64,
 	centre: f64,
@@ -96,14 +93,12 @@ fn squashfactor_spline(
 }
 
 
-
 fn linear_spline() -> Spline<f64, f64> {
 	let st = Key::new(0.0, 0.0, Interpolation::Linear);
 	let en = Key::new(1.0, 1.0, Interpolation::Linear);
 	let spline = Spline::from_vec(vec![st, en]);
 	spline
 }
-
 
 
 const BLUE_FREQUENCY: f64 = 50.0;
@@ -187,7 +182,6 @@ pub fn xoshiro_blue_2d(
 }
 
 
-
 #[inline(always)]
 pub fn xoshiro_hash_rng_3d(base_seed: u64, position: [i32; 3]) -> f64 {
 	let a = Xoshiro256PlusPlus::seed_from_u64(base_seed + position[0] as u64).gen::<u64>();
@@ -198,75 +192,4 @@ pub fn xoshiro_hash_rng_3d(base_seed: u64, position: [i32; 3]) -> f64 {
 pub fn xoshiro_hash_rng_2d(base_seed: u64, position: [i32; 2]) -> f64 {
 	let a = Xoshiro256PlusPlus::seed_from_u64(base_seed + position[0] as u64).gen::<u64>();
 	Xoshiro256PlusPlus::seed_from_u64(a + position[1] as u64).gen::<f64>()
-}
-
-
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use std::time::Instant;
-	use noise::Seedable;
-	use rayon::prelude::*;
-
-	// This test shows that parallel stuff is good stuff
-	#[test]
-	fn testyy() {
-		const WIDTH: u32 = 3000;
-		const HEIGHT: u32 = 3000;
-
-		println!("Noise start");
-		let st = Instant::now();
-		let output = (0..WIDTH*HEIGHT).into_par_iter().map(|v| {
-			let x = v % WIDTH;
-			let y = v / HEIGHT;
-			xoshiro_hash_rng_2d(0, [x as i32, y as i32])
-		}).collect::<Vec<_>>();
-		let en = Instant::now();
-		println!("Noise done in {:?}", (en-st));
-
-		let img = image::DynamicImage::ImageRgb8(
-			image::ImageBuffer::from_vec(WIDTH, HEIGHT, output.iter().flat_map(|&f| {
-				[(f * u8::MAX as f64) as u8; 3]
-			}).collect::<Vec<_>>()).unwrap()
-		);
-
-		crate::util::show_image(img).unwrap();
-
-		assert_eq!(2 + 2, 4);
-	}
-
-    #[test]
-    fn perlin_test() {
-
-		const WIDTH: u32 = 512;
-		const HEIGHT: u32 = 512;
-		
-		let perlin = Perlin::new().set_seed(42);
-
-		let output = (0..WIDTH*HEIGHT).into_par_iter().map(|v| {
-			let x = v % WIDTH;
-			let y = v / HEIGHT;
-			octave_perlin_2d(
-				&perlin, 
-				[
-					(x as f64 + 0.5) / 50.0, 
-					(y as f64 + 0.5) / 50.0, 
-				],
-				4, 
-				0.5,
-				2.0,
-			).powf(3.0)
-		}).collect::<Vec<_>>();
-
-		let img = image::DynamicImage::ImageRgb8(
-			image::ImageBuffer::from_vec(WIDTH, HEIGHT, output.par_iter().flat_map(|&f| {
-				[(f * u8::MAX as f64) as u8; 3]
-			}).collect::<Vec<_>>()).unwrap()
-		);
-
-		crate::util::show_image(img).unwrap();
-
-        assert_eq!(2 + 2, 4);
-    }
 }

@@ -1,320 +1,218 @@
 use std::{time::{Instant, Duration}, sync::mpsc::{Receiver, SyncSender}};
-use egui;
-use egui_wgpu_backend::RenderPass;
-use shipyard::*;
-use wgpu_profiler::{GpuProfiler, GpuTimerScopeResult};
+use crossbeam_channel::Sender;
+use egui::{self, plot::{Line, PlotPoints}, ComboBox};
+use glam::Vec3;
+use krender::{RenderContextKey, prelude::RenderContext};
+use eks::prelude::*;
+use wgpu_profiler::GpuTimerScopeResult;
 use std::sync::mpsc::sync_channel;
-use crate::{render::*, gpu::GraphicsData, game::Game, input::ControlMap, ecs::InputComponent};
-use crate::window::WindowSettings;
+use crate::{window::{WindowPropertiesAndSettings, GraphicsHandle}, game::{Game, ContextResource, TextureResource, OutputResolutionComponent}, input::{KeyDeduplicator, InputEvent}, ecs::{octree::{GPUChunkViewer, GPUChunkLoadingComponent}, loading::{ChunkLoadingComponent, ChunkLoadingResource}, model::MapMeshingComponent}};
 use crate::ecs::*;
-use nalgebra::*;
-use crate::input::*;
-use std::path::PathBuf;
 
 
 
 
 #[derive(Debug)]
 pub struct GameWidget {
-	pub tracked_entity: Option<EntityId>,
-	rgba_texture: Option<BoundTexture>,
-	srgba_texture: Option<BoundTexture>,
+	context: Option<RenderContextKey>,
+	
 	display_texture: Option<egui::TextureId>,
+	
+	render_rate: Option<Duration>, // If none, then renders whenever the gui does
+	last_render: Option<Instant>,
 	last_size: [f32; 2],
 
-	render_delay: Duration,
-	last_render: Option<Instant>,
+	deduplicator: KeyDeduplicator,
+	game_input: Option<Sender<(InputEvent, Instant)>>,
 
 	aspect: Option<f32>, // Aspect ratio for the widget (4.0 / 3.0, 16.0 / 9.0, and so on)
-
-	camera_buffer: Option<wgpu::Buffer>,
-	unfiform_bg: Option<wgpu::BindGroup>,
-	srgb_blitter: Option<Blitter>,
 }
 impl GameWidget {
-	pub fn new(
-		tracked_entity: Option<EntityId>,
-	) -> Self {
-
+	pub fn new() -> Self {
 		Self {
-			tracked_entity,
-			rgba_texture: None,
-			srgba_texture: None,
+			context: None,
+
 			display_texture: None,
 			last_size: [400.0; 2],
 
-			render_delay: Duration::from_secs_f32(1.0 / 30.0),
+			render_rate: None, // Duration::from_secs_f32(1.0 / 30.0),
 			last_render: None,
 
-			aspect: None,
+			deduplicator: KeyDeduplicator::new(),
+			game_input: None,
 
-			camera_buffer: None,
-			unfiform_bg: None,
-			srgb_blitter: None,
+			aspect: Some(4.0 / 3.0),
 		}
 	}
 
-	pub fn pre_tick_stuff(&mut self, game: &mut Game, input_segment: InputSegment) {
-		// Make entity if not exists
-		let entity = *self.tracked_entity.get_or_insert_with(|| {
-			info!("Creating game widgit entity");
-			let mut cc = ControlMap::new(); // TEMPORARY
-			game.world.add_entity((
-				CameraComponent::new().with_fovy_degrees(75.0),
-				TransformComponent::new()
-					.with_position(Vector3::new(0.5, 0.5, 0.5)),
-				MovementComponent::new(&mut cc),
-				InputComponent::new(),
-				MouseComponent::new(),
-				// KeysComponent::new(),
-				ControlComponent::from_map(cc),
-				MapLoadingComponent::new(3),
-				MapOctreeLoadingComponent::new(7),
-				VoxelRenderingComponent::new(7),
-				MapLookAtComponent::new(100.0),
-			))
-		});
-		// Apply input
-		let mut inputs = game.world.borrow::<ViewMut<InputComponent>>().unwrap();
-		if let Ok((input,)) = (&mut inputs,).get(entity) {
-			input.input = input_segment;
-			// input.last_read = self.last_render.unwrap_or_else(|| input.get(0).and_then(|v| Some(v.1)).unwrap_or(Instant::now()));
-			// input.last_feed = Instant::now();
+	pub fn input(&mut self, event: InputEvent, when: Instant) {
+		trace!("Game widget input {event:?}");
+		if let Some(sender) = self.game_input.as_ref() {
+			// You should deduplicate this pls
+			sender.send((event.into(), when)).unwrap();
+		} else {
+			warn!("Game input before sender init");
 		}
 	}
 
-	// True if actually encoded anything
-	pub fn maybe_encode_render(
-		&mut self,
-		device: &wgpu::Device,
-		queue: &wgpu::Queue,
-		profiler: &mut GpuProfiler,
-		egui_rpass: &mut RenderPass,
-		encoder: &mut wgpu::CommandEncoder,
-		// Maybe take game instead?
-		world: &shipyard::World,
-		gpu_data: &GraphicsData,
-	) -> bool {
-		if let Some(t) = self.last_render {
-			if t.elapsed() < self.render_delay {
-				return false;
-			}
-		}
-		self.last_render = Some(Instant::now());
-
-		profiler.begin_scope("View Texture", encoder, device);
-
-		if let Some(entity) = self.tracked_entity {
-
-			// Camera
-			let ccs = world.borrow::<View<CameraComponent>>().unwrap();
-			let camera_camera = ccs.get(entity)
-				.expect("Render point has no camera!");
-			let tcs = world.borrow::<View<TransformComponent>>().unwrap();
-			let camera_transform = tcs.get(entity)
-				.expect("Render camera has no transform!");
-			let camera_data = camera_camera.rendercamera(&camera_transform);
-
-
-			// Textures and stuff
-			self.update_size(device);
-			let rgba = self.rgba_texture.as_ref().unwrap();
-			let srgba = self.srgba_texture.as_ref().unwrap();
-			let blitter = self.srgb_blitter.get_or_insert_with(|| Blitter::new(device, wgpu::TextureFormat::Rgba8UnormSrgb));
-			
-			// Once I update wgpu and get pipeline.get_bind_group_layout(i) it's over for you
-			let shader_idx = gpu_data.shaders.index_from_path(&PathBuf::from("resources/shaders/voxel_scene.ron"));
-			if shader_idx.is_none() {
-				error!("Thing not leaded");
-				panic!();
-			}
-			let shader_idx = shader_idx.unwrap();
-			let shader_pt = gpu_data.shaders.prototype(shader_idx).unwrap();
-
-			// Camera
-			let aspect = self.last_size[0] / self.last_size[1];
-			let camera_buffer = self.camera_buffer.get_or_insert_with(|| {
-				info!("Making camera buffer");
-				camera_data.make_buffer(device, aspect)
-			});
-			camera_data.update_buffer(queue, &*camera_buffer, aspect);
-			let uniform_bg = self.unfiform_bg.get_or_insert_with(|| {
-				let shader_idx = gpu_data.shaders.index_from_path(&PathBuf::from("resources/shaders/voxel_scene.ron")).unwrap();
-				let shader_pt = gpu_data.shaders.prototype(shader_idx).unwrap();
-				let ubgl = gpu_data.shaders.layout(&shader_pt.bind_group_entries(0).unwrap()).unwrap();
-				device.create_bind_group(&wgpu::BindGroupDescriptor {
-					label: None,
-					layout: ubgl,
-					entries: &[
-						wgpu::BindGroupEntry {
-							binding: 0,
-							resource: wgpu::BindingResource::Buffer(camera_buffer.as_entire_buffer_binding()),
-						},
-					],
-				})
-			});
-
-			if let Ok(vrc) = world.borrow::<View<VoxelRenderingComponent>>().unwrap().get(entity) {
-				let mut vrr = world.borrow::<UniqueViewMut<VoxelRenderingResource>>().unwrap();
-				vrr.update_uniform(queue, vrc);
-				// println!("{vrc:#?}");
-				// panic!();
-				let shader_pl = gpu_data.shaders.pipeline(vrr.scene_shader_index).unwrap();
-				let destination_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-					label: None,
-					layout: gpu_data.shaders.layout(&shader_pt.bind_group_entries(1).unwrap()).unwrap(),
-					entries: &[
-						wgpu::BindGroupEntry {
-							binding: 0,
-							resource: wgpu::BindingResource::TextureView(&rgba.view),
-						},
-					],
-				});
-
-				let mut cp = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-					label: Some("voxel scene pass"),
-				});
-
-				profiler.begin_scope("Voxel Scene", &mut cp, device);
-				
-				cp.set_pipeline(shader_pl.compute().unwrap());
-
-				cp.set_bind_group(0, &uniform_bg, &[]);
-				cp.set_bind_group(1, &destination_bg, &[]);
-				cp.set_bind_group(2, &vrr.scene_bg, &[]);
-				
-				cp.dispatch_workgroups(rgba.size.width.div_ceil(16), rgba.size.height.div_ceil(16), 1);
-
-				profiler.end_scope(&mut cp);
-			}
-
-			profiler.begin_scope("sRGB Blit", encoder, device);
-			blitter.blit(device, encoder, &rgba.view, &srgba.view);
-			profiler.end_scope(encoder);
-
-			match self.display_texture {
-				Some(id) => {
-					egui_rpass.update_egui_texture_from_wgpu_texture(
-						device, 
-						&srgba.view, 
-						wgpu::FilterMode::Nearest, 
-						id,
-					).unwrap();
-				},
-				None => {
-					self.display_texture = Some(egui_rpass.egui_texture_from_wgpu_texture(
-						device,
-						&srgba.view,
-						wgpu::FilterMode::Nearest, 
-					));
-				},
-			};
-
-		}
-
-		profiler.end_scope(encoder);
-
-		true
+	pub fn release_keys(&mut self) {
+		todo!("Use deduplicator to release all pressed keys")
 	}
 
-	/// Adjusts the texture size to the widget size
-	pub fn update_size(&mut self, device: &wgpu::Device) {
-		let update_size_internal = |texture: &mut Option<BoundTexture>, intended_size: [u32; 2], format: TextureFormat, usages: wgpu::TextureUsages| -> bool {
-			if let Some(texture) = texture.as_ref() {
-				let size = [texture.size.width, texture.size.height];
-				if size == intended_size {
-					return false;
-				}
-			}
-			texture.replace(BoundTexture::new(
-				device, 
-				format,
-				intended_size[0], 
-				intended_size[1], 
-				1,
-				"GameWidgetTexture",
-				usages,
-			));
-			true
-		};
+	pub fn context<'a>(&'a self, contexts: &'a ContextResource) -> Option<&'a RenderContext<Entity>> {
+		self.context.and_then(move |key| contexts.contexts.get(key))
+	}
 
-		let intended_size = self.last_size.map(|f| f.round() as u32);
-		update_size_internal(
-			&mut self.rgba_texture, intended_size, TextureFormat::Rgba8Unorm, 
-			wgpu::TextureUsages::RENDER_ATTACHMENT 
-				| wgpu::TextureUsages::TEXTURE_BINDING
-				| wgpu::TextureUsages::STORAGE_BINDING,
-		);
-		update_size_internal(
-			&mut self.srgba_texture, intended_size, TextureFormat::Rgba8UnormSrgb,
-			wgpu::TextureUsages::RENDER_ATTACHMENT 
-				| wgpu::TextureUsages::TEXTURE_BINDING,
-		);
+	pub fn should_update(&self) -> bool {
+		self.render_rate.is_none() || self.last_render.is_none() || self.last_render.unwrap().elapsed() >= self.render_rate.unwrap()
 	}
 	
-	pub fn update_display(
+	pub fn update(
 		&mut self,
-		rpass: &mut egui_wgpu_backend::RenderPass, 
-		device: &wgpu::Device,
+		graphics: &mut GraphicsHandle,
+		game: &mut Game,
+	) -> wgpu::CommandBuffer {
+		self.last_render = Some(Instant::now());
+
+		// Create entity
+		let context_key = *self.context.get_or_insert_with(|| {
+			let (raw_input, game_input) = RawInputComponent::new();
+			self.game_input = Some(game_input);
+
+			let mut control_map = game.world.borrow::<ResMut<ControlMap>>();
+			let movement = MovementComponent::new(&mut control_map);
+			drop(control_map);
+
+			let entity_id = game.world.spawn()
+				.with(TransformComponent::new().with_position(Vec3::new(0.0, 0.0, 0.0)))
+				.with(raw_input)
+				.with(ControlComponent::new())
+				.with(CameraComponent::new())
+				.with(movement)
+				.with(ChunkLoadingComponent::new(5))
+				.with(GPUChunkLoadingComponent::new(4, 2))
+				.with(GPUChunkViewer::new(3))
+				.with(MapMeshingComponent::new(2, 2))
+				.finish();
+
+			let mut contexts = game.world.borrow::<ResMut<ContextResource>>();
+			
+			let context = RenderContext::new("default context")
+				.with_entity(entity_id);
+			contexts.contexts.insert(context)
+		});
+
+		// Update size of display texture
+		let entity = {
+			let mut contexts = game.world.borrow::<ResMut<ContextResource>>();
+			let context = contexts.contexts.get_mut(context_key).unwrap();
+			context.entity.unwrap()
+		};
+		let width = self.last_size[0].round() as u32;
+		let height = self.last_size[1].round() as u32;
+		game.world.add_component(entity, OutputResolutionComponent {
+			width, height, 
+		});
+		
+		let command_buffer = game.render(context_key, &mut graphics.profiler);
+
+		// Update (or create) egui texture handle	
+		// Assumes that the texture is wgpu::TextureFormat::Rgba8UnormSrgb and wgpu::TextureUsages::TEXTURE_BINDING	(egui compatible)
+		if let Some(context_key) = self.context {
+			let contexts = game.world.borrow::<Res<ContextResource>>();
+			let context = contexts.contexts.get(context_key).unwrap();
+
+			if let Some(key) = context.texture("output_texture") {
+				let textures = game.world.borrow::<Res<TextureResource>>();
+				let texture = textures.textures.get(key).unwrap();
+	
+				if let Some(id) = self.display_texture {
+					// Only do this if texture rebound
+					// I don't know how to do that through
+					// Maybe a texture can store a callback?
+					// Or binding can have a generation? 
+					// I will put this off for now
+					// Hopefully it will not haunt me
+
+					// Fuck it, do it every frame
+					graphics.egui_renderer.update_egui_texture_from_wgpu_texture(
+						&graphics.device, 
+						&texture.binding().unwrap().view, 
+						wgpu::FilterMode::Linear, 
+						id,
+					);
+				} else {
+					info!("Register game widget display");
+					let id = graphics.egui_renderer.register_native_texture(
+						&graphics.device, 
+						&texture.binding().unwrap().view,
+						wgpu::FilterMode::Linear,
+					);
+					self.display_texture = Some(id);
+				}
+			}
+		}
+
+		command_buffer
+	}
+
+	pub fn display(
+		&mut self, 
+		ui: &mut egui::Ui, 
+		window_settings: &mut WindowPropertiesAndSettings,
 	) {
-		self.display_texture = self.srgba_texture.as_ref().and_then(|st| {
-			Some(rpass.egui_texture_from_wgpu_texture(
-				device,
-				&st.view,
-				wgpu::FilterMode::Nearest, 
-			))
+		ui.vertical_centered_justified(|ui| {
+			if self.context.is_none() {
+				ui.label("Tracked entity not set!");
+				ui.centered_and_justified(|ui| ui.spinner());
+			} else if self.display_texture.is_none() {
+				ui.label("Display texture not created!");
+				ui.centered_and_justified(|ui| ui.spinner());
+			} else {
+				let mut size = ui.available_size();
+				if let Some(a) = self.aspect {
+					size.y = size.x / a; 
+				}
+				self.last_size = size.into();
+
+				let display_texture = self.display_texture.unwrap();
+
+				let game = ui.image(display_texture, size);		
+				let interactions = game.interact(egui::Sense::click());
+				if interactions.clicked() {
+					info!("Capture cursor");
+					window_settings.set_cursor_grab(true);
+				};
+				if interactions.secondary_clicked() {
+					info!("Release cursor");
+					window_settings.set_cursor_grab(false);
+				}
+			}
 		});
 	}
+}
 
-	pub fn display(&mut self, ui: &mut egui::Ui, window_settings: &mut WindowSettings) {
 
-		if self.tracked_entity.is_none() {
-			ui.label("Tracked entity not set!");
-		} else if self.rgba_texture.is_none() {
-			ui.label("RGBA texture not created!");
-		} else if self.srgba_texture.is_none() {
-			ui.label("SRGBA texture not created!");
-		}
-		
-		if let Some(tid) = self.display_texture {
-			let mut size = ui.available_size();
-			if let Some(a) = self.aspect {
-				size.y = size.x / a; 
+pub struct MapLoadingWidget;
+impl MapLoadingWidget {
+	pub fn display(
+		ui: &mut egui::Ui,
+		loading: &ChunkLoadingResource,
+	) {
+		ui.collapsing("Chunk Loading", |ui| {
+			ui.label(format!("{} / {} jobs", loading.cur_generation_jobs, loading.max_generation_jobs));
+			let av = loading.generation_durations.iter()
+				.copied()
+				.reduce(|a, v| a + v)
+				.and_then(|d| Some(d.as_secs_f32() / loading.generation_durations.len() as f32))
+				.unwrap_or(0.0);
+			ui.label(format!("Average: {}ms", av / 1000.0));
+
+			for (p, st) in loading.vec_generation_jobs.iter() {
+				ui.label(format!("{:.2}ms - {p}", st.elapsed().as_secs_f32() / 1000.0));
 			}
-			self.last_size = size.into();
 			
-			let g = ui.image(tid, size);
-			let f = g.interact(egui::Sense::click());
-			if f.clicked() {
-				println!("cap");
-				window_settings.capture_mouse = true;
-			};
-			if f.secondary_clicked() {
-				println!("decap");
-				window_settings.capture_mouse = false;
-			};
-		} else {
-			ui.label("Display texture not created!");
-		}
-	}
-}
-
-
-pub struct EntityMovementWidget;
-impl EntityMovementWidget {
-	pub fn display(&mut self, ui: &mut egui::Ui, movement_component: &mut MovementComponent) {
-		// ui.text_edit_single_line();
-		ui.add(egui::Slider::new(&mut movement_component.max_speed, 0.1..=20.0).text("Maximum Speed"));
-	}
-}
-
-pub struct EntityMapLookAtWidget;
-impl EntityMapLookAtWidget {
-	pub fn display(ui: &mut egui::Ui, looking_component: &mut MapLookAtComponent) {
-		let n = looking_component.hit.as_ref()
-			.and_then(|s| Some(format!("'{s}'")))
-			.unwrap_or("None".to_string());
-		ui.label(format!("Hit {n}"));
+		});
 	}
 }
 
@@ -346,7 +244,7 @@ impl RenderProfilingWidget {
 	pub fn display(&mut self, ui: &mut egui::Ui, profile_data: &Vec<GpuTimerScopeResult>) {
 		let tft = profile_data.iter().fold(0.0, |a, p| a + (p.time.end - p.time.start));
 
-		ui.label(format!("Frame Time: ~{:.2}Hz", 1.0 / tft));
+		ui.label(format!("Frame: {:>4.1}ms, {}Hz", tft * 1000.0, (1.0 / tft).round()));
 		ui.collapsing("Frame Details", |ui| {
 			ui.label(format!("{tft:.10}s"));
 			for sr in profile_data {
@@ -369,18 +267,6 @@ impl RenderProfilingWidget {
 		});
 	}
 }
-
-
-#[derive(Debug)]
-pub struct VoxelProfilingWidget;
-impl VoxelProfilingWidget {
-	pub fn display(ui: &mut egui::Ui, vrr: &VoxelRenderingResource) {
-		ui.label(format!("Buffer: {:.2}%", vrr.buffer.capacity_frac() * 100.0));
-		ui.label(format!("{} chunk octrees", vrr.chunks_octrees.len()));
-		ui.label(format!("{} array volumes", vrr.array_volumes.len()));
-	}
-}
-
 
 
 #[derive(Debug)]
@@ -415,7 +301,7 @@ impl MessageWidget {
 
 		// Remove expired popups
 		let now = Instant::now();
-		self.messages.drain_filter(|(_, t)| *t < now);
+		self.messages.retain(|(_, t)| *t > now);
 
 		// List popups
 		ui.scope(|ui| {
@@ -423,18 +309,179 @@ impl MessageWidget {
 			ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
   			ui.style_mut().wrap = Some(false);
 			ui.style_mut().text_styles.iter_mut().for_each(|(_, font_id)| font_id.size = 8.0);
-			
-			ui.vertical(|ui| {
-				self.messages.iter().for_each(|(message, _)| {
-					ui.label(message);
+			egui::ScrollArea::vertical()
+				.auto_shrink([false, false])
+				.max_height(128.0)
+				.show(ui, |ui| {
+					self.messages.iter().for_each(|(message, _)| {
+						ui.label(message);
+					});
 				});
-			});
 		});
 		
 	}
 }
 
 
-// Lua REPL
-// Inventory
-// Hotabar
+enum SplineInterpolation {
+	Cosine,
+	Bezier([f64; 2]),
+}
+
+
+use splines::{Spline, Key};
+pub struct SplineWidget {
+	keys: Vec<Key<f64, f64>>,
+	resolution: usize,
+}
+impl SplineWidget {
+	pub fn new(resolution: usize) -> Self {
+		Self { 
+			keys: vec![
+				Key::new(0.1, 10.0, splines::Interpolation::Cosine),
+				Key::new(0.5, 50.0, splines::Interpolation::Cosine),
+				Key::new(0.7, 15.0, splines::Interpolation::Cosine),
+			], 
+			resolution,
+		}
+	}
+
+	fn spline(&self) -> Option<Spline<f64, f64>> {
+		if self.keys.is_empty() {
+			None
+		} else {
+			Some(Spline::from_vec(self.keys.clone()))
+		}
+	}
+
+	fn points(&self) -> egui::plot::Points {
+		let points = self.keys.iter()
+			.map(|k| [k.t, k.value])
+			.collect::<Vec<_>>();
+		egui::plot::Points::new(points)
+			.name("Spline Points")
+			.shape(egui::plot::MarkerShape::Circle)
+			.filled(true)
+			.radius(5.0)
+	}
+	
+	pub fn display(&mut self, ui: &mut egui::Ui) {
+		ui.horizontal_top(|ui| {
+			// Needs to be before plot or else the thing grows infinitely
+			ui.vertical(|ui| {
+				if ui.button("Add Point").clicked() {
+					let k = if let Some(k) = self.keys.last() {
+						Key::new(k.t + 1.0, k.value, splines::Interpolation::Cosine)
+					} else {
+						Key::new(0.0, 0.0, splines::Interpolation::Cosine)
+					};
+					debug!("Poosh");
+					self.keys.push(k);
+					self.keys.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+				}
+				// ui.collapsing("Points:", |ui| {
+					let mut changed = false;
+					let mut to_remove = Vec::new(); // Could retain for less allocation
+					for (i, k)in self.keys.iter_mut().enumerate() {
+						ui.horizontal(|ui| {
+							if ui.add(egui::DragValue::new(&mut k.t).prefix("x: ").speed(0.1)).changed() {
+								changed = true;
+							}
+							ui.add(egui::DragValue::new(&mut k.value).prefix("y: ").speed(0.1));
+							ComboBox::from_id_source(i)
+								.selected_text(format!("{:?}", k.interpolation))
+								.show_ui(ui, |ui| {
+									ui.selectable_value(&mut k.interpolation, splines::Interpolation::Cosine, "Cosine");
+									ui.selectable_value(&mut k.interpolation, splines::Interpolation::Bezier(0.0), "Bezier");
+								});
+							if let splines::Interpolation::Bezier(v) = &mut k.interpolation {
+								ui.add(egui::DragValue::new(v).prefix("y': ").speed(0.1));
+							}
+							
+							if ui.button("X").clicked() {
+								to_remove.push(i);
+							}
+						});
+					}
+					for i in to_remove {
+						debug!("Remove index {i}");
+						self.keys.remove(i);
+					}
+					if changed {
+						self.keys.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap());
+					}
+				// });
+			});
+			
+			let plot = egui::plot::Plot::new("Spline Editor Plot")
+				.legend(egui::plot::Legend::default());
+			plot.show(ui, |ui| {
+				if let Some(spline) = self.spline() {
+					ui.line(Line::new(PlotPoints::from_explicit_callback(
+						move |t| spline.sample(t).unwrap_or(0.0), 
+						.., 
+						256,
+					)).name("Spline Line"));
+				}
+
+				ui.points(self.points());
+
+				// let size = ui.transform().frame();
+
+				// for k in self.keys.iter_mut() {
+				// 	let p = PlotPoint::new(k.t, k.value);
+				// 	let point_in_screen = ui.screen_from_plot(p);
+				// 	// If in rect?
+				// 	let point_rect = Rect::from_center_size(point_in_screen, Vec2::new(8.0, 8.0));
+					
+				// 	// let point_response = ui.interact(point_rect, ui.id(), Sense::drag());
+
+				// 	// k.t += point_response.drag_delta().x as f64;
+				// 	// k.value += point_response.drag_delta().y as f64;
+
+				// }
+
+				// Derive plot bounds
+				// ui.plot_bounds()
+				
+				
+				// ui.screen_from_plot(position)
+				// pui.plot_bounds().
+				
+				
+
+				// let point_rect = Rect::from_center_size(point_in_screen, size);
+
+				// let point_response = ui.interact(point_rect, point_id, Sense::drag());
+				// let stroke = ui.style().interact(&point_response).fg_stroke;
+				// ui.painter().circle(Pos2::new(8.0, 8.0), 5.0, Color32::RED, stroke)
+
+					
+			});
+			
+			
+
+			// let desired_size = ui.available_size_before_wrap();
+			// let (rect, painter) = ui.allocate_painter(desired_size, egui::Sense::hover());
+			// painter.
+			
+
+			// if ui.is_rect_visible(rect) {
+			// 	ui.painter().circle(center, 5.0, Color32::RED, stroke)
+			// }
+
+
+			// // Can we paint some interactable circles overtop of the plot?
+			// let (response, painter) = ui.allocate_painter(Vec2::new(ui.available_width(), 300.0), Sense::hover());
+			// let circle = Shape::circle_filled(center, radius, fill_color);
+			
+			// let resp = ui.interact(circle.visual_bounding_rect(), id, Sense::drag());
+			// v += resp.drag_delta();
+
+
+			// painter.add(circle)
+		});
+		
+
+	}
+}
