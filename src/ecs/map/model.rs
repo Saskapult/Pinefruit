@@ -14,12 +14,14 @@ pub struct MapModelEntry {
 	pub dependencies: Vec<(IVec3, KGeneration)>, // includes self (hopefully!)
 	pub models: Vec<(MaterialKey, MeshKey)>, // renderable things
 	pub entity: Entity,
+	pub outdated: bool,
 }
 
 
 #[derive(Debug, ResourceIdent)]
 pub struct MapModelResource {
-	pub chunks: HashMap<IVec3, Option<MapModelEntry>>,
+	// bool for if modelling job is active
+	pub chunks: HashMap<IVec3, (bool, Option<MapModelEntry>)>,
 	// It may be better to retun a result for this 
 	// If a block must be read, but the chunk is not loaded, then give error. 
 	pub sender: Sender<(IVec3, Result<(Vec<(UVec3, u32, MaterialKey)>, Vec<(IVec3, KGeneration)>), MeshingError>)>, 
@@ -95,16 +97,19 @@ impl MapModelResource {
 				modelmat.insert(entity, ModelMatrixComponent::new());
 
 				let entry = MapModelEntry {
-					dependencies, models, entity,
+					dependencies, models, entity, outdated: false,
 				};
 
-				self.chunks.insert(position, Some(entry));
+				// Todo: make sure it has higher generations than existing
 
-				// if quads.len() > 0 {
-				// 	std::thread::sleep(std::time::Duration::from_secs(10));
-				// }
+				self.chunks.insert(position, (false, Some(entry)));
 			} else {
 				warn!("Modelling failed for {position} - {}", r.unwrap_err());
+				// Tell the system we are not modellign this thing
+				// Todo: don't try again until the nonexistent dependency exists
+				if let Some((m, _)) = self.chunks.get_mut(&position) {
+					*m = false;
+				}
 			}
 			
 			self.cur_meshing_jobs -= 1;
@@ -112,12 +117,14 @@ impl MapModelResource {
 	}
 
 	pub fn start_jobs(&mut self, map: &MapResource, blocks: &BlockResource) {
-		for (&position, entry) in self.chunks.iter() {
+		for (&position, (modelling, entry)) in self.chunks.iter_mut() {
 			if self.cur_meshing_jobs >= self.max_meshing_jobs {
 				debug!("Reached maxium chunk generation jobs");
 				break;
 			}
-			if entry.is_none() {
+			// If not modelling and entry is outdated or none
+			if !*modelling && entry.as_ref().and_then(|e| Some(e.outdated)).unwrap_or(true) {
+				*modelling = true;
 				debug!("Begin modeling chunk {position}");
 				let sender = self.sender.clone();
 				let chunks = map.chunks.clone();
@@ -180,7 +187,7 @@ pub fn map_modelling_system(
 	}
 
 	for position in chunks_to_unload {
-		if let Some(Some(_)) = models.chunks.remove(&position) {
+		if let Some((_, Some(_))) = models.chunks.remove(&position) {
 			debug!("Unloading model for chunk {position}");
 			// Remove meshes
 			// Remove entity
@@ -191,29 +198,24 @@ pub fn map_modelling_system(
 
 	let chunks = map.chunks.read();
 	// Check for model validity
-	for opt in models.chunks.values_mut() {
-		if let Some(entry) = opt {
-			let mut its_good = true;
-			for (pos, gen) in entry.dependencies.iter() {
-				if let Some(ChunkEntry::Complete(g)) = chunks.get(pos) {
-					if g.generation == *gen {
-						continue
+	for (modelling, opt) in models.chunks.values_mut() {
+		// Don't check if we're already trying to fix the issue
+		if !*modelling { 
+			if let Some(entry) = opt {
+				entry.outdated = entry.dependencies.iter().any(|(pos, gen)| {
+					match chunks.get(pos) {
+						Some(ChunkEntry::Complete(g)) => g.generation != *gen,
+						_ => false,
 					}
-				}
-				its_good &= false;
+				});
 			}
-
-			if !its_good {
-				debug!("Chunk model {} is out of date", "idk");
-				opt.take();
-			}
-		}
+		}		
 	}
 
 	for position in chunks_to_load {
 		if models.chunks.get(&position).is_none() {
 			debug!("Chunk {position} must be modeled");
-			models.chunks.insert(position, None);
+			models.chunks.insert(position, (false, None));
 		}
 	}
 
@@ -505,7 +507,7 @@ pub fn map_model_rendering_system(
 	(input,): (&mut RenderInput<Entity>,), 
 	models: Res<MapModelResource>,
 ) {
-	for entry in models.chunks.values().filter_map(|g| g.as_ref()) {
+	for entry in models.chunks.values().filter_map(|(_, g)| g.as_ref()) {
 		for &(material, mesh) in entry.models.iter() {
 			input.insert_item("models", material, Some(mesh), entry.entity);
 		}
