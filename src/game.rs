@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::ecs::*;
 use crate::ecs::loading::{map_loading_system, ChunkLoadingResource};
 use crate::ecs::model::{map_modelling_system, map_model_rendering_system, MapModelResource};
-use crate::ecs::modification::map_modification_system;
+use crate::ecs::modification::{map_modification_system, map_placement_system};
 use crate::ecs::octree::{gpu_chunk_loading_system, chunk_rays_system, BigBufferResource, GPUChunksResource, block_colours_system};
 use crate::rendering_integration::WorldWrapper;
 use crate::util::RingDataHolder;
@@ -249,6 +249,19 @@ impl Game {
 			.finish();
 
 	}
+	
+	// pub fn intended_tick(&self) -> u64 {
+	// 	self.next_tick + self.last_tick
+	// 		.and_then(|t| Some(t.elapsed().div_f32(self.tick_period.as_secs_f32()).as_secs_f32().floor() as u64))
+	// 		.unwrap_or(0)
+	// }
+
+	// pub fn time_of_tick(&self, tick: u64) -> Instant {
+	// 	let diff = self.next_tick as f64 - tick as f64;
+	// 	self.last_tick
+	// 		.and_then(|t| Some(t + self.tick_period.mul_f64(diff)))
+	// 		.unwrap_or(Instant::now())
+	// }
 
 	pub fn tick(&mut self) -> GameStatus {
 		while let Ok(command) = self.commands_receiver.try_recv() {
@@ -265,6 +278,7 @@ impl Game {
 		
 		self.world.run(raw_control_system);
 		self.world.run(movement_system);
+		self.world.run(map_placement_system);
 
 		self.world.run(map_loading_system);
 		self.world.run(map_modification_system);

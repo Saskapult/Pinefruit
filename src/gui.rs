@@ -6,7 +6,7 @@ use krender::{RenderContextKey, prelude::RenderContext};
 use eks::prelude::*;
 use wgpu_profiler::GpuTimerScopeResult;
 use std::sync::mpsc::sync_channel;
-use crate::{window::{WindowPropertiesAndSettings, GraphicsHandle}, game::{Game, ContextResource, TextureResource, OutputResolutionComponent}, input::{KeyDeduplicator, InputEvent}, ecs::{octree::{GPUChunkViewer, GPUChunkLoadingComponent}, loading::{ChunkLoadingComponent, ChunkLoadingResource}, model::MapMeshingComponent}};
+use crate::{window::{WindowPropertiesAndSettings, GraphicsHandle}, game::{Game, ContextResource, TextureResource, OutputResolutionComponent}, input::{KeyDeduplicator, InputEvent}, ecs::{octree::{GPUChunkViewer, GPUChunkLoadingComponent}, loading::{ChunkLoadingComponent, ChunkLoadingResource}, model::MapMeshingComponent, modification::VoxelModifierComponent}};
 use crate::ecs::*;
 
 
@@ -81,6 +81,7 @@ impl GameWidget {
 
 			let mut control_map = game.world.borrow::<ResMut<ControlMap>>();
 			let movement = MovementComponent::new(&mut control_map);
+			let modifier_comp = VoxelModifierComponent::new(&mut control_map);
 			drop(control_map);
 
 			let entity_id = game.world.spawn()
@@ -93,6 +94,7 @@ impl GameWidget {
 				.with(GPUChunkLoadingComponent::new(4, 2))
 				.with(GPUChunkViewer::new(3))
 				.with(MapMeshingComponent::new(2, 2))
+				.with(modifier_comp)
 				.finish();
 
 			let mut contexts = game.world.borrow::<ResMut<ContextResource>>();

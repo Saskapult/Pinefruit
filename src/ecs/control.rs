@@ -53,7 +53,7 @@ impl ControlComponent {
 		}).fold([0.0; 2], |[ax, ay], &[vx, vy]| [ax+vx, ay+vy])
 	}
 
-	// Duration since last tick (not total!)
+	/// For how long a control was pressed since the last tick. 
 	pub fn last_tick_duration(&self, control: ControlKey) -> Option<Duration> {
 		let mut d = None;
 		let mut st = self.active.contains_key(&control).then(|| self.start);
@@ -91,7 +91,7 @@ impl ControlComponent {
 		d
 	}
 
-	// Counts key down events
+	/// How many times a control was predded in the last tick. 
 	pub fn last_tick_presses(&self, control: ControlKey) -> u32 {
 		let mut n = 0;
 		for &(event, _) in self.control_sequence.iter() {
@@ -104,6 +104,21 @@ impl ControlComponent {
 			}
 		}
 		n
+	}
+
+	/// Was the control pressed in the last tick? 
+	pub fn last_tick_pressed(&self, control: ControlKey) -> bool {
+		if self.active.contains_key(&control) {
+			return true;
+		}
+		for &(event, _) in self.control_sequence.iter() {
+			if let ControlEvent::KeyEvent((next_control, _)) = event {
+				if next_control == control {
+					return true
+				}
+			}
+		}
+		false
 	}
 
 	pub fn next_tick(&mut self, start: Instant) {
