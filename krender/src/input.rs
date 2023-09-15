@@ -344,6 +344,19 @@ pub struct RetainedBundle<'a> {
 	stages: Vec<RetainedBundleStage<'a>>,
 }
 impl<'a> RetainedBundle<'a> {
+	// Only counts draw calls, excludes computes and clears
+	pub fn draw_count(&self) -> u64 {
+		let mut draw_count = 0;
+		for stage in self.stages.iter() {
+			for (_, shaders) in stage.targets.iter() {
+				for batch in shaders.values() {
+					draw_count += batch.len() as u64;
+				}
+			}
+		}
+		draw_count
+	}
+
 	pub fn execute(
 		mut self,
 		shaders: &ShaderManager,
