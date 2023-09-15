@@ -103,6 +103,8 @@ pub struct GameWindow {
 
 	spline_widget: SplineWidget,
 
+	show_profiler: bool,
+
 	// Winit doesn't support locking the cursor on x11, only confining it
 	// We need to do this manually (brings needless mess)
 	manual_cursor_lock_last_position: Option<PhysicalPosition<f64>>,
@@ -150,6 +152,8 @@ impl GameWindow {
 
 			spline_widget: SplineWidget::new(64),
 
+			show_profiler: false,
+
 			manual_cursor_lock_last_position: None,
 		}
 	}
@@ -159,6 +163,7 @@ impl GameWindow {
 		self.last_update = None;
 	}
 
+	#[profiling::function]
 	fn update_ui(
 		&mut self,
 		device: &wgpu::Device,
@@ -176,6 +181,9 @@ impl GameWindow {
 			properties: &self.properties
 		};
 		
+		if self.show_profiler {
+			self.show_profiler = puffin_egui::profiler_window(&self.context);
+		}
 		egui::SidePanel::left("left panel")
 			.resizable(false)
 			.default_width(220.0)
@@ -216,6 +224,9 @@ impl GameWindow {
 					});
 					ui.image(texture, texture.size_vec2());
 
+					// Toggle profiler
+					ui.toggle_value(&mut self.show_profiler, "Show profiler");
+
 					// Update rate for the UI
 					let ui_update_rate = self.update_times.iter()
 						.map(|d| d.as_secs_f32())
@@ -230,7 +241,7 @@ impl GameWindow {
 						.unwrap_or(f32::INFINITY) / (self.game_widget.update_times.len() as f32);
 					ui.label(format!("GW: {:>4.1}ms, {:.0}Hz", gw_update_rate * 1000.0, (1.0 / gw_update_rate).round()));
 
-					// Update time (and mroe info) for the submitted gpu work
+					// Update time (and more info) for the submitted gpu work
 					if let Some(profile_data) = profiler.process_finished_frame() {
 						self.profiling_widget.display(ui, &profile_data)
 					}
@@ -323,6 +334,7 @@ impl GameWindow {
 	}
 
 	/// Encodes and executes an update to this window's display.
+	#[profiling::function]
 	pub fn update(
 		&mut self,
 		graphics: &mut GraphicsHandle,
@@ -575,6 +587,8 @@ impl WindowManager {
 		let join_handle = {
 			let game = game.clone();
 			std::thread::spawn(move || {
+				profiling::register_thread!("Game Thread");
+
 				// Panic the window thread when game thread panics
 				let orig_hook = std::panic::take_hook();
 				std::panic::set_hook(Box::new(move |panic_info| {
@@ -701,9 +715,7 @@ impl WindowManager {
 
 					if to_update.is_empty() {
 						return;
-					} else {
-						// trace!("Re-render {} windows", to_update.len());
-					}					
+					}
 					let st = Instant::now();
 
 					if let Some(game_thing) = self.game.as_ref() {
@@ -737,6 +749,7 @@ impl WindowManager {
 						for surface in textures {
 							surface.present();
 						}
+						profiling::finish_frame!();
 					} else {
 						error!("Couldn't redraw becuase game is dispareau");
 						panic!()
@@ -787,6 +800,7 @@ impl WindowManager {
 struct WindowSurface {
 	surface: wgpu::Surface,
 	surface_config: wgpu::SurfaceConfiguration,
+	dirty: bool, // flag to reconfigure the surface
 	msaa_levels: u32,
 	msaa: Option<(wgpu::Texture, wgpu::TextureView)>,
 	depth: Option<(wgpu::Texture, wgpu::TextureView)>,
@@ -821,6 +835,7 @@ impl WindowSurface {
 		Self {
 			surface,
 			surface_config,
+			dirty: true,
 			msaa_levels,
 			msaa: None,
 			depth: None,
@@ -834,6 +849,7 @@ impl WindowSurface {
 			self.surface_config.height = height;
 			self.msaa.take();
 			self.depth.take();
+			self.dirty = true;
 		}
 	}
 
@@ -841,8 +857,12 @@ impl WindowSurface {
 		&'a mut self, 
 		device: &wgpu::Device, 
 	) -> (wgpu::SurfaceTexture, SurfaceFrame<'a>) {
-		self.surface.configure(device, &self.surface_config); // Here or in resize()?
-
+		if self.dirty {
+			// Expensive (17ms expensive!), so we don't want to do it every time
+			self.surface.configure(device, &self.surface_config);
+			self.dirty = false;
+		}
+		
 		let frame = match self.surface.get_current_texture() {
 			Ok(tex) => tex,
 			// Apparently this happens when minimized on Windows

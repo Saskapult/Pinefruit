@@ -14,6 +14,7 @@ mod rendering_integration;
 
 use window::*;
 use winit::event_loop::EventLoopBuilder;
+use profiling::puffin;
 
 
 #[macro_use]
@@ -23,6 +24,11 @@ extern crate log;
 fn main() {
 	env_logger::init();
 	info!("Initialized env_logger");
+
+	profiling::register_thread!("Main Thread");
+	puffin::set_scopes_on(true);
+	info!("Enabled profiling");
+
 
 	let event_loop = EventLoopBuilder::<WindowCommand>::with_user_event().build();
 	let window_manager = WindowManager::new(&event_loop);

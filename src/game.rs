@@ -263,6 +263,7 @@ impl Game {
 	// 		.unwrap_or(Instant::now())
 	// }
 
+	#[profiling::function]
 	pub fn tick(&mut self) -> GameStatus {
 		while let Ok(command) = self.commands_receiver.try_recv() {
 			info!("Game receives command {command:?}");
@@ -284,7 +285,6 @@ impl Game {
 		self.world.run(map_modification_system);
 
 		self.world.run(gpu_chunk_loading_system); // Could be moved to render, but that'd give frame out of date issues
-
 		self.world.run(map_modelling_system);
 
 		self.world.run(model_matrix_system);
@@ -306,7 +306,9 @@ impl Game {
 
 	// In the final thing we'd run a bunch of scripts which do stuff
 	// In this version we will just insert a result texture
+	#[profiling::function]
 	pub fn render(&mut self, context: RenderContextKey, profiler: &mut GpuProfiler) -> wgpu::CommandBuffer {
+		let render_st = Instant::now();
 		
 		// Render resource systems
 		{
@@ -373,7 +375,12 @@ impl Game {
 
 		bundle.execute(&self.shaders, &self.bind_groups, &meshes.meshes, &textures.textures, &mut encoder, &self.device, profiler);
 
-		encoder.finish()
+		let buf = encoder.finish();
+
+		let render_dur = render_st.elapsed();
+		info!("Encoded render in {:.1}ms", render_dur.as_secs_f32() * 1000.0);
+
+		buf
 	}
 }
 

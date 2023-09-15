@@ -69,6 +69,7 @@ impl GameWidget {
 		self.update_delay.is_none() || self.last_update.is_none() || self.last_update.unwrap().elapsed() >= self.update_delay.unwrap()
 	}
 	
+	#[profiling::function]
 	pub fn update(
 		&mut self,
 		graphics: &mut GraphicsHandle,
