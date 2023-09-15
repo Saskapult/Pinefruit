@@ -225,7 +225,7 @@ impl GameWindow {
 					ui.image(texture, texture.size_vec2());
 
 					// Toggle profiler
-					ui.toggle_value(&mut self.show_profiler, "Show profiler");
+					ui.toggle_value(&mut self.show_profiler, "Profiler");
 
 					// Update rate for the UI
 					let ui_update_rate = self.update_times.iter()
