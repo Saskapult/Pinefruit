@@ -6,7 +6,7 @@ use krender::{RenderContextKey, prelude::RenderContext};
 use eks::prelude::*;
 use wgpu_profiler::GpuTimerScopeResult;
 use std::sync::mpsc::sync_channel;
-use crate::{window::{WindowPropertiesAndSettings, GraphicsHandle}, game::{Game, ContextResource, TextureResource, OutputResolutionComponent}, input::{KeyDeduplicator, InputEvent}, ecs::{octree::{GPUChunkViewer, GPUChunkLoadingComponent}, loading::{ChunkLoadingComponent, ChunkLoadingResource}, model::MapMeshingComponent, modification::VoxelModifierComponent}};
+use crate::{window::{WindowPropertiesAndSettings, GraphicsHandle}, game::{Game, ContextResource, TextureResource, OutputResolutionComponent}, input::{KeyDeduplicator, InputEvent}, ecs::{octree::{GPUChunkViewer, GPUChunkLoadingComponent}, loading::{ChunkLoadingComponent, ChunkLoadingResource}, model::MapMeshingComponent, modification::VoxelModifierComponent}, util::RingDataHolder};
 use crate::ecs::*;
 
 
@@ -18,8 +18,9 @@ pub struct GameWidget {
 	
 	display_texture: Option<egui::TextureId>,
 	
-	render_rate: Option<Duration>, // If none, then renders whenever the gui does
-	last_render: Option<Instant>,
+	update_delay: Option<Duration>, // If none, then renders whenever the gui does
+	last_update: Option<Instant>,
+	pub update_times: RingDataHolder<Duration>,
 	last_size: [f32; 2],
 
 	deduplicator: KeyDeduplicator,
@@ -35,8 +36,9 @@ impl GameWidget {
 			display_texture: None,
 			last_size: [400.0; 2],
 
-			render_rate: None, // Duration::from_secs_f32(1.0 / 30.0),
-			last_render: None,
+			update_delay: None, // Duration::from_secs_f32(1.0 / 30.0),
+			last_update: None,
+			update_times: RingDataHolder::new(30),
 
 			deduplicator: KeyDeduplicator::new(),
 			game_input: None,
@@ -64,7 +66,7 @@ impl GameWidget {
 	}
 
 	pub fn should_update(&self) -> bool {
-		self.render_rate.is_none() || self.last_render.is_none() || self.last_render.unwrap().elapsed() >= self.render_rate.unwrap()
+		self.update_delay.is_none() || self.last_update.is_none() || self.last_update.unwrap().elapsed() >= self.update_delay.unwrap()
 	}
 	
 	pub fn update(
@@ -72,7 +74,10 @@ impl GameWidget {
 		graphics: &mut GraphicsHandle,
 		game: &mut Game,
 	) -> wgpu::CommandBuffer {
-		self.last_render = Some(Instant::now());
+		if let Some(t) = self.last_update {
+			self.update_times.insert(t.elapsed());
+		}
+		self.last_update = Some(Instant::now());
 
 		// Create entity
 		let context_key = *self.context.get_or_insert_with(|| {

@@ -24,6 +24,7 @@ use crate::ecs::octree::GPUChunksResource;
 use crate::game::{Game, ContextResource, GameStatus};
 use crate::gui::{GameWidget, MessageWidget, RenderProfilingWidget, SplineWidget, MapLoadingWidget};
 use crate::input::*;
+use crate::util::RingDataHolder;
 
 
 
@@ -88,7 +89,8 @@ pub struct GameWindow {
 	settings: WindowSettings,
 
 	last_update: Option<Instant>,
-	redraw_delay: Duration, // Can have another for unfocused delay
+	update_delay: Duration, // Can have another for unfocused delay
+	update_times: RingDataHolder<Duration>,
 
 	context: egui::Context,
 	state: egui_winit::State,
@@ -135,7 +137,8 @@ impl GameWindow {
 			settings: WindowSettings::new(),
 			
 			last_update: None,
-			redraw_delay: Duration::from_secs_f32(1.0 / 60.0),
+			update_delay: Duration::from_secs_f32(1.0 / 60.0),
+			update_times: RingDataHolder::new(30),
 			
 			context: Context::default(),
 			state,
@@ -213,14 +216,30 @@ impl GameWindow {
 					});
 					ui.image(texture, texture.size_vec2());
 
-					// Profiling widget
+					// Update rate for the UI
+					let ui_update_rate = self.update_times.iter()
+						.map(|d| d.as_secs_f32())
+						.reduce(|a, v| a + v)
+						.unwrap_or(f32::INFINITY) / (self.update_times.len() as f32);
+					ui.label(format!("UI: {:>4.1}ms, {:.0}Hz", ui_update_rate * 1000.0, (1.0 / ui_update_rate).round()));
+
+					// Update rate for the Game Widget
+					let gw_update_rate = self.game_widget.update_times.iter()
+						.map(|d| d.as_secs_f32())
+						.reduce(|a, v| a + v)
+						.unwrap_or(f32::INFINITY) / (self.game_widget.update_times.len() as f32);
+					ui.label(format!("GW: {:>4.1}ms, {:.0}Hz", gw_update_rate * 1000.0, (1.0 / gw_update_rate).round()));
+
+					// Update time (and mroe info) for the submitted gpu work
 					if let Some(profile_data) = profiler.process_finished_frame() {
 						self.profiling_widget.display(ui, &profile_data)
 					}
 
+					// Shows how much gpu memory is used by the octree chunks
 					let g = game.world.borrow::<Res<GPUChunksResource>>().used_bytes();
 					ui.label(format!("GPU chunks: {}kb", g as f32 / 1000.0));
 
+					// Shows what chunks are being loaded
 					let loading = game.world.borrow::<Res<ChunkLoadingResource>>();
 					MapLoadingWidget::display(ui, &loading);
 				});
@@ -300,7 +319,7 @@ impl GameWindow {
 	}
 
 	pub fn should_update(&self) -> bool {
-		self.last_update.is_none() || self.last_update.unwrap().elapsed() >= self.redraw_delay
+		self.last_update.is_none() || self.last_update.unwrap().elapsed() >= self.update_delay
 	}
 
 	/// Encodes and executes an update to this window's display.
@@ -309,6 +328,9 @@ impl GameWindow {
 		graphics: &mut GraphicsHandle,
 		game: &mut Game,
 	) -> (wgpu::SurfaceTexture, wgpu::CommandBuffer, Option<wgpu::CommandBuffer>) {
+		if let Some(t) = self.last_update {
+			self.update_times.insert(t.elapsed());
+		}
 		self.last_update = Some(Instant::now());
 
 		// Game widget
