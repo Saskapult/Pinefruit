@@ -18,10 +18,28 @@ pub struct MapModelEntry {
 }
 
 
+#[derive(Debug)]
+pub enum MapModelState {
+	Waiting,
+	// We need to know this so we don't keep trying to generate chunks with failing deps
+	// These are transformed into None by the map loading system
+	Failed(MeshingError), 
+	Complete(MapModelEntry),
+}
+impl MapModelState {
+	pub fn ref_complete(&self) -> Option<&MapModelEntry> {
+		match self {
+			Self::Complete(c) => Some(c),
+			_ => None,
+		}
+	}
+}
+
+
 #[derive(Debug, ResourceIdent)]
 pub struct MapModelResource {
 	// bool for if modelling job is active
-	pub chunks: HashMap<IVec3, (bool, Option<MapModelEntry>)>,
+	pub chunks: HashMap<IVec3, (bool, MapModelState)>,
 	// It may be better to retun a result for this 
 	// If a block must be read, but the chunk is not loaded, then give error. 
 	pub sender: Sender<(IVec3, Result<(Vec<(UVec3, u32, MaterialKey)>, Vec<(IVec3, KGeneration)>), MeshingError>)>, 
@@ -50,68 +68,70 @@ impl MapModelResource {
 		modelmat: &mut CompMut<ModelMatrixComponent>,
 	) {
 		for (position, r) in self.receiver.try_iter() {
-			if let Ok((quads, dependencies)) = r {
-				debug!("Received chunk model for {}", position);
+			match r {
+				Ok((quads, dependencies)) => {
+					debug!("Received chunk model for {}", position);
 
-				debug!("Contains {} quads", quads.len());
+					debug!("Contains {} quads", quads.len());
 
-				// Group quads by material
-				let quads_by_key = quads.iter().fold(HashMap::new(), |mut a: HashMap<MaterialKey, Vec<(UVec3, u32, MaterialKey)>>, &v| {
-					if let Some(c) = a.get_mut(&v.2) {
-						c.push(v);
-					} else {
-						a.insert(v.2, vec![v]);
+					// Group quads by material
+					let quads_by_key = quads.iter().fold(HashMap::new(), |mut a: HashMap<MaterialKey, Vec<(UVec3, u32, MaterialKey)>>, &v| {
+						if let Some(c) = a.get_mut(&v.2) {
+							c.push(v);
+						} else {
+							a.insert(v.2, vec![v]);
+						}
+						a
+					});
+					trace!("Contains {} materials", quads_by_key.len());
+					
+					// Construct meshes
+					let mut models = Vec::new();
+					for g in quads_by_key.values() {
+						let mut positions = Vec::with_capacity(g.len() * 4);
+						let mut uvs = Vec::with_capacity(g.len() * 4);
+						let mut indices = Vec::with_capacity(g.len() * 6);
+						for &(position, direction, _) in g {
+							positions.extend_from_slice(quad_positions(position, direction).as_slice());
+							uvs.extend_from_slice(quad_uvs().as_slice());
+							indices.extend_from_slice(quad_indices(direction).map(|i| i + positions.len() as u32).as_slice());
+						}
+
+						let mesh = Mesh::new(format!("Chunk {position} material {:?}", g[0].2))
+							.with_data("positions", positions.as_slice())
+							.with_data("uvs", uvs.as_slice())
+							.with_vertex_count(positions.len() as u32)
+							.with_indices(indices);
+						let key = meshes.insert(mesh);
+
+						models.push((g[0].2, key));
 					}
-					a
-				});
-				trace!("Contains {} materials", quads_by_key.len());
-				
-				// Construct meshes
-				let mut models = Vec::new();
-				for g in quads_by_key.values() {
-					let mut positions = Vec::with_capacity(g.len() * 4);
-					let mut uvs = Vec::with_capacity(g.len() * 4);
-					let mut indices = Vec::with_capacity(g.len() * 6);
-					for &(position, direction, _) in g {
-						positions.extend_from_slice(quad_positions(position, direction).as_slice());
-						uvs.extend_from_slice(quad_uvs().as_slice());
-						indices.extend_from_slice(quad_indices(direction).map(|i| i + positions.len() as u32).as_slice());
-					}
+					trace!("Made {} models", models.len());
 
-					let mesh = Mesh::new(format!("Chunk {position} material {:?}", g[0].2))
-						.with_data("positions", positions.as_slice())
-						.with_data("uvs", uvs.as_slice())
-						.with_vertex_count(positions.len() as u32)
-						.with_indices(indices);
-					let key = meshes.insert(mesh);
+					// Make entity
+					let world_position = (position * CHUNK_SIZE as i32).as_vec3();
+					trace!("Spawning chunk entity with position {world_position}");
+					let entity = entities.spawn();
+					transforms.insert(entity, TransformComponent::new().with_position(world_position));
+					modelmat.insert(entity, ModelMatrixComponent::new());
 
-					models.push((g[0].2, key));
-				}
-				trace!("Made {} models", models.len());
+					let entry = MapModelEntry {
+						dependencies, models, entity, outdated: false,
+					};
 
-				// Make entity
-				let world_position = (position * CHUNK_SIZE as i32).as_vec3();
-				trace!("Spawning chunk entity with position {world_position}");
-				let entity = entities.spawn();
-				transforms.insert(entity, TransformComponent::new().with_position(world_position));
-				modelmat.insert(entity, ModelMatrixComponent::new());
+					// Todo: make sure it has higher generations than existing
 
-				let entry = MapModelEntry {
-					dependencies, models, entity, outdated: false,
-				};
+					self.chunks.insert(position, (false, MapModelState::Complete(entry)));
+				},
+				Err(e) => {
+					warn!("Modelling failed for {position} - {e}");
 
-				// Todo: make sure it has higher generations than existing
-
-				self.chunks.insert(position, (false, Some(entry)));
-			} else {
-				warn!("Modelling failed for {position} - {}", r.unwrap_err());
-				// Tell the system we are not modellign this thing
-				// Todo: don't try again until the nonexistent dependency exists
-				if let Some((m, _)) = self.chunks.get_mut(&position) {
-					*m = false;
-				}
+					self.chunks.insert(position, (false, MapModelState::Failed(e)));
+					// if let Some((m, _)) = self.chunks.get_mut(&position) {
+					// 	*m = false;
+					// }
+				},
 			}
-			
 			self.cur_meshing_jobs -= 1;
 		}
 	}
@@ -123,18 +143,24 @@ impl MapModelResource {
 				break;
 			}
 			// If not modelling and entry is outdated or none
-			if !*modelling && entry.as_ref().and_then(|e| Some(e.outdated)).unwrap_or(true) {
-				*modelling = true;
-				debug!("Begin modeling chunk {position}");
-				let sender = self.sender.clone();
-				let chunks = map.chunks.clone();
-				let blocks = blocks.blocks.clone();
-				rayon::spawn(move || {
-					let blocks = blocks.read();
-					let mesh_res = chunk_quads_simple(&blocks, &chunks, position);
-					sender.send((position, mesh_res)).unwrap();
-				});
-				self.cur_meshing_jobs += 1;
+			if !*modelling {
+				if match &entry {
+					MapModelState::Complete(e) => e.outdated,
+					MapModelState::Failed(_) => false,
+					MapModelState::Waiting => true,
+				} {
+					*modelling = true;
+					debug!("Begin modeling chunk {position}");
+					let sender = self.sender.clone();
+					let chunks = map.chunks.clone();
+					let blocks = blocks.blocks.clone();
+					rayon::spawn(move || {
+						let blocks = blocks.read();
+						let mesh_res = chunk_quads_simple(&blocks, &chunks, position);
+						sender.send((position, mesh_res)).unwrap();
+					});
+					self.cur_meshing_jobs += 1;
+				}
 			}
 		}
 	}
@@ -187,7 +213,7 @@ pub fn map_modelling_system(
 	}
 
 	for position in chunks_to_unload {
-		if let Some((_, Some(_))) = models.chunks.remove(&position) {
+		if let Some((_, MapModelState::Complete(_))) = models.chunks.remove(&position) {
 			debug!("Unloading model for chunk {position}");
 			// Remove meshes
 			// Remove entity
@@ -196,27 +222,39 @@ pub fn map_modelling_system(
 
 	models.receive_jobs(&mut meshes, &mut entities, &mut transforms, &mut modelmat);
 
-	let chunks = map.chunks.read();
-	// Check for model validity
-	for (modelling, opt) in models.chunks.values_mut() {
-		// Don't check if we're already trying to fix the issue
-		if !*modelling { 
-			if let Some(entry) = opt {
-				entry.outdated = entry.dependencies.iter().any(|(pos, gen)| {
-					match chunks.get(pos) {
-						Some(ChunkEntry::Complete(g)) => g.generation != *gen,
-						_ => false,
-					}
-				});
-			}
-		}		
-	}
-
 	for position in chunks_to_load {
 		if models.chunks.get(&position).is_none() {
 			debug!("Chunk {position} must be modeled");
-			models.chunks.insert(position, (false, None));
+			models.chunks.insert(position, (false, MapModelState::Waiting));
 		}
+	}
+
+	let chunks = map.chunks.read();
+	// Check for model validity
+	for (modelling, state) in models.chunks.values_mut() {
+		// Don't check if we're already trying to fix the issue
+		if !*modelling { 
+			match state {
+				MapModelState::Complete(entry) => {
+					entry.outdated = entry.dependencies.iter().any(|(pos, gen)| {
+						match chunks.get(pos) {
+							Some(ChunkEntry::Complete(g)) => g.generation != *gen,
+							_ => false,
+						}
+					});
+				},
+				MapModelState::Failed(dep) => {
+					match dep {
+						MeshingError::ChunkUnloaded(pos) => {
+							if let Some(ChunkEntry::Complete(_)) = chunks.get(pos) {
+								*state = MapModelState::Waiting;
+							}
+						},
+					}
+				},
+				MapModelState::Waiting => {},
+			}
+		}		
 	}
 
 	models.start_jobs(&map, &blocks);
@@ -331,45 +369,6 @@ fn chunk_quads_simple(
 					}
 				}
 
-				// Look at zn
-				let zn = if z == 0 {
-					if czn.is_none() {
-						let pzn = position - IVec3::Z;
-						let e = chunks.read().get(&pzn)
-							.ok_or(MeshingError::ChunkUnloaded(pzn))?
-							.complete()
-							.ok_or(MeshingError::ChunkUnloaded(pzn))?
-							.clone();
-						deps.push((pzn, e.generation));
-						czn = Some(e);
-					}
-					let czn = czn.as_mut().unwrap();
-					czn.get(UVec3::new(x, y, 15))
-				} else {
-					chunk.get(UVec3::new(x, y, z-1))
-				}; 
-				// Get entries
-				let zne = zn.and_then(|&key| blocks.get(key));
-				let (positive_face, negative_face) = faces(pe, zne);
-				if positive_face {
-					let m = match zne.as_ref().unwrap().render_type {
-						BlockRenderType::Cube(faces) => Some(faces[4]),
-						_ => None,
-					};
-					if let Some(m) = m {
-						quads.push((UVec3::new(x, y, z), 4, m));
-					}
-				}
-				if negative_face {
-					let m = match pe.as_ref().unwrap().render_type {
-						BlockRenderType::Cube(faces) => Some(faces[5]),
-						_ => None,
-					};
-					if let Some(m) = m {
-						quads.push((UVec3::new(x, y, z), 5, m));
-					}
-				}
-
 				// Look at yn
 				let yn = if y == 0 {
 					if cyn.is_none() {
@@ -406,6 +405,45 @@ fn chunk_quads_simple(
 					};
 					if let Some(m) = m {
 						quads.push((UVec3::new(x, y, z), 3, m));
+					}
+				}
+
+				// Look at zn
+				let zn = if z == 0 {
+					if czn.is_none() {
+						let pzn = position - IVec3::Z;
+						let e = chunks.read().get(&pzn)
+							.ok_or(MeshingError::ChunkUnloaded(pzn))?
+							.complete()
+							.ok_or(MeshingError::ChunkUnloaded(pzn))?
+							.clone();
+						deps.push((pzn, e.generation));
+						czn = Some(e);
+					}
+					let czn = czn.as_mut().unwrap();
+					czn.get(UVec3::new(x, y, 15))
+				} else {
+					chunk.get(UVec3::new(x, y, z-1))
+				}; 
+				// Get entries
+				let zne = zn.and_then(|&key| blocks.get(key));
+				let (positive_face, negative_face) = faces(pe, zne);
+				if positive_face {
+					let m = match zne.as_ref().unwrap().render_type {
+						BlockRenderType::Cube(faces) => Some(faces[4]),
+						_ => None,
+					};
+					if let Some(m) = m {
+						quads.push((UVec3::new(x, y, z), 4, m));
+					}
+				}
+				if negative_face {
+					let m = match pe.as_ref().unwrap().render_type {
+						BlockRenderType::Cube(faces) => Some(faces[5]),
+						_ => None,
+					};
+					if let Some(m) = m {
+						quads.push((UVec3::new(x, y, z), 5, m));
 					}
 				}
 			}
@@ -466,6 +504,7 @@ const Y_QUAD_POSITIONS: [Vec3; 4] = [
 	Vec3::new(1.0, 0.0, 1.0), 
 	Vec3::new(0.0, 0.0, 1.0), 
 ];
+// Why is this apparently backwards??
 const Z_QUAD_POSITIONS: [Vec3; 4] = [
 	Vec3::new(0.0, 0.0, 0.0), 
 	Vec3::new(1.0, 0.0, 0.0), 
@@ -507,7 +546,7 @@ pub fn map_model_rendering_system(
 	(input,): (&mut RenderInput<Entity>,), 
 	models: Res<MapModelResource>,
 ) {
-	for entry in models.chunks.values().filter_map(|(_, g)| g.as_ref()) {
+	for entry in models.chunks.values().filter_map(|(_, g)| g.ref_complete()) {
 		for &(material, mesh) in entry.models.iter() {
 			input.insert_item("models", material, Some(mesh), entry.entity);
 		}
