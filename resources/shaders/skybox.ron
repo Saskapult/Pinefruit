@@ -12,14 +12,6 @@
 			entry: "fs_sky",
 		)),
 		polygon_input: Generative(3),
-		// Mesh([
-		// 	(
-		// 		name: "position",
-		// 		source: "positions",
-		// 		fields: [Float32x3],
-		// 		default: None,
-		// 	),
-		// ]),
 		polygon_mode: Fill,
 		instance_attributes: [],
 		attachments: [
@@ -38,7 +30,7 @@
 		)),
 		multisample_count: 1,
 		topology: TriangleList,
-		face_culling: None,
+		face_culling: Front,
 		unclipped_depth: false,
 		conservative: false,
 	)),
