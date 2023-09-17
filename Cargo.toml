@@ -68,4 +68,5 @@ emath = "0.22.0"
 atomic_refcell = "0.1.10"
 profiling = { version = "1.0.10", features = ["profile-with-puffin"] }
 puffin_egui = "0.22.0"
+simdnoise = "3.1.6"
 

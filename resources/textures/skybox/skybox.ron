@@ -1,0 +1,15 @@
+(
+	label: "skybox texture",
+	source: Cube(Faces((
+		"x.png",
+		"blank.png",
+		"y.png",
+		"blank.png",
+		"z.png",
+		"blank.png",
+	))),
+	format: Rgba8Unorm,
+	mip_count: 1,
+	base_usages: [],
+	readable: false,
+)

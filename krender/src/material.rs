@@ -1,4 +1,4 @@
-use std::{path::{PathBuf, Path}, collections::HashMap, sync::atomic::{AtomicBool, Ordering}};
+use std::{path::{PathBuf, Path}, collections::HashMap, sync::atomic::{AtomicBool, Ordering}, ffi::{OsString, OsStr}};
 use serde::{Serialize, Deserialize};
 use slotmap::{SlotMap, SecondaryMap, SparseSecondaryMap};
 
@@ -362,9 +362,17 @@ impl MaterialEntry {
 						if let ResourceLocation::Global(GlobalResourceIdentifier::Path(path)) = data {
 							if textures.key_by_path(path).is_none() {
 								debug!("Material '{}' loads texture at path {path:?}", self.specification.name);
-								let name = path.file_name().unwrap().to_str().unwrap();
-								let texture = Texture::new_from_path(name, path, *format, false);
-								textures.insert(texture);
+								trace!("extension is {:?}", path.extension());
+								if path.extension().and_then(|e| Some(e.eq(OsStr::new("ron")))).unwrap_or(false) {
+									trace!("That is a texture specification!");
+									let texture = Texture::read_specification(path).unwrap();
+									textures.insert(texture);
+
+								} else {
+									let name = path.file_name().unwrap().to_str().unwrap();
+									let texture = Texture::new_from_path(name, path, *format, false);
+									textures.insert(texture);
+								}								
 							}
 						}
 					},

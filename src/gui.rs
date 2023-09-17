@@ -96,10 +96,10 @@ impl GameWidget {
 				.with(ControlComponent::new())
 				.with(CameraComponent::new())
 				.with(movement)
-				.with(ChunkLoadingComponent::new(5))
+				.with(ChunkLoadingComponent::new(6))
 				.with(GPUChunkLoadingComponent::new(4, 2))
 				.with(GPUChunkViewer::new(3))
-				.with(MapMeshingComponent::new(2, 2))
+				.with(MapMeshingComponent::new(4, 2))
 				.with(modifier_comp)
 				.finish();
 
@@ -214,10 +214,10 @@ impl MapLoadingWidget {
 				.reduce(|a, v| a + v)
 				.and_then(|d| Some(d.as_secs_f32() / loading.generation_durations.len() as f32))
 				.unwrap_or(0.0);
-			ui.label(format!("Average: {}ms", av / 1000.0));
+			ui.label(format!("Average: {}ms", av * 1000.0));
 
 			for (p, st) in loading.vec_generation_jobs.iter() {
-				ui.label(format!("{:.2}ms - {p}", st.elapsed().as_secs_f32() / 1000.0));
+				ui.label(format!("{:.2}ms - {p}", st.elapsed().as_secs_f32() * 1000.0));
 			}
 			
 		});

@@ -249,10 +249,16 @@ vec3 hl_ray(vec3 origin, vec3 direction, float tlimit, out float hit, out uint i
 
 void main() {
 	vec3 origin = mod(vec3(camera.position), vec3(16.0));
-	// put uv in [-1, 1] space, also adjust by aspect
-	vec2 new_uv = (uv * vec2(2.0) - vec2(1.0)) * vec2(camera.aspect, -1.0);
-	vec3 unrotated_direction = vec3(new_uv, tan(camera.fovy));
-	vec3 direction = normalize(vec3(camera.rotation * vec4(unrotated_direction, 1.0)));
+	// put uv in [-1, 1] space 
+	vec2 ss_uv = (uv * vec2(2.0) - vec2(1.0));
+	// Flip so that u is right and v is up
+	ss_uv *= vec2(1.0, -1.0); 
+	// Adjust by aspect 
+	ss_uv *= vec2(camera.aspect, 1.0); 
+	// put on view plane 
+	vec3 unrotated_direction = vec3(ss_uv, 1.0 / tan(camera.fovy)); 
+	// Rotate to camera rotation 
+	vec3 direction = normalize(vec3(camera.rotation * vec4(unrotated_direction, 0.0)));
 
 	uint index;
 	float t;

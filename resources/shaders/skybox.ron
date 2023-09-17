@@ -1,0 +1,55 @@
+(
+    name: "skybox shader",
+    base: Polygonal((
+		vertex: (
+			language: Wgsl,
+			path: "skybox.wgsl",
+			entry: "vs_sky",
+		),
+		fragment: Some((
+			language: Wgsl,
+			path: "skybox.wgsl",
+			entry: "fs_sky",
+		)),
+		polygon_input: Generative(3),
+		// Mesh([
+		// 	(
+		// 		name: "position",
+		// 		source: "positions",
+		// 		fields: [Float32x3],
+		// 		default: None,
+		// 	),
+		// ]),
+		polygon_mode: Fill,
+		instance_attributes: [],
+		attachments: [
+			(
+				source: "albedo",
+				format: Rgba8UnormSrgb,
+				blend_colour: Replace,
+				blend_alpha: Replace,
+			),
+		],
+		depth: Some((
+			source: "depth",
+			format: Depth32Float,
+			write: false,
+			comparison: LessEqual,
+		)),
+		multisample_count: 1,
+		topology: TriangleList,
+		face_culling: None,
+		unclipped_depth: false,
+		conservative: false,
+	)),
+	bind_groups: {
+		0: {
+            0: UniformBuffer("camera", [Vertex, Fragment]),
+		},
+		1: {
+            0: Texture("texture", Rgba8Unorm, Cube, false, Float, [Fragment]),
+			1: Sampler("sampler", Repeat, Nearest, Nearest, Nearest, 0.0, 32.0, [Fragment]),
+		},
+	},
+	push_constant_range: [],
+)

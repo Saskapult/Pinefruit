@@ -25,7 +25,7 @@ impl ChunkLoadingResource {
 		let (chunk_sender, chunk_receiver) = unbounded();
 		Self {
 			chunk_sender, chunk_receiver, 
-			max_generation_jobs: 8,
+			max_generation_jobs: 16,
 			cur_generation_jobs: 0,
 			vec_generation_jobs: Vec::with_capacity(8),
 			generation_durations: RingDataHolder::new(32),

@@ -8,7 +8,7 @@ pub mod chunk;
 pub use chunk::*;
 
 
-use glam::{Vec3, IVec3};
+use glam::{Vec3, IVec3, IVec2};
 
 
 
@@ -74,141 +74,50 @@ pub struct VoxelModification {
 }
 
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-// 	use rand::prelude::*;
+#[derive(Debug, Clone, Copy)]
+pub struct SpiralIterator2D {
+	axis: usize,
+    direction: i32,
+    position: IVec2,
+    i: u32,
+    i_max: u32,
+    cur_iter: u32,
+    max_iter: u32,
+}
+impl SpiralIterator2D {
+	pub fn new(extent: u32, start: IVec2) -> Self {
+		let i_max = extent.pow(2);
+		Self {
+			axis: 0,
+			direction: 1,
+			position: start,
+			i: 0,
+			i_max,
+			cur_iter: 0,
+			max_iter: 1,
+		}
+	}
+}
+impl Iterator for SpiralIterator2D {
+	type Item = IVec2;
+	fn next(&mut self) -> Option<Self::Item> {
+		self.i += 1;
+        if self.i > self.i_max {
+            return None;
+        }
+        let p = self.position;
 
-// 	fn randomize_chunk(mut chunk: ArrayVolume, brange: f32) -> ArrayVolume {
-// 		let mut rng = thread_rng();
-// 		for i in 0..chunk.size[0] {
-// 			for j in 0..chunk.size[1] {
-// 				for k in 0..chunk.size[2] {
-// 					let rn = (rng.gen::<f32>() * brange) as usize;
-// 					let voxel = match rn == 0 {
-// 						true => Voxel::Empty,
-// 						false => Voxel::Block(rn -1),
-// 					};
-// 					chunk.set_voxel([i as i32, j as i32, k as i32], voxel)
-// 				}
-// 			}
-// 		}
-// 		chunk
-// 	}
+        if self.cur_iter == self.max_iter {
+            self.cur_iter = 0;
+            self.axis = (self.axis + 1) % 2;
 
-//     #[test]
-//     fn test_chunk_encode_decode() {
-// 		const CHUNKSIZE: [u32; 3] = [16, 16, 16];
-
-//         let chunk1 = randomize_chunk(ArrayVolume::new(CHUNKSIZE), 8 as f32);
-// 		let rle = chunk1.rle();
-// 		let chunk2 = ArrayVolume::new(CHUNKSIZE).rld(&rle);
-
-//         assert_eq!(chunk1, chunk2);
-//     }
-
-// 	#[test]
-//     fn test_chunk_rle_map() {
-// 		const CHUNKSIZE: [u32; 3] = [2, 2, 2];
-
-// 		let mut bm = BlockManager::new();
-// 		(0..=8).for_each(|i| {
-// 			bm.insert(Block::new(
-// 				&format!("block {}", i)
-// 			));
-// 		});
-
-//         let chunk1 = randomize_chunk(ArrayVolume::new(CHUNKSIZE), 8 as f32);
-		
-// 		let rle = chunk1.rle();
-// 		let (name_idx_map, name_map) = bm.encoding_maps(&rle);
-		
-// 		let mapped_rle = rle.iter().map(|&(e_id, len)| {
-// 			if e_id == 0 {
-// 				// If it is empty don't map it
-// 				(e_id, len)
-// 			} else {
-// 				// Otherwise find its index in uniques
-// 				println!("map {} ({}) -> {}", e_id, &bm.index(e_id-1).name, name_idx_map[&e_id]);
-// 				let name_idx = name_idx_map[&e_id];
-// 				// Don't map to zero
-// 				(name_idx + 1, len)
-// 			}
-// 		}).collect::<Vec<_>>();
-		
-// 		let unmapped_rle = mapped_rle.iter().map(|&(name_idx, len)| {
-// 			if name_idx == 0 {
-// 				// If idx is 0 then it was always 0 and represents empty
-// 				(name_idx, len)
-// 			} else {
-// 				// Unmap from not mapping to zero
-// 				let corrected_name_idx = name_idx - 1;
-// 				let name = &name_map[corrected_name_idx];
-// 				let e_id = bm.index_name(name).unwrap() + 1;
-
-// 				println!("unmap {} -> {} -> {}", corrected_name_idx, name, e_id);
-// 				(e_id, len)
-// 			}
-// 		}).collect::<Vec<_>>();
-
-//         assert_eq!(rle, unmapped_rle);
-//     }
-
-// 	#[test]
-//     fn test_chunk_serde() {
-// 		const CHUNKSIZE: [u32; 3] = [16, 16, 16];
-
-//         let mut bm = BlockManager::new();
-// 		(0..=8).for_each(|i| {
-// 			bm.insert(Block::new(
-// 				&format!("block {}", i)
-// 			));
-// 		});
-
-//         let chunk1 = randomize_chunk(ArrayVolume::new(CHUNKSIZE), 8 as f32);
-		
-// 		let rle = chunk1.rle();
-// 		let (name_idx_map, name_map) = bm.encoding_maps(&rle);
-		
-// 		let mapped_rle = rle.iter().map(|&(e_id, len)| {
-// 			if e_id == 0 {
-// 				// If it is empty don't map it
-// 				(e_id, len)
-// 			} else {
-// 				// Otherwise find its index in uniques
-// 				// println!("map {} ({}) -> {}", e_id, &bm.index(e_id-1).name, name_idx_map[&e_id]);
-// 				let name_idx = name_idx_map[&e_id];
-// 				// Don't map to zero
-// 				(name_idx + 1, len)
-// 			}
-// 		}).collect::<Vec<_>>();
-		
-// 		let save_path = "/tmp/chunktest.ron";
-// 		{ // Save
-			
-// 			let f = std::fs::File::create(&save_path).unwrap();
-// 			ron::ser::to_writer(f, &(name_map, mapped_rle)).unwrap();
-// 		}
-// 		// Read
-// 		let f = std::fs::File::open(&save_path).unwrap();
-// 		let (read_name_map, read_mapped_rle): (Vec<String>, Vec<(usize, u32)>) = ron::de::from_reader(f).unwrap();
-
-// 		let unmapped_rle = read_mapped_rle.iter().map(|&(name_idx, len)| {
-// 			if name_idx == 0 {
-// 				// If idx is 0 then it was always 0 and represents empty
-// 				(name_idx, len)
-// 			} else {
-// 				// Unmap from not mapping to zero
-// 				let corrected_name_idx = name_idx - 1;
-// 				let name = &read_name_map[corrected_name_idx];
-// 				let e_id = bm.index_name(name).unwrap() + 1;
-
-// 				// println!("unmap {} -> {} -> {}", corrected_name_idx, name, e_id);
-// 				(e_id, len)
-// 			}
-// 		}).collect::<Vec<_>>();
-// 		let chunk2 = ArrayVolume::new(CHUNKSIZE).rld(&unmapped_rle);
-
-//         assert_eq!(chunk1, chunk2);
-//     }
-// }
+            if self.axis == 0 {
+                self.max_iter += 1;
+                self.direction *= -1;
+            }
+        }
+        self.position[self.axis] += self.direction;
+        self.cur_iter += 1;
+        Some(p)
+	}
+}

@@ -236,7 +236,7 @@ impl Game {
 		};
 		let mesh = {
 			let mut meshes = self.world.borrow::<ResMut<MeshResource>>();
-			meshes.read_or("resources/meshes/star.obj", || Mesh::read_obj("resources/meshes/star.obj"))
+			meshes.read_or("resources/meshes/box.obj", || Mesh::read_obj("resources/meshes/box.obj"))
 		};
 		self.world.spawn()
 			.with(TransformComponent::new()
@@ -333,16 +333,28 @@ impl Game {
 			textures.key_by_name(&"depth".to_string()).unwrap()
 		};
 		input.clear_depth("models", d);
-		// input.add_dependency("models", "depth clear");
 		
-		self.world.run_with_data((&mut input,), uv_test_system);
+		// input.add_dependency("models", "uv");
+		// input.add_dependency("voxels", "uv");
+		// {
+		// 	let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+		// 	let uv_material = materials.read("resources/materials/uv.ron");
+
+		// 	input.insert_item("uv", uv_material, None, Entity::new(0_u32, 0));
+		// }
 		
-		input.add_dependency("models", "uv");
 		self.world.run_with_data((&mut input,), model_render_system);
 		self.world.run_with_data((&mut input,), map_model_rendering_system);
 
+		input.add_dependency("models", "skybox");
+		input.add_dependency("voxels", "skybox");
+		{
+			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+			let skybox_mtl = materials.read("resources/materials/skybox.ron");
+			input.insert_item("skybox", skybox_mtl, None, Entity::default());
+		};
+
 		input.add_dependency("models", "voxels");
-		input.add_dependency("voxels", "uv");
 		{
 			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
 			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
@@ -402,7 +414,7 @@ pub fn output_texture_system(
 			if let Some(key) = context.texture("output_texture") {
 				// If resolution matches then terminate
 				let t = textures.get_mut(key).unwrap();
-				if resolution.width == t.data.size.width && resolution.height == t.data.size.height {
+				if resolution.width == t.size.width && resolution.height == t.size.height {
 					return
 				}
 
@@ -435,17 +447,6 @@ pub fn output_texture_system(
 	}
 }
 
-fn uv_test_system(
-	(input,): (&mut RenderInput<Entity>,), 
-	mut materials: ResMut<MaterialResource>,
-) {
-	let p = Path::new("resources/materials/uv.ron");
-	let uv_material = materials.materials.key_by_path(p)
-		.unwrap_or_else(|| materials.materials.read(p));
-
-
-	input.insert_item("uv", uv_material, None, Entity::new(0_u32, 0));
-}
 
 fn model_render_system(
 	(input,): (&mut RenderInput<Entity>,), 

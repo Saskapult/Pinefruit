@@ -143,6 +143,11 @@ impl<E: EntityIdentifier> RenderInput<E> {
 					dependencies.iter().all(|&d| order.contains(&d)).then(|| *stage)
 				)
 				.collect::<Vec<_>>();
+			if items.len() == 0 {
+				error!("order: {order:#?}");
+				error!("queue: {queue:#?}");
+				panic!("Failed to create render order");
+			}
 
 			queue.retain(|(name, _)| !items.contains(name));
 			order.extend(items.iter());

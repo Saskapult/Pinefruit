@@ -91,7 +91,7 @@ pub fn context_camera_system(
 			let size = context.textures.get("output_texture")
 				.cloned()
 				.and_then(|k| textures.textures.get(k))
-				.and_then(|t| Some(t.data.size))
+				.and_then(|t| Some(t.size))
 				.unwrap();
 			size.width as f32 / size.height as f32
 		};
