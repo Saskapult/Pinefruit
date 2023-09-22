@@ -70,9 +70,10 @@ void main() {
     vec3 frag_pos_view = position_from_depth(tc);
 	vec3 frag_pos_world = (camera.view_i * vec4(frag_pos_view, 1.0)).xyz;
 
-    vec3 tangent = normalize(noise_vec - normal * dot(noise_vec, normal));
-    vec3 bitangent = cross(normal, tangent);
-    mat3 tbn = mat3(tangent, bitangent, normal);
+	vec3 normal_world = (camera.view_i * vec4(normal, 0.0)).xyz;
+    vec3 tangent = normalize(noise_vec - normal_world * dot(noise_vec, normal_world));
+    vec3 bitangent = cross(normal_world, tangent);
+    mat3 tbn = mat3(tangent, bitangent, normal_world);
 
     float occlusion = 0.0;
     for (int i = 0; i < 64; i++) {
@@ -82,7 +83,7 @@ void main() {
 		vec3 sample_pos_view = (camera.view * vec4(sample_pos_world, 1.0)).xyz;
 
         // Project sample position
-		vec4 sample_pos_ndc = camera.projection * vec4(sample_pos_view, 1.0); // view -> clip
+		vec4 sample_pos_ndc = camera.projection * vec4(sample_pos_view, 1.0);
 		sample_pos_ndc.xyz /= sample_pos_ndc.w; // persp divide
 		
 		// Get sample texture coords

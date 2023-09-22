@@ -239,10 +239,10 @@ pub struct SSAORenderSettings {
 impl Default for SSAORenderSettings {
 	fn default() -> Self {
 		Self {
-			tile_scale: 16.0,
-			contrast: 1.0,
-			bias: 0.025,
-			radius: 0.5,
+			tile_scale: 0.0,
+			contrast: 0.5,
+			bias: 0.0,
+			radius: 1.0,
 		}
 	}
 }
