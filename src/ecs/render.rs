@@ -283,13 +283,15 @@ pub fn ssao_system(
 		if kernel_dirty {
 			warn!("Rebuilding SSAO kernel");
 
-			let data = make_ssao_kernel();
+			let data = make_ssao_kernel().iter().copied()
+				.map(|v| [v.x, v.y, v.z, 0.0])
+				.collect::<Vec<_>>();
 
 			let key = *ssao.kernel.get_or_insert_with(|| {
 				trace!("Initialize SSAO kernel");
 				let key = buffers.insert(Buffer::new(
 					"ssao kernel", 
-					data.len() as u64 * 4 * 3, 
+					data.len() as u64 * 4 * 4, 
 					false, 
 					true, 
 					true,
@@ -312,7 +314,7 @@ pub fn ssao_system(
 				trace!("Initialize SSAO noise");
 				let key = textures.insert(Texture::new(
 					"ssao noise", 
-					TextureFormat::Rgba8Unorm, 
+					TextureFormat::Rgba32Float, 
 					ssao.noise_settings.width, 
 					ssao.noise_settings.height, 
 					1, 
@@ -328,10 +330,9 @@ pub fn ssao_system(
 				.copied()
 				.map(|v| [v.x, v.y, 0.0, 0.0])
 				.flatten()
-				.map(|f| (f * (u8::MAX as f32)).round() as u8)
 				.collect::<Vec<_>>();
 			t.set_size(ssao.noise_settings.width, ssao.noise_settings.height, 1);
-			t.write_queued(0, wgpu::Origin3d::ZERO, data.as_slice());
+			t.write_queued(0, wgpu::Origin3d::ZERO, bytemuck::cast_slice(data.as_slice()));
 		}
 
 		let render_dirty = ssao.render_settings_buffer.is_none() || ssao.render_settings != ssao.old_render_settings;
@@ -443,8 +444,8 @@ fn make_ssao_noise(settings: SSAONoiseSettings) -> Vec<Vec2> {
 	let mut rng = rand::thread_rng();
 	(0..(settings.width*settings.height)).map(|_| {
 		Vec2::new(
-			rng.gen::<f32>(), 
-			rng.gen::<f32>(), 
+			rng.gen::<f32>() * 2.0 - 1.0, 
+			rng.gen::<f32>() * 2.0 - 1.0, 
 		)
 	}).collect()
 }

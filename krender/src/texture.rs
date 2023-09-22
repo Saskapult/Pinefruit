@@ -544,6 +544,7 @@ pub enum TextureFormat {
 	Bgra8Unorm,
 	Bgra8UnormSrgb,
 	R8Unorm,
+	Rgba32Float,
 }
 impl TextureFormat {
 	pub fn bytes_per_element(&self) -> u32 {
@@ -554,6 +555,7 @@ impl TextureFormat {
 			TextureFormat::Bgra8UnormSrgb => 4,
 			TextureFormat::Depth32Float => 4,
 			TextureFormat::R8Unorm => 1,
+			TextureFormat::Rgba32Float => 16,
 		}
 	}
 	pub fn image_bytes(&self, image: &DynamicImage) -> Vec<u8> {
@@ -573,6 +575,7 @@ impl Into<wgpu::TextureFormat> for TextureFormat {
 			TextureFormat::Bgra8UnormSrgb => wgpu::TextureFormat::Bgra8UnormSrgb,
 			TextureFormat::Depth32Float => wgpu::TextureFormat::Depth32Float,
 			TextureFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
+			TextureFormat::Rgba32Float => wgpu::TextureFormat::Rgba32Float,
 		}
 	}
 }
@@ -585,6 +588,7 @@ impl From<wgpu::TextureFormat> for TextureFormat {
 			wgpu::TextureFormat::Bgra8UnormSrgb => TextureFormat::Bgra8UnormSrgb,
 			wgpu::TextureFormat::Depth32Float => TextureFormat::Depth32Float,
 			wgpu::TextureFormat::R8Unorm => TextureFormat::R8Unorm,
+			wgpu::TextureFormat::Rgba32Float => TextureFormat::Rgba32Float,
 			_ => unimplemented!("No conversion!"),
 		}
 	}

@@ -25,7 +25,7 @@ layout(set=1, binding=0) uniform SSAORenderSettings {
 } settings;
 
 layout(set=1, binding=1) uniform SSAOKernel {
-	vec3 samples[64];
+	vec4 samples[64];
 } kernel;
 
 layout(set = 1, binding = 2) uniform texture2D noise_texture;
@@ -62,12 +62,13 @@ void main() {
 		return;
 	}
 
-	// vec3 noise_vec = texture(sampler2D(noise_texture, noise_sampler), tc * settings.tile_scale).xyz;
+	vec3 noise_vec = texture(sampler2D(noise_texture, noise_sampler), tc * settings.tile_scale).xyz;
 	// noise_vec = noise_vec * vec3(2.0, 2.0, 0.0) - vec3(1.0, 1.0, 0.0);
 
-	vec3 noise_vec = vec3(0.1, 0.1, 0.0);
+	// vec3 noise_vec = vec3(0.1, -0.1, 0.0);
     vec3 normal = normal_from_depth(tc);
-    vec3 position = position_from_depth(tc);
+    vec3 frag_pos_view = position_from_depth(tc);
+	vec3 frag_pos_world = (camera.view_i * vec4(frag_pos_view, 1.0)).xyz;
 
     vec3 tangent = normalize(noise_vec - normal * dot(noise_vec, normal));
     vec3 bitangent = cross(normal, tangent);
@@ -75,26 +76,24 @@ void main() {
 
     float occlusion = 0.0;
     for (int i = 0; i < 64; i++) {
-		// I've removed tbn for now
-        vec3 sample_pos_vs = position + tbn * kernel.samples[i] * settings.radius;
-		// vec3 sample_pos_vs = position + tbn * vec3(0.0, 0.0, float(i) / 64.0) * settings.radius;
-		// vec3 sample_pos_vs = position + normal * settings.radius;
+		// TBN rotates in world space, so we need to do this
+		// The turorials are wrong! (https://github.com/JoeyDeVries/LearnOpenGL/issues/364)
+        vec3 sample_pos_world = frag_pos_world + tbn * kernel.samples[i].xyz * settings.radius;
+		vec3 sample_pos_view = (camera.view * vec4(sample_pos_world, 1.0)).xyz;
 
         // Project sample position
-		vec4 sample_pos_ndc = camera.projection * vec4(sample_pos_vs, 1.0); // view -> clip
+		vec4 sample_pos_ndc = camera.projection * vec4(sample_pos_view, 1.0); // view -> clip
 		sample_pos_ndc.xyz /= sample_pos_ndc.w; // persp divide
 		
 		// Get sample texture coords
 		vec2 sample_uv = sample_pos_ndc.xy * vec2(0.5, -0.5) + 0.5;
 		
 		// Find the recorded depth value for that sample
-		// float recorded_depth = texture(sampler2D(depth_texture, depth_sampler), sample_uv).r;
-		// float sample_depth = sample_pos_ndc.z;
 		float recorded_depth = position_from_depth(sample_uv).z;
-		float sample_depth = sample_pos_vs.z;
+		float sample_depth = sample_pos_view.z;
 
 		float range_check = smoothstep(0.0, 1.0, settings.radius / abs(sample_depth - recorded_depth));
-		occlusion += (recorded_depth >= (sample_depth - settings.bias) ? 0.0 : 1.0) * range_check;
+		occlusion += (recorded_depth >= (sample_depth + settings.bias) ? 0.0 : 1.0) * range_check;
     }
 
     occlusion = 1.0 - (occlusion / float(64));
