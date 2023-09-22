@@ -63,7 +63,7 @@ slotmap = "1.0.6"
 hashbrown = "0.13.1"
 parking_lot = "0.12.1"
 arrayvec = "0.7.2"
-glam = { version = "0.24.0", features = ["bytemuck"] }
+glam = { version = "0.24.0", features = ["bytemuck", "rand"] }
 emath = "0.22.0"
 atomic_refcell = "0.1.10"
 profiling = { version = "1.0.10", features = ["profile-with-puffin"] }

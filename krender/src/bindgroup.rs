@@ -46,7 +46,11 @@ impl BindGroupDescriptor {
 				info!("Looking for {slot:?}");
 				let resource = match slot {
 					BindGroupEntryContentDescriptor::Buffer(key) => buffers.get(*key).unwrap().binding.as_ref().unwrap().as_entire_binding(),
-					BindGroupEntryContentDescriptor::Texture(key) => wgpu::BindingResource::TextureView(&textures.get(*key).unwrap().binding().unwrap().view),
+					BindGroupEntryContentDescriptor::Texture(key) => wgpu::BindingResource::TextureView({
+						let t= &textures.get(*key).unwrap().binding().unwrap().view;
+						info!("{}", textures.get(*key).unwrap().label);
+						t
+					}),
 					BindGroupEntryContentDescriptor::Sampler(key) => wgpu::BindingResource::Sampler(samplers.get(*key).unwrap().1.as_ref().unwrap()),
 					// BindGroupResourceDescriptor::Buffers(keys) => {
 					// 	// let st = buffer_array_entries.len();
@@ -314,6 +318,7 @@ impl BindGroupManager {
 			.filter(|(_, e)| e.dirty.load(Ordering::Relaxed))
 			.for_each(|(k, e)| {
 				info!("Creating binding for bind group {:?}", k);
+				trace!("{:#?}", e.descriptor.slots.iter().filter(|o| o.is_some()).count());
 				let entries = e.descriptor.entries(textures, buffers, &self.samplers);
 
 				e.dirty.store(false, Ordering::Relaxed);

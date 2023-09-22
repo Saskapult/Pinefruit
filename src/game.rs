@@ -317,6 +317,9 @@ impl Game {
 			self.world.run_with_data((context_mut,), output_texture_system);
 
 			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+			self.world.run_with_data((context_mut,), context_albedo_system);
+
+			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
 			self.world.run_with_data((context_mut,), context_camera_system);
 
 			self.world.run(block_colours_system);
@@ -359,6 +362,14 @@ impl Game {
 			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
 			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
 			self.world.run_with_data((context_mut, &mut input), chunk_rays_system);
+		}
+
+		input.add_dependency("ssao generate", "models");
+		input.add_dependency("ssao apply", "ssao generate");
+		{
+			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
+			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+			self.world.run_with_data((context_mut, &mut input), ssao_system);
 		}
 		
 		let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
@@ -430,7 +441,7 @@ pub fn output_texture_system(
 					"output_texture", 
 					wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
 					resolution.width, resolution.height, 
-					1, false,
+					1, false, false, 
 				).with_usages(wgpu::TextureUsages::TEXTURE_BINDING);
 				let key = textures.insert(t);
 				context.insert_texture("output_texture", key);
@@ -439,7 +450,7 @@ pub fn output_texture_system(
 					"depth", 
 					wgpu::TextureFormat::Depth32Float.into(), 
 					resolution.width, resolution.height, 
-					1, false,
+					1, false, false, 
 				).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
 				context.insert_texture("depth", d);
 			}

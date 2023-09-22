@@ -1,0 +1,10 @@
+(
+	name: "ssao apply material",
+	shader: "../shaders/ssao_apply.ron",
+	mappings: {
+		"output": Context("output_texture"),
+		"input": Context("albedo"),
+		"occlusion": Context("ssao output"),
+	},
+	array_mappings: {},
+)

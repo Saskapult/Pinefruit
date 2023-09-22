@@ -1,5 +1,5 @@
 (
-    name: "octree chunks shader",
+    name: "ssao generate shader",
     base: Polygonal((
 		vertex: (
 			language: Glsl,
@@ -8,7 +8,7 @@
 		),
 		fragment: Some((
 			language: Glsl,
-			path: "octree_chunks.frag",
+			path: "ssao_generate.frag",
 			entry: "main",
 		)),
 		polygon_input: Generative(3),
@@ -16,11 +16,11 @@
 		instance_attributes: [],
 		attachments: [
 			(
-				source: "albedo",
+				source: "output",
 				format: Rgba8Unorm,
 				blend_colour: Replace,
 				blend_alpha: Replace,
-			)
+			),
 		],
 		depth: None,
 		multisample_count: 1,
@@ -34,9 +34,14 @@
             0: UniformBuffer("camera", [Fragment]),
 		},
 		1: {
-			0: UniformBuffer("voxel scene uniform", [Fragment]),
-			1: StorageBuffer("voxel scene data", true, [Fragment]),
-			2: StorageBuffer("block colours buffer", true, [Fragment]),
+			0: UniformBuffer("settings", [Fragment]),
+			1: UniformBuffer("kernel", [Fragment]),
+			2: Texture("noise", Rgba8Unorm, D2, false, Float, [Fragment]),
+			3: Sampler("noise sampler", Repeat, Nearest, Nearest, Nearest, 0.0, 32.0, [Fragment]),
+		},
+		2: {
+			0: Texture("depth", Depth32Float, D2, false, Depth, [Fragment]),
+			1: Sampler("depth sampler", Repeat, Linear, Linear, Linear, 0.0, 32.0, [Fragment]),
 		},
 	},
 	push_constant_range: [],

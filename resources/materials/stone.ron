@@ -2,7 +2,7 @@
 	name: "stone",
 	shader: "../shaders/object_albedo.ron",
 	mappings: {
-		"albedo": Context("output_texture"),
+		"albedo": Context("albedo"),
 		"camera": Context("camera"),
 		"texture": Global(Path("../textures/stone.png")),
 		"depth": Context("depth"),

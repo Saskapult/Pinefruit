@@ -101,6 +101,7 @@ impl GameWidget {
 				.with(GPUChunkViewer::new(3))
 				.with(MapMeshingComponent::new(4, 2))
 				.with(modifier_comp)
+				.with(SSAOComponent::default())
 				.finish();
 
 			let mut contexts = game.world.borrow::<ResMut<ContextResource>>();
@@ -491,5 +492,30 @@ impl SplineWidget {
 		});
 		
 
+	}
+}
+
+
+pub struct SSAOWidget;
+impl SSAOWidget {
+	pub fn display(ui: &mut egui::Ui, ssao: &mut SSAOComponent) {
+		ui.horizontal(|ui| {
+			ui.vertical(|ui| {
+				ui.style_mut().text_styles.get_mut(&egui::TextStyle::Body).unwrap().size = 15.15;
+				ui.label("output scale:");
+				ui.label("noise tiling:");
+				ui.label("contrast:");
+				ui.label("bias:");
+				ui.label("radius:");
+			});
+			
+			ui.vertical(|ui| {
+				ui.add(egui::Slider::new(&mut ssao.output_settings.scale, 0.0..=1.0));
+				ui.add(egui::Slider::new(&mut ssao.render_settings.tile_scale, 0.0001..=32.0).step_by(1.0));
+				ui.add(egui::Slider::new(&mut ssao.render_settings.contrast, 0.1..=2.0));
+				ui.add(egui::Slider::new(&mut ssao.render_settings.bias, 0.0..=0.1));
+				ui.add(egui::Slider::new(&mut ssao.render_settings.radius, 0.0..=5.0));
+			});
+		});
 	}
 }

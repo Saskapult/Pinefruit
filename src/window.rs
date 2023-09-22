@@ -18,11 +18,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-use crate::ecs::TransformComponent;
+use crate::ecs::{TransformComponent, SSAOComponent};
 use crate::ecs::loading::ChunkLoadingResource;
 use crate::ecs::octree::GPUChunksResource;
 use crate::game::{Game, ContextResource, GameStatus};
-use crate::gui::{GameWidget, MessageWidget, RenderProfilingWidget, SplineWidget, MapLoadingWidget};
+use crate::gui::{GameWidget, MessageWidget, RenderProfilingWidget, SplineWidget, MapLoadingWidget, SSAOWidget};
 use crate::input::*;
 use crate::util::RingDataHolder;
 
@@ -256,10 +256,10 @@ impl GameWindow {
 				});
 			});
 		egui::SidePanel::right("right panel")
-			.resizable(false)
-			.default_width(200.0)
-			.max_width(200.0)
-			.min_width(200.0)
+			// .resizable(false)
+			// .default_width(220.0)
+			// .max_width(220.0)
+			// .min_width(220.0)
 			.show(&self.context, |ui| {
 				ui.vertical(|ui| {
 					// Message widget
@@ -268,6 +268,12 @@ impl GameWindow {
 					// Shader refresh button
 					if ui.button("Refresh shaders").clicked() {
 						self.message_widget.add_message("Todo: re-add shader reloading", Instant::now() + Duration::from_secs_f32(5.0));
+					}
+
+					let contexts = game.world.borrow::<Res<ContextResource>>();
+					let mut ssaos = game.world.borrow::<CompMut<SSAOComponent>>();
+					if let Some(ssao) = self.game_widget.context(&*contexts).and_then(|c| c.entity).and_then(|entity| ssaos.get_mut(entity)) {
+						SSAOWidget::display(ui, ssao);
 					}
 				});
 			});

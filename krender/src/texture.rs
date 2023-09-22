@@ -229,6 +229,8 @@ pub struct Texture {
 	dirty: AtomicBool,
 	binding: Option<BoundTexture>,
 	staging: Option<Option<wgpu::Buffer>>,
+
+	queued_writes: Vec<(u32, wgpu::Origin3d, Vec<u8>)>,
 }
 impl Texture {
 	pub fn read_specification(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -261,6 +263,7 @@ impl Texture {
 			dirty: AtomicBool::new(true),
 			binding: None,
 			staging: spec.readable.then(|| None),
+			queued_writes: Vec::new(),
 		})
 	}
 
@@ -271,6 +274,8 @@ impl Texture {
 		height: u32,
 		depth: u32,
 		readable: bool,
+		writable: bool, // not fully implemented! I juist want to render stuff
+		// persistent: bool,
 	) -> Self {
 		Self {
 			label: name.into(),
@@ -284,13 +289,18 @@ impl Texture {
 			dimension: wgpu::TextureDimension::D2,
 			view_dimension: wgpu::TextureViewDimension::D2,
 
-			base_usages: wgpu::TextureUsages::empty(),
+			base_usages: if writable {
+				wgpu::TextureUsages::COPY_DST
+			} else {
+				wgpu::TextureUsages::empty()
+			},
 			materials: RwLock::new(HashMap::new()),
 			bind_groups: RwLock::new(HashSet::new()),
 			mip_count: NonZeroU32::new(1).unwrap(),
 			dirty: AtomicBool::new(true),
 			binding: None,
 			staging: readable.then(|| None),
+			queued_writes: Vec::new(),
 		}	
 	}
 
@@ -325,6 +335,7 @@ impl Texture {
 			dirty: AtomicBool::new(true),
 			binding: None,
 			staging: spec.readable.then(|| None),
+			queued_writes: Vec::new(),
 		}
 	}
 
@@ -346,6 +357,49 @@ impl Texture {
 		}
 		self.mip_count = NonZeroU32::new(mip_count).unwrap();
 		self
+	}
+
+	pub fn write(
+		&mut self, 
+		queue: &wgpu::Queue, 
+		mip_level: u32, 
+		origin: wgpu::Origin3d, 
+		data: &[u8],
+	) {
+		// assert!(self.writable, "Buffer '{}' is not writable!", self.name);
+		if let Some(texture) = self.binding.as_ref() {
+			let bytes_per_row = std::num::NonZeroU32::new(self.format.bytes_per_element() * texture.size.width).and_then(|u| Some(u.get()));
+			let rows_per_image = std::num::NonZeroU32::new(texture.size.height).and_then(|u| Some(u.get()));
+			let size = texture.size;
+			queue.write_texture(
+				wgpu::ImageCopyTexture {
+					aspect: wgpu::TextureAspect::All,
+					texture: &texture.texture,
+					mip_level,
+					origin,
+				},
+				data,
+				wgpu::ImageDataLayout {
+					offset: 0,
+					bytes_per_row,
+					rows_per_image,
+				},
+				size,
+			);
+		} else {
+			warn!("Tried to write to unbound texture '{}', adding to write queue at index {}", self.label, self.queued_writes.len());
+			self.queued_writes.push((mip_level, origin, data.to_vec()));
+		}
+	}
+
+	pub fn write_queued(
+		&mut self, 
+		mip_level: u32, 
+		origin: wgpu::Origin3d, 
+		data: &[u8],
+	) {
+		// assert!(self.writable, "Buffer '{}' is not writable!", self.label);
+		self.queued_writes.push((mip_level, origin, data.to_vec()));
 	}
 
 	// pub fn mean_rgba(&self) -> Result<[f32; 4], TextureError> {
@@ -692,6 +746,36 @@ impl TextureManager {
 			if texture.dirty.load(Ordering::Relaxed) {
 				texture.rebind(device, queue, bind_groups);
 			}
+		}
+	}
+
+	pub fn do_queued_writes(&mut self, queue: &wgpu::Queue) {
+		for texture in self.textures.values_mut() {
+			if texture.queued_writes.len() > 0 {
+				trace!("Texture {} does {} queued writes", texture.label, texture.queued_writes.len());
+			}
+
+			for (mip_level, origin, data) in texture.queued_writes.iter() {
+				let bytes_per_row = std::num::NonZeroU32::new(texture.format.bytes_per_element() * texture.size.width).and_then(|u| Some(u.get()));
+				let rows_per_image = std::num::NonZeroU32::new(texture.size.height).and_then(|u| Some(u.get()));
+				let size = texture.size;
+				queue.write_texture(
+					wgpu::ImageCopyTexture {
+						aspect: wgpu::TextureAspect::All,
+						texture: &texture.binding.as_ref().unwrap().texture,
+						mip_level: *mip_level,
+						origin: *origin,
+					},
+					data,
+					wgpu::ImageDataLayout {
+						offset: 0,
+						bytes_per_row,
+						rows_per_image,
+					},
+					size,
+				);
+			}
+			texture.queued_writes.clear();
 		}
 	}
 

@@ -37,7 +37,7 @@
 		attachments: [
 			(
 				source: "albedo",
-				format: Rgba8UnormSrgb,
+				format: Rgba8Unorm,
 				blend_colour: Replace,
 				blend_alpha: Replace,
 			),

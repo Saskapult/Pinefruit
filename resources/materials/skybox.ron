@@ -2,7 +2,7 @@
 	name: "skybox material",
 	shader: "../shaders/skybox.ron",
 	mappings: {
-		"albedo": Context("output_texture"),
+		"albedo": Context("albedo"),
 		"texture": Global(Path("../textures/skybox/skybox.ron")),
 		"camera": Context("camera"),
 		"depth": Context("depth"),

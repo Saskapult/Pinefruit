@@ -118,6 +118,7 @@ pub fn prepare_for_render<T: EntityIdentifier>(
 
 	info!("Bind textures");
 	textures.update_bindings(device, queue, bind_groups);
+	textures.do_queued_writes(queue);
 
 	info!("Bind buffers");
 	buffers.update_bindings(device, bind_groups);

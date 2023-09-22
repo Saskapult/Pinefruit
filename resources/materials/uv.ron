@@ -2,7 +2,7 @@
 	name: "screen uv material",
 	shader: "../shaders/uv.ron",
 	mappings: {
-		"albedo": Context("output_texture"),
+		"albedo": Context("albedo"),
 	},
 	array_mappings: {},
 )

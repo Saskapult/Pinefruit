@@ -473,7 +473,7 @@ impl Into<wgpu::AddressMode> for AddressMode {
 }
 
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum FilterMode {
 	Nearest,
     Linear,
@@ -574,11 +574,18 @@ impl BindGroupEntry {
 				},
 				count: None,
 			},
-			Self::Sampler(_, _, _, _, _, _, _, stages) => wgpu::BindGroupLayoutEntry {
-				binding: i,
-				visibility: ShaderStages::to_stages(stages),
-				ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-				count: None,
+			Self::Sampler(_, _, f0, f1, f2, _, _, stages) => {
+				let filterable = [f0, f1, f2].iter().any(|&&f| f  == FilterMode::Linear);
+				wgpu::BindGroupLayoutEntry {
+					binding: i,
+					visibility: ShaderStages::to_stages(stages),
+					ty: wgpu::BindingType::Sampler(if filterable {
+						wgpu::SamplerBindingType::Filtering
+					} else {
+						wgpu::SamplerBindingType::NonFiltering
+					}),
+					count: None,
+				}
 			},
 			Self::StorageBuffer(_, read_only, stages) => wgpu::BindGroupLayoutEntry {
 				binding: i,

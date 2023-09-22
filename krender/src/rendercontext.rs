@@ -34,7 +34,10 @@ impl<T: EntityIdentifier> RenderContext<T> {
 
 	// Todo: make this rebuild materials
 	pub fn insert_texture(&mut self, label: impl Into<String>, key: TextureKey) {
-		if self.textures.insert(label.into(), key).is_some() {
+		let label = label.into();
+		trace!("Context insert texture '{label}'");
+		if self.textures.insert(label.clone(), key).is_some() {
+			error!("Replace context texture '{}'", label);
 			panic!("You've just replaced a context resource! Any materials that used it will not be notified and things will break. Have a nice day!");
 		}
 	}
@@ -43,7 +46,8 @@ impl<T: EntityIdentifier> RenderContext<T> {
 	pub fn insert_buffer(&mut self, label: impl Into<String>, key: BufferKey) {
 		let label = label.into();
 		info!("context buffer {label}");
-		if self.buffers.insert(label, key).is_some() {
+		if self.buffers.insert(label.clone(), key).is_some() {
+			error!("Replace context buffer '{}'", label);
 			panic!("You've just replaced a context resource! Any materials that used it will not be notified and things will break. Have a nice day!");
 		}
 	}

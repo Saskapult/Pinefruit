@@ -2,7 +2,7 @@
 	name: "octree chunks material",
 	shader: "../shaders/octree_chunks.ron",
 	mappings: {
-		"albedo": Context("output_texture"),
+		"albedo": Context("albedo"),
 		"camera": Context("camera"),
 		"voxel scene uniform": Context("idk"),
 		"voxel scene data": Global(Label("big buffer")),

@@ -1,0 +1,13 @@
+(
+	name: "ssao generate material",
+	shader: "../shaders/ssao_generate.ron",
+	mappings: {
+		"camera": Context("camera"),
+		"settings": Context("ssao settings"),
+		"kernel": Context("ssao kernel"),
+		"noise": Context("ssao noise"),
+		"output": Context("ssao output"),
+		"depth": Context("depth"),
+	},
+	array_mappings: {},
+)
