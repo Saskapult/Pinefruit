@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet}, sync::Arc, time::{Instant, Duration}}
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use eks::prelude::*;
 use glam::IVec3;
-use crate::{ecs::*, voxel::{VoxelModification, TerrainGenerator, chunk_of_point, VoxelSphere, Chunk, NewTerrainGenerator}, util::RingDataHolder};
+use crate::{ecs::*, voxel::{VoxelModification, TerrainGenerator, chunk_of_point, VoxelSphere, Chunk, NewTerrainGenerator, chunk::CHUNK_SIZE}, util::RingDataHolder};
 use super::ChunkEntry;
 
 
@@ -119,14 +119,28 @@ pub fn map_loading_system(
 	}
 
 	// Take some generation jobs
-	for (&position, entry) in chunks.iter_mut() {
+	// Find potential jobs, sort by closest distance to a viewer
+	// A bit hackey but it works
+	let mut potential_jobs = chunks.iter_mut()
+		.filter(|(_, entry)| if let ChunkEntry::UnLoaded = entry {true} else {false})
+		.map(|(&position, entry)|{
+			let distance = (&map_loaders, &transforms).iter()
+				.map(|(_, t)| (position * CHUNK_SIZE as i32).as_vec3().distance_squared(t.translation))
+				.min_by(|a, b| a.total_cmp(b))
+				.unwrap();
+			(position, entry, distance)
+		})
+		.collect::<Vec<_>>();
+	potential_jobs.sort_unstable_by(|a, b| a.2.total_cmp(&b.2));
+	
+	for (position, entry, p) in potential_jobs {
 		if loading.cur_generation_jobs >= loading.max_generation_jobs {
 			debug!("Reached maxium chunk generation jobs");
 			break;
 		}
 		if let ChunkEntry::UnLoaded = entry {
 			// todo!("Generate chunk")
-			debug!("Begin generating chunk {position}");
+			debug!("Begin generating chunk {position} (priority {p})");
 
 			let blocks = blocks.read();
 			let grass = blocks.key_by_name(&"grass".into()).unwrap();
