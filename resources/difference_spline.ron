@@ -5,6 +5,11 @@
         interpolation: cosine,
     ),
     (
+        t: 0.5,
+        value: 0.9,
+        interpolation: cosine,
+    ),
+    (
         t: 1.0,
         value: 0.1,
         interpolation: cosine,

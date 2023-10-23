@@ -105,7 +105,7 @@ impl NewTerrainGenerator {
 			height_spline: load_spline("resources/height_spline.ron").unwrap(),
 			height_difference_noise: RawFbmSettings {
 				seed: seed + 2,
-				freq: 1.0 / 50.0,
+				freq: 1.0 / 100.0,
 				lacunarity: 2.0,
 				gain: 0.5, 
 				octaves: 1,

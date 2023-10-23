@@ -20,7 +20,7 @@ impl CameraComponent {
 		Self {
 			fovy: 45.0_f32.to_radians(),
 			near: 0.1, // Self::near_from_fovy_degrees(45.0),
-			far: 100.0,
+			far: 500.0,
 		}
 	}
 
