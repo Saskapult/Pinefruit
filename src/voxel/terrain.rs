@@ -66,14 +66,21 @@ impl ConfigureRawFbm for FbmSettings {
 /// If something fails during that, the prgoram will panic.  
 #[derive(Debug)]
 pub struct NewTerrainGenerator {
+	// The noise used to determine the base density of a voxel
 	density_noise: RawFbmSettings,
 	density_threshold: f32,
+	// Density adjustment, difference from intended height -> density adjustment
 	density_spline: Spline<f32, f32>,
 
+	// The noise used to determine the intended height of the world
 	height_noise: RawFbmSettings,
+	// Maps raw height noise -> intended world terrain height
 	height_spline: Spline<f32, f32>,
 
+	// The noise used to create a multiplier for the difference from intended height
+	// Think of this as a "weirdness" value
 	height_difference_noise: RawFbmSettings,
+	// Maps raw height difference noise -> height difference multiplier
 	height_difference_spline: Spline<f32, f32>,
 }
 impl NewTerrainGenerator {
