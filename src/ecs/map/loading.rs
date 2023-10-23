@@ -151,28 +151,14 @@ pub fn map_loading_system(
 			let sender = loading.chunk_sender.clone();
 			rayon::spawn(move || {
 				let mut c = Chunk::new();
+
 				// let tgen = TerrainGenerator::new(0);
+				// tgen.chunk_base_3d(position, &mut c, stone);
+				// tgen.cover_chunk(&mut c, position, grass, dirt, 3);
 
 				generator.base(position, &mut c.storage, stone);
 				generator.cover(position, &mut c.storage, grass, dirt, 3);
-				
-				// tgen.chunk_base_3d(position, &mut c, stone);
-				// tgen.cover_chunk(&mut c, position, grass, dirt, 3);
-				
-				// for x in 0..16 {
-				// 	for y in 0..16 {
-				// 		for z in 0..16 {
-				// 			let world_position = position * 16 + IVec3::new(x, y, z);
 
-				// 			if tgen.is_solid_default(world_position) {
-				// 				c.insert(
-				// 					UVec3::new(x as u32, y as u32, z as u32), 
-				// 					grass,
-				// 				);
-				// 			}
-				// 		}
-				// 	}
-				// }
 				sender.send((position, c, Vec::new())).unwrap();
 			});
 			loading.vec_generation_jobs.push((position, Instant::now()));
@@ -180,40 +166,3 @@ pub fn map_loading_system(
 		}
 	}
 }
-
-
-// fn chunk_generation_function(
-// 	chunk_position: [i32; 3],
-// 	blocks: &BlockManager,
-// ) -> Result<impl Fn() -> (Chunk, ChunkBlockMods), GenerationError> {
-
-// 	let stone = "stone".to_string();
-// 	let stone_idx = blocks.index_name(&stone)
-// 		.ok_or(GenerationError::BlockNotFoundError(stone))?;
-// 	let grass = "grass".to_string();
-// 	let grass_idx = blocks.index_name(&grass)
-// 		.ok_or(GenerationError::BlockNotFoundError(grass))?;
-// 	let dirt = "dirt".to_string();
-// 	let dirt_idx = blocks.index_name(&dirt)
-// 		.ok_or(GenerationError::BlockNotFoundError(dirt))?;
-	
-// 	let chunk_func = move || {			
-// 		let mut chunk = Chunk::new(chunk_size);
-// 		let cbms = ChunkBlockMods::new(chunk_size);
-// 		let tgen = TerrainGenerator::new(0);
-
-// 		// Bare
-// 		chunk = tgen.chunk_base_3d(chunk_position, chunk, Voxel::Block(stone_idx));
-	
-// 		// Cover
-// 		chunk = tgen.cover_chunk(chunk, chunk_position, Voxel::Block(grass_idx), Voxel::Block(dirt_idx), 3);
-
-// 		// Trees
-// 		// let tree_mods = tgen.treeify_3d(chunk_position, &self, &bm, 5);
-
-// 		(chunk, cbms)
-// 	};
-
-// 	Ok(chunk_func)
-// }
-
