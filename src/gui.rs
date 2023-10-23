@@ -96,10 +96,10 @@ impl GameWidget {
 				.with(ControlComponent::new())
 				.with(CameraComponent::new())
 				.with(movement)
-				.with(ChunkLoadingComponent::new(6))
+				.with(ChunkLoadingComponent::new(9))
 				.with(GPUChunkLoadingComponent::new(4, 2))
 				.with(GPUChunkViewer::new(3))
-				.with(MapMeshingComponent::new(4, 2))
+				.with(MapMeshingComponent::new(7, 2))
 				.with(modifier_comp)
 				.with(SSAOComponent::default())
 				.finish();

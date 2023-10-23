@@ -8,7 +8,7 @@ pub mod chunk;
 pub use chunk::*;
 
 
-use glam::{Vec3, IVec3, IVec2};
+use glam::{Vec3, IVec3, IVec2, UVec3};
 
 
 
@@ -39,6 +39,18 @@ pub fn chunk_of_voxel(voxel: IVec3) -> IVec3 {
 pub fn chunk_of_point(point: Vec3) -> IVec3 {
 	chunk_of_voxel(voxel_of_point(point))
 }
+
+
+pub fn cube_iterator_xyz_uvec(size: UVec3) -> impl Iterator<Item = UVec3> {
+	let [x, y, z] = size.to_array();
+	(0..x).flat_map(move |x| {
+		(0..y).flat_map(move |y| {
+			(0..z).map(move |z| {
+				UVec3::new(x, y, z)
+			})
+		})
+	})
+} 
 
 
 pub struct VoxelSphere {

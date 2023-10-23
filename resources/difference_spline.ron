@@ -1,0 +1,12 @@
+([
+    (
+        t: 0.0,
+        value: 1.0,
+        interpolation: cosine,
+    ),
+    (
+        t: 1.0,
+        value: 0.1,
+        interpolation: cosine,
+    ),
+])

@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet}, sync::Arc, time::{Instant, Duration}}
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use eks::prelude::*;
 use glam::IVec3;
-use crate::{ecs::*, voxel::{VoxelModification, TerrainGenerator, chunk_of_point, VoxelSphere, Chunk}, util::RingDataHolder};
+use crate::{ecs::*, voxel::{VoxelModification, TerrainGenerator, chunk_of_point, VoxelSphere, Chunk, NewTerrainGenerator}, util::RingDataHolder};
 use super::ChunkEntry;
 
 
@@ -18,7 +18,7 @@ pub struct ChunkLoadingResource {
 
 	pub seed: u32,
 	pub pending_blockmods: HashMap<IVec3, Vec<VoxelModification>>,
-	pub tgen: TerrainGenerator,
+	pub generator: Arc<NewTerrainGenerator>,
 }
 impl ChunkLoadingResource {
 	pub fn new(seed: u32) -> Self {
@@ -31,7 +31,7 @@ impl ChunkLoadingResource {
 			generation_durations: RingDataHolder::new(32),
 			seed, 
 			pending_blockmods: HashMap::new(),
-			tgen: TerrainGenerator::new(seed),
+			generator: Arc::new(NewTerrainGenerator::new(seed as i32)),
 		}
 	}
 }
@@ -133,13 +133,17 @@ pub fn map_loading_system(
 			let dirt = blocks.key_by_name(&"dirt".into()).unwrap();
 			let stone = blocks.key_by_name(&"stone".into()).unwrap();
 
+			let generator = loading.generator.clone();
 			let sender = loading.chunk_sender.clone();
 			rayon::spawn(move || {
 				let mut c = Chunk::new();
-				let tgen = TerrainGenerator::new(0);
+				// let tgen = TerrainGenerator::new(0);
+
+				generator.base(position, &mut c.storage, stone);
+				generator.cover(position, &mut c.storage, grass, dirt, 3);
 				
-				tgen.chunk_base_3d(position, &mut c, stone);
-				tgen.cover_chunk(&mut c, position, grass, dirt, 3);
+				// tgen.chunk_base_3d(position, &mut c, stone);
+				// tgen.cover_chunk(&mut c, position, grass, dirt, 3);
 				
 				// for x in 0..16 {
 				// 	for y in 0..16 {
