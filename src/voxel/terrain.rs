@@ -72,6 +72,9 @@ pub struct NewTerrainGenerator {
 
 	height_noise: RawFbmSettings,
 	height_spline: Spline<f32, f32>,
+
+	height_difference_noise: RawFbmSettings,
+	height_difference_spline: Spline<f32, f32>,
 }
 impl NewTerrainGenerator {
 	pub fn new(seed: i32) -> Self {
@@ -93,6 +96,15 @@ impl NewTerrainGenerator {
 				octaves: 1,
 			},
 			height_spline: load_spline("resources/height_spline.ron").unwrap(),
+			height_difference_noise: RawFbmSettings {
+				seed: seed + 2,
+				freq: 1.0 / 50.0,
+				lacunarity: 2.0,
+				gain: 0.5, 
+				octaves: 1,
+			},
+			height_difference_spline: load_spline("resources/difference_spline.ron").unwrap(),
+			
 		}
 	}
 
@@ -116,6 +128,17 @@ impl NewTerrainGenerator {
 			.map(|d| (d * height_scale + 1.0) / 2.0) // Normalize
 			.map(|height_noise| {
 				self.height_spline.clamped_sample(height_noise).unwrap()
+			})
+			.collect::<Vec<_>>();
+
+		let height_difference_scale = self.height_difference_noise.compute_scale();
+		let height_differences = simdnoise::NoiseBuilder::fbm_2d_offset(
+			x_offset as f32 + 0.5, x_extent as usize, 
+			z_offset as f32 + 0.5, z_extent as usize,
+		).apply_raw_settings(self.height_difference_noise).generate().0.into_iter()
+			.map(|d| (d * height_difference_scale + 1.0) / 2.0) // Normalize
+			.map(|noise| {
+				self.height_difference_spline.clamped_sample(noise).unwrap()
 			})
 			.collect::<Vec<_>>();
 
@@ -148,8 +171,12 @@ impl NewTerrainGenerator {
 					p.z * x_extent +
 					p.x
 				) as usize];
+				let height_difference = height_differences[(
+					p.z * x_extent +
+					p.x
+				) as usize];
 
-				let height_diff = height - world_pos.y as f32;
+				let height_diff = (height - world_pos.y as f32) * height_difference;
 				let density_adjustment = self.density_spline.clamped_sample(height_diff).unwrap();
 				density + density_adjustment
 			})
