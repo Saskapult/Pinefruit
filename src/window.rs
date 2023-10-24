@@ -265,6 +265,13 @@ impl GameWindow {
 					// Message widget
 					self.message_widget.display(ui);
 
+					// Toggle rendering types
+					ui.horizontal(|ui| {
+						ui.label("Rendering Mode: ");
+						ui.toggle_value(&mut game.render_polygons, "Polgyons");
+						ui.toggle_value(&mut game.render_rays, "Rays");
+					});
+				
 					// Shader refresh button
 					if ui.button("Refresh shaders").clicked() {
 						self.message_widget.add_message("Todo: re-add shader reloading", Instant::now() + Duration::from_secs_f32(5.0));

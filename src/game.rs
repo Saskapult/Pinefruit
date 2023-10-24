@@ -156,6 +156,9 @@ pub struct Game {
 
 	shaders: ShaderManager,
 	bind_groups: BindGroupManager,
+
+	pub render_rays: bool,
+	pub render_polygons: bool,
 }
 impl Game {
 	/// Creating the game should be fast because it is done on the main thread. 
@@ -194,6 +197,8 @@ impl Game {
 			device, queue, 
 			commands_receiver, commands_sender, 
 			shaders, bind_groups, 
+			render_rays: false,
+			render_polygons: true,
 		}
 	}
 
@@ -217,9 +222,7 @@ impl Game {
 		self.world.insert_resource(ChunkLoadingResource::new(42));
 
 		{ // Octree thing
-			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
-			let r = GPUChunksResource::new(&mut materials);
-			drop(materials);
+			let r = GPUChunksResource::default();
 			self.world.insert_resource(r);
 		}
 		
@@ -284,8 +287,12 @@ impl Game {
 		self.world.run(map_loading_system);
 		self.world.run(map_modification_system);
 
-		self.world.run(gpu_chunk_loading_system); // Could be moved to render, but that'd give frame out of date issues
-		self.world.run(map_modelling_system);
+		if self.render_rays {
+			self.world.run(gpu_chunk_loading_system); // Could be moved to render, but that'd give frame out of date issues
+		}
+		if self.render_polygons {
+			self.world.run(map_modelling_system);
+		}
 
 		self.world.run(model_matrix_system);
 
@@ -307,7 +314,11 @@ impl Game {
 	// In the final thing we'd run a bunch of scripts which do stuff
 	// In this version we will just insert a result texture
 	#[profiling::function]
-	pub fn render(&mut self, context: RenderContextKey, profiler: &mut GpuProfiler) -> wgpu::CommandBuffer {
+	pub fn render(
+		&mut self, 
+		context: RenderContextKey, 
+		profiler: &mut GpuProfiler,
+	) -> wgpu::CommandBuffer {
 		let render_st = Instant::now();
 		
 		// Render resource systems
@@ -337,28 +348,25 @@ impl Game {
 		};
 		input.clear_depth("models", d);
 		
-		// input.add_dependency("models", "uv");
-		// input.add_dependency("voxels", "uv");
-		// {
-		// 	let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
-		// 	let uv_material = materials.read("resources/materials/uv.ron");
-
-		// 	input.insert_item("uv", uv_material, None, Entity::new(0_u32, 0));
-		// }
-		
-		self.world.run_with_data((&mut input,), model_render_system);
-		self.world.run_with_data((&mut input,), map_model_rendering_system);
-
-		input.add_dependency("models", "skybox");
-		input.add_dependency("voxels", "skybox");
-		{
+		{ // Render skybox
 			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
 			let skybox_mtl = materials.read("resources/materials/skybox.ron");
 			input.insert_item("skybox", skybox_mtl, None, Entity::default());
-		};
+		}
 
-		input.add_dependency("models", "voxels");
-		{
+		input.add_dependency("models", "skybox");
+		self.world.run_with_data((&mut input,), model_render_system);
+		
+		// Render chunk meshes
+		if self.render_polygons {
+			self.world.run_with_data((&mut input,), map_model_rendering_system);
+		}
+
+		// Render chunks with rays
+		if self.render_rays {
+			input.add_dependency("voxels", "skybox");
+			input.add_dependency("models", "voxels");
+		
 			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
 			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
 			self.world.run_with_data((context_mut, &mut input), chunk_rays_system);

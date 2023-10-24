@@ -6,7 +6,7 @@ use krender::{BufferKey, prelude::{MaterialManager, BufferManager, Buffer, Rende
 use oktree::Octree;
 use slotmap::Key;
 
-use crate::{util::KGeneration, game::{BufferResource, QueueResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{VoxelSphere, chunk_of_point, Chunk, chunk::CHUNK_SIZE}};
+use crate::{util::KGeneration, game::{BufferResource, QueueResource, MaterialResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{VoxelSphere, chunk_of_point, Chunk, chunk::CHUNK_SIZE}};
 
 use super::{MapResource, BlockResource};
 
@@ -96,20 +96,13 @@ impl std::ops::DerefMut for BigBufferResource {
 }
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, ResourceIdent, Default)]
 pub struct GPUChunksResource {
 	pub chunks: HashMap<IVec3, Option<(KGeneration, SlabAllocationKey)>>,
 
-	pub material: MaterialKey,
+	pub material: Option<MaterialKey>,
 }
 impl GPUChunksResource {
-	pub fn new(
-		materials: &mut MaterialManager,
-	) -> Self {
-		let material = materials.read("resources/materials/octree_chunks.ron");
-		Self { chunks: HashMap::new(), material, }
-	}
-
 	/// How much space is this using? 
 	pub fn used_bytes(&self) -> u64 {
 		self.chunks.values()
@@ -293,9 +286,10 @@ pub fn chunk_rays_system(
 	queue: Res<QueueResource>,
 	mut buffers: ResMut<BufferResource>,
 	mut bigbuffer: ResMut<BigBufferResource>,
-	octrees: Res<GPUChunksResource>,
+	mut octrees: ResMut<GPUChunksResource>,
 	mut viewers: CompMut<GPUChunkViewer>,
 	transforms: Comp<TransformComponent>,
+	mut materials: ResMut<MaterialResource>,
 ) {
 	#[repr(C)]
 	#[derive(Debug, Pod, Zeroable, Clone, Copy)]
@@ -356,7 +350,13 @@ pub fn chunk_rays_system(
 				context.insert_buffer("idk", key);
 			}
 
-			input.insert_item("voxels", octrees.material, None, entity);
+			
+			let material = *octrees.material.get_or_insert_with(|| 
+				materials.key_by_path("resources/materials/octree_chunks.ron")
+				.unwrap_or_else(|| materials.read("resources/materials/octree_chunks.ron"))
+			);
+
+			input.insert_item("voxels", material, None, entity);
 		}
 	}
 }
@@ -385,16 +385,19 @@ pub fn block_colours_system(
 				r | g | b | a
 			})
 			.collect::<Vec<_>>();
+		// We need the explicit usages because I haven't finished presistent buffer bindings
 		let colours = buffers.insert(Buffer::new_init(
 			"block colours buffer", 
 			bytemuck::cast_slice(encoded_colours.as_slice()), 
 			false, 
 			false, 
 			true,
-		));
+		).with_usages(wgpu::BufferUsages::STORAGE));
 		*block_colours = Some(BlockColoursResource {
 			colours,
 		});
+
+		// println!("Block colours is now {encoded_colours:?} stored at {colours:?}");
 		// std::thread::sleep(std::time::Duration::from_secs(5));
 	}
 }
