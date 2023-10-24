@@ -1,5 +1,5 @@
 use crossbeam_channel::Sender;
-use egui::Context;
+use egui::{Context, DragValue};
 use egui_wgpu::renderer::ScreenDescriptor;
 use egui_wgpu::{Renderer, preferred_framebuffer_format};
 use parking_lot::{Mutex, MutexGuard};
@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-use crate::ecs::{TransformComponent, SSAOComponent};
+use crate::ecs::{TransformComponent, SSAOComponent, MovementComponent};
 use crate::ecs::loading::ChunkLoadingResource;
 use crate::ecs::octree::GPUChunksResource;
 use crate::game::{Game, ContextResource, GameStatus};
@@ -212,6 +212,15 @@ impl GameWindow {
 							// Current chunk
 							let [cx, cy, cz] = (tc.translation / 16.0).floor().as_ivec3().to_array();
 							ui.label(format!("Chunk: [{}, {}, {}]", cx, cy, cz));
+						}
+
+						// Max speed adjustment
+						let mut movc = game.world.borrow::<CompMut<MovementComponent>>();
+						if let Some(m) = movc.get_mut(entity) {
+							ui.horizontal(|ui| {
+								ui.label("Max Speed:");
+								ui.add(DragValue::new(&mut m.max_speed).clamp_range(5.0..=50.0));
+							});
 						}
 					} else {
 						ui.label("Tracked entity not set!");

@@ -82,7 +82,7 @@ impl MovementComponent {
 		MovementComponent {
 			cid_right, cid_left, cid_up, cid_down, cid_forward, cid_backward, 
 			movement_velocity: Vec3::ZERO,
-			max_speed: 10.0,
+			max_speed: 15.0,
 			acceleration: 1.0,
 			anti_acceleration: 3.0,
 		}
