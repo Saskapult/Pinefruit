@@ -242,15 +242,15 @@ impl Buffer {
 				b.unmap();
 			}
 		}
-		for (i, (offset, data)) in self.queued_writes.drain(..).enumerate() {
-			debug!("Writing queued write {i} for buffer '{}'", self.name);
-			if let Some(binding) = self.binding.as_ref() {
+		if let Some(binding) = self.binding.as_ref() {
+			for (i, (offset, data)) in self.queued_writes.drain(..).enumerate() {
+				debug!("Writing queued write {i} for buffer '{}'", self.name);
 				queue.write_buffer(binding, offset, data.as_slice());
-			} else {
-				warn!("Skipping queued writes because binding does not exist");
-				break;
 			}
+		} else {
+			warn!("Skipping queued writes for buffer '{}' because binding does not exist", self.name);
 		}
+		
 		// If settings differ then rebind idk
 		// Pass signal to rebuild dependents if you do that
 	}
