@@ -4,3 +4,5 @@
 /map_saved
 *.spv
 *.xcf
+/resources/sounds/*
+!/resources/sounds/*.ogg
