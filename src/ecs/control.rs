@@ -297,6 +297,7 @@ impl ControlMap {
 }
 
 
+#[profiling::function]
 pub fn raw_control_system(
 	mut inputs: CompMut<RawInputComponent>,
 	mut controls: CompMut<ControlComponent>,

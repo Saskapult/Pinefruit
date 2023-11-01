@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use glam::IVec3;
 use eks::prelude::*;
 use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 use crate::voxel::*;
 use crate::voxel::chunk::CHUNK_SIZE;
 
@@ -58,13 +58,13 @@ impl ChunkEntry {
 
 #[derive(Debug, ResourceIdent)]
 pub struct MapResource {
-	pub chunks: Arc<RwLock<HashMap<IVec3, ChunkEntry>>>,
+	pub chunks: Arc<RwLock<FxHashMap<IVec3, ChunkEntry>>>,
 	pub block_mods: RwLock<Vec<VoxelModification>>, // could group by chunk for embarassing parallelization, also reduce by priority
 }
 impl MapResource {
 	pub fn new() -> Self {
 		Self {
-			chunks: Arc::new(RwLock::new(HashMap::new())),
+			chunks: Arc::new(RwLock::new(FxHashMap::default())),
 			block_mods: RwLock::new(Vec::new()),
 		}
 	}

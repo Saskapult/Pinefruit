@@ -56,6 +56,7 @@ impl VoxelModifierComponent {
 }
 
 
+#[profiling::function]
 pub fn map_placement_system(
 	map: Res<MapResource>,
 	transforms: Comp<TransformComponent>,
@@ -110,6 +111,7 @@ pub fn map_placement_system(
 
 
 /// Applies queued voxel modifications. 
+#[profiling::function]
 pub fn map_modification_system(
 	map: ResMut<MapResource>,
 ) {

@@ -1273,6 +1273,7 @@ dependencies = [
  "rand_xoshiro",
  "rayon",
  "ron",
+ "rustc-hash",
  "serde",
  "simdnoise",
  "slotmap",

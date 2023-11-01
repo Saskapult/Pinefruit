@@ -53,6 +53,7 @@ pub fn cube_iterator_xyz_uvec(size: UVec3) -> impl Iterator<Item = UVec3> {
 } 
 
 
+#[derive(Debug)]
 pub struct VoxelSphere {
 	pub centre: IVec3,
 	pub radius: i32,
@@ -74,6 +75,46 @@ impl VoxelSphere {
 			((self.centre.y-self.radius)..=(self.centre.y+self.radius)).flat_map(move |y|
 				((self.centre.z-self.radius)..=(self.centre.z+self.radius)).map(move |z| IVec3::new(x, y, z))))
 					.filter(|&position| self.is_within(position))
+	}
+}
+
+
+#[derive(Debug)]
+pub struct VoxelCube {
+	pub centre: IVec3,
+	pub half_edge_length: UVec3,
+}
+impl VoxelCube {
+	pub fn new(centre: IVec3, half_edge_length: UVec3) -> Self {
+		Self { centre, half_edge_length, }
+	}
+
+	/// Expands the half edge length by a value
+	pub fn expand(mut self, by: UVec3) -> Self {
+		self.half_edge_length += by;
+		self
+	}
+
+	pub fn edge_length(&self) -> UVec3 {
+		self.half_edge_length * 2 + UVec3::ONE
+	}
+
+	pub fn min(&self) -> IVec3 {
+		self.centre - self.half_edge_length.as_ivec3()
+	}
+
+	pub fn max(&self) -> IVec3 {
+		self.centre + self.half_edge_length.as_ivec3()
+	}
+
+	pub fn contains(&self, postion: IVec3) -> bool {
+		(postion - self.centre).abs().as_uvec3().cmplt(self.half_edge_length + 1).all()
+	}
+
+	pub fn iter(&self) -> impl IntoIterator<Item = IVec3> + '_ {
+		let base_pos = self.min();
+		cube_iterator_xyz_uvec(self.edge_length())
+			.map(move |p| base_pos + p.as_ivec3() )
 	}
 }
 
@@ -131,5 +172,17 @@ impl Iterator for SpiralIterator2D {
         self.position[self.axis] += self.direction;
         self.cur_iter += 1;
         Some(p)
+	}
+}
+
+
+#[test]
+fn test_cube() {
+	let v = VoxelCube::new(IVec3::ZERO, UVec3::splat(16));
+
+	println!("{}, {}", v.min(), v.max());
+	println!("{:?}, {:?}", v.iter().into_iter().next(), v.iter().into_iter().last());
+	for p in v.iter() {
+		assert!(v.contains(p));
 	}
 }

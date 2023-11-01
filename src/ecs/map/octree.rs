@@ -132,8 +132,7 @@ impl GPUChunkLoadingComponent {
 }
 
 
-
-/// Uploads 
+#[profiling::function]
 pub fn gpu_chunk_loading_system(
 	queue: Res<QueueResource>,
 	map: Res<MapResource>,
@@ -275,6 +274,7 @@ impl GPUChunkViewer {
 }
 
 
+#[profiling::function]
 pub fn chunk_rays_system(
 	(
 		context,

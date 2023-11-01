@@ -4,6 +4,7 @@ use eks::prelude::*;
 use glam::{IVec3, UVec3, Vec3, Vec2};
 use krender::{MeshKey, MaterialKey, prelude::{Mesh, RenderInput}};
 use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent}, ecs::{TransformComponent, ChunkEntry}, voxel::{chunk_of_point, VoxelSphere, Chunk, chunk::CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry}};
 use super::{MapResource, BlockResource};
 
@@ -181,6 +182,7 @@ impl MapMeshingComponent {
 }
 
 
+#[profiling::function]
 pub fn map_modelling_system(
 	mut entities: EntitiesMut,
 	map: Res<MapResource>,
@@ -270,7 +272,7 @@ pub enum MeshingError {
 
 fn chunk_quads_simple(
 	blocks: &BlockManager,
-	chunks: &Arc<RwLock<HashMap<IVec3, ChunkEntry>>>,
+	chunks: &Arc<RwLock<FxHashMap<IVec3, ChunkEntry>>>,
 	position: IVec3,
 ) -> Result<(
 	Vec<(UVec3, u32, MaterialKey)>, 
@@ -542,6 +544,7 @@ fn quad_indices(direction: u32) -> [u32; 6] {
 }
 
 
+#[profiling::function]
 pub fn map_model_rendering_system(
 	(input,): (&mut RenderInput<Entity>,), 
 	models: Res<MapModelResource>,

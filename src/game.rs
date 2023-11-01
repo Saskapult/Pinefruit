@@ -5,7 +5,6 @@ use krender::{RenderContextKey, prepare_for_render};
 use wgpu_profiler::GpuProfiler;
 use winit::event_loop::*;
 use std::ops::{Deref, DerefMut};
-use std::path::Path;
 use std::time::{Instant, Duration};
 use std::sync::Arc;
 use crate::ecs::*;
@@ -323,6 +322,7 @@ impl Game {
 		
 		// Render resource systems
 		{
+			profiling::scope!("Render Resource systems");
 			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
 			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
 			self.world.run_with_data((context_mut,), output_texture_system);
@@ -385,26 +385,35 @@ impl Game {
 		let mut textures = self.world.borrow::<ResMut<TextureResource>>();
 		let mut buffers = self.world.borrow::<ResMut<BufferResource>>();
 		let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
-		prepare_for_render(
-			&self.device, 
-			&self.queue, 
-			&mut self.shaders, 
-			&mut materials.materials, 
-			&mut meshes.meshes, 
-			&mut textures.textures, 
-			&mut buffers.buffers, 
-			&mut self.bind_groups, 
-			&mut contexts.contexts,
-		);
+		{
+			profiling::scope!("Render prepare");
+			prepare_for_render(
+				&self.device, 
+				&self.queue, 
+				&mut self.shaders, 
+				&mut materials.materials, 
+				&mut meshes.meshes, 
+				&mut textures.textures, 
+				&mut buffers.buffers, 
+				&mut self.bind_groups, 
+				&mut contexts.contexts,
+			);
+		}
 
 		let storage_provider = WorldWrapper { world: &self.world, };
-		let bundle = input.bundle(&self.device, &mut meshes.meshes, &materials.materials, &self.shaders, context, &storage_provider);
+		let bundle = {
+			profiling::scope!("Render bundle");
+			input.bundle(&self.device, &mut meshes.meshes, &materials.materials, &self.shaders, context, &storage_provider)
+		};
 
 		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: None,
 		});
 
-		bundle.execute(&self.shaders, &self.bind_groups, &meshes.meshes, &textures.textures, &mut encoder, &self.device, profiler);
+		{
+			profiling::scope!("Render execute");
+			bundle.execute(&self.shaders, &self.bind_groups, &meshes.meshes, &textures.textures, &mut encoder, &self.device, profiler);
+		}		
 
 		let buf = encoder.finish();
 
@@ -467,6 +476,7 @@ pub fn output_texture_system(
 }
 
 
+#[profiling::function]
 fn model_render_system(
 	(input,): (&mut RenderInput<Entity>,), 
 	models: Comp<ModelComponent>,
@@ -492,6 +502,7 @@ impl ModelMatrixComponent {
 }
 
 
+#[profiling::function]
 fn model_matrix_system(
 	transforms: Comp<TransformComponent>,
 	mut model_matrices: CompMut<ModelMatrixComponent>,

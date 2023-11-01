@@ -109,8 +109,7 @@ impl MovementComponent {
 }
 
 
-// Doesn't do mouse movment anymore
-// Please make it do that
+#[profiling::function]
 pub fn movement_system(
 	controls: Comp<ControlComponent>, 
 	mut transforms: CompMut<TransformComponent>,
