@@ -12,7 +12,7 @@ If n*tch can do it so can I.
 
 ## Features
 - Multithreaded terrain generation
-- Compute shader voxel ray tracing
+- GPU-based voxel ray tracing
 - Data-driven rendering system
 
 ## Crates
