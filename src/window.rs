@@ -592,9 +592,8 @@ impl GraphicsHandle {
 
 
 struct WindowGameThing {
-	pub game: Arc<Mutex<Game>>,
+	pub game: Game,
 	pub commands: Sender<GameCommand>,
-	pub join_handle: JoinHandle<i32>,
 }
 
 
@@ -630,44 +629,10 @@ impl WindowManager {
 		let device = self.graphics.as_ref().unwrap().device.clone();
 		let queue = self.graphics.as_ref().unwrap().queue.clone();
 
-		let game = Arc::new(Mutex::new(Game::new(device, queue, commands_receiver, self.event_loop_proxy.clone())));
-		
-		let join_handle = {
-			let game = game.clone();
-			std::thread::spawn(move || {
-				profiling::register_thread!("Game Thread");
+		let mut game = Game::new(device, queue, commands_receiver, self.event_loop_proxy.clone());
+		game.initialize();
 
-				// Panic the window thread when game thread panics
-				let orig_hook = std::panic::take_hook();
-				std::panic::set_hook(Box::new(move |panic_info| {
-					orig_hook(panic_info);
-					std::process::exit(1);
-				}));
-
-				// I tried locking this before sending it to the game thread, but the type isn't Send
-				// We just need to hope that this happens before the main thread can lock it
-				let mut game_lock = game.lock();
-				game_lock.initialize();
-				drop(game_lock);
-
-				loop {
-					let mut game = game.lock();
-					let status = game.tick();
-					MutexGuard::unlock_fair(game);
-
-					match status {
-						GameStatus::Exit(status) => return status,
-						GameStatus::Continue(next_tick) => {
-							let to_next_tick = next_tick - Instant::now();
-							info!("Next tick in {}ms", to_next_tick.as_millis());
-							std::thread::sleep(to_next_tick);
-						},
-					}
-				}
-			})
-		};
-
-		self.game = Some(WindowGameThing { game, commands, join_handle })
+		self.game = Some(WindowGameThing { game, commands, })
 	}
 
 	pub fn run(mut self, event_loop: EventLoop<WindowCommand>) {
@@ -766,15 +731,22 @@ impl WindowManager {
 					}
 					let st = Instant::now();
 
-					if let Some(game_thing) = self.game.as_ref() {
-						let mut game = game_thing.game.lock();
+					if let Some(game_thing) = self.game.as_mut() {
+						match game_thing.game.tick() {
+							GameStatus::Exit(status) => todo!(),
+							GameStatus::Continue(next_tick) => {
+								// let to_next_tick = next_tick - Instant::now();
+								// info!("Next tick in {}ms", to_next_tick.as_millis());
+								// std::thread::sleep(to_next_tick);
+							},
+						}
 						
 						let mut textures = Vec::with_capacity(to_update.len());
 						let mut command_buffers = Vec::with_capacity(to_update.len() * 2 + 1);
 						for window in to_update {
 							let (t, ui, game) = window.update(
 								self.graphics.as_mut().unwrap(),
-								&mut game,
+								&mut game_thing.game,
 							);
 							textures.push(t);
 							if let Some(game) = game {
