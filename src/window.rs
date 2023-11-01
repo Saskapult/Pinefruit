@@ -15,10 +15,11 @@ use winit::{
 };
 use wgpu;
 use std::collections::HashMap;
+use std::f32::consts::PI;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-use crate::ecs::{TransformComponent, SSAOComponent, MovementComponent};
+use crate::ecs::{TransformComponent, SSAOComponent, MovementComponent, CameraComponent};
 use crate::ecs::loading::ChunkLoadingResource;
 use crate::ecs::octree::GPUChunksResource;
 use crate::game::{Game, ContextResource, GameStatus};
@@ -220,6 +221,31 @@ impl GameWindow {
 							ui.horizontal(|ui| {
 								ui.label("Max Speed:");
 								ui.add(DragValue::new(&mut m.max_speed).clamp_range(5.0..=50.0));
+							});
+						}
+
+						// Camera settings
+						let mut camc = game.world.borrow::<CompMut<CameraComponent>>();
+						if let Some(c) = camc.get_mut(entity) {
+							ui.horizontal(|ui| {
+								ui.label("Fovy: ");
+								let mut fovy_degrees = c.fovy.to_degrees();
+								ui.add(DragValue::new(&mut fovy_degrees)
+									.clamp_range(0.0..=90.0)
+									.speed(1.0));
+								c.fovy = fovy_degrees.to_radians();
+								
+							});
+							ui.horizontal(|ui| {
+								ui.label("Near: ");
+								ui.add(DragValue::new(&mut c.near)
+									.clamp_range(0.0..=1.0)
+									.speed(0.05));
+							});
+							ui.horizontal(|ui| {
+								ui.label("Far:  ");
+								ui.add(DragValue::new(&mut c.far)
+									.clamp_range(0.0..=1000.0));
 							});
 						}
 					} else {
