@@ -3,6 +3,7 @@ use glam::IVec3;
 use eks::prelude::*;
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
+use slotmap::{new_key_type, SlotMap};
 use crate::voxel::*;
 use crate::voxel::chunk::CHUNK_SIZE;
 
@@ -56,15 +57,66 @@ impl ChunkEntry {
 }
 
 
+new_key_type! {
+	pub struct ChunkKey;
+}
+
+
+#[derive(Debug, Default)]
+pub struct ChunkMap {
+	pub positions: FxHashMap<IVec3, ChunkKey>,
+	// Redundant information stored becasue we can't zip these to iterate
+	pub entries: SlotMap<ChunkKey, (IVec3, ChunkEntry)>,
+}
+impl ChunkMap {
+	pub fn get(&self, key: ChunkKey) -> Option<&ChunkEntry> {
+		self.entries.get(key).and_then(|(_, e)| Some(e))
+	}
+
+	pub fn get_mut(&mut self, key: ChunkKey) -> Option<&mut ChunkEntry> {
+		self.entries.get_mut(key).and_then(|(_, e)| Some(e))
+	}
+
+	pub fn key(&self, pos: &IVec3) -> Option<ChunkKey> {
+		self.positions.get(pos).cloned()
+	}
+
+	pub fn insert(&mut self, pos: IVec3, chunk: ChunkEntry) -> ChunkKey {
+		let k = self.entries.insert((pos, chunk));
+		self.positions.insert(pos, k);
+		k
+	}
+
+	pub fn remove(&mut self, pos: &IVec3) -> Option<(ChunkKey, ChunkEntry)> {
+		self.positions.remove(pos).and_then(|k|
+			self.entries.remove(k).and_then(|(_, e)| Some((k, e)))
+		)
+	}
+
+	// No guarantee that order will be the same!
+	// Can't do this
+	// pub fn iter(&self) -> impl IntoIterator<Item = ((&IVec3, &ChunkKey), &ChunkEntry)> + '_ {
+	// 	self.positions.iter().zip(self.entries.values())
+	// }
+	// pub fn iter_mut(&mut self) -> impl IntoIterator<Item = ((&IVec3, &ChunkKey), &mut ChunkEntry)> + '_ {
+	// 	self.positions.iter().zip(self.entries.values_mut())
+	// }
+
+	pub fn len(&self) -> usize {
+		self.entries.len()
+	}
+}
+
+
 #[derive(Debug, ResourceIdent)]
 pub struct MapResource {
-	pub chunks: Arc<RwLock<FxHashMap<IVec3, ChunkEntry>>>,
+	pub chunks: Arc<RwLock<ChunkMap>>,
 	pub block_mods: RwLock<Vec<VoxelModification>>, // could group by chunk for embarassing parallelization, also reduce by priority
 }
 impl MapResource {
 	pub fn new() -> Self {
 		Self {
-			chunks: Arc::new(RwLock::new(FxHashMap::default())),
+			chunks: Arc::new(RwLock::new(ChunkMap::default())),
 			block_mods: RwLock::new(Vec::new()),
 		}
 	}
@@ -72,7 +124,8 @@ impl MapResource {
 	pub fn get_voxel(&self, voxel: IVec3) -> Option<BlockKey> {
 		let chunk = chunk_of_voxel(voxel);
 		let voxel = voxel_relative_to_chunk(voxel, chunk).as_uvec3();
-		match self.chunks.read().get(&chunk) {
+		let chunks = self.chunks.read();
+		match chunks.key(&chunk).and_then(|k| chunks.get(k)) {
 			Some(ChunkEntry::Complete(c)) => c.get(voxel).copied(),
 			_ => None,
 		}

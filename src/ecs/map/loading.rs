@@ -96,12 +96,12 @@ pub fn map_loading_system(
 		profiling::scope!("Collect chunks to load");
 		loading_volumes.iter().map(|lv| lv.iter())
 			.flatten()
-			.filter(|position| chunks.get(&position).is_none()).collect::<Vec<_>>()
+			.filter(|position| !chunks.positions.contains_key(position)).collect::<Vec<_>>()
 	};
 
 	let chunks_to_prune = {
 		profiling::scope!("Collect chunks to prune");
-		chunks.keys().copied()
+		chunks.positions.keys().copied()
 			.filter(|&p| !un_loading_volumes.iter()
 				.any(|lv| lv.contains(p)))
 			.collect::<Vec<_>>()
@@ -115,7 +115,7 @@ pub fn map_loading_system(
 		profiling::scope!("Prune chunks");
 		debug!("Prune {} chunks", chunks_to_prune.len());
 		for position in chunks_to_prune {
-			if let Some(c) = chunks.remove(&position) {
+			if let Some((_, c)) = chunks.remove(&position) {
 				trace!("Unloading chunk {position}");
 				match c {
 					ChunkEntry::UnLoaded => {},
@@ -155,14 +155,14 @@ pub fn map_loading_system(
 	// A bit hackey but it works
 	let mut potential_jobs = {
 		profiling::scope!("Find potential jobs");
-		chunks.iter_mut()
-		.filter(|(_, entry)| if let ChunkEntry::UnLoaded = entry {true} else {false})
-		.map(|(&position, entry)|{
+		chunks.entries.iter_mut()
+		.filter(|(_, (_, entry))| if let ChunkEntry::UnLoaded = entry {true} else {false})
+		.map(|(_, (position, entry))|{
 			let distance = (&map_loaders, &transforms).iter()
-				.map(|(_, t)| (position * CHUNK_SIZE as i32).as_vec3().distance_squared(t.translation))
+				.map(|(_, t)| (*position * CHUNK_SIZE as i32).as_vec3().distance_squared(t.translation))
 				.min_by(|a, b| a.total_cmp(b))
 				.unwrap();
-			(position, entry, distance)
+			(*position, entry, distance)
 		})
 		.collect::<Vec<_>>()
 	};
@@ -201,6 +201,8 @@ pub fn map_loading_system(
 	
 					sender.send((position, c, Vec::new())).unwrap();
 				});
+
+				*entry = ChunkEntry::Loading;
 				loading.vec_generation_jobs.push((position, Instant::now()));
 				loading.cur_generation_jobs += 1;
 			}

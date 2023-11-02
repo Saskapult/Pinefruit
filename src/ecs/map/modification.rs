@@ -127,7 +127,7 @@ pub fn map_modification_system(
 	for modification in mods.drain(..) {
 		let c = chunk_of_voxel(modification.position);
 		let v = voxel_relative_to_chunk(modification.position, c);
-		if let Some(ChunkEntry::Complete(chunk)) = chunks.get_mut(&c) {
+		if let Some(ChunkEntry::Complete(chunk)) = chunks.key(&c).and_then(|k| chunks.get_mut(k)) {
 			// If potentially cloning the chunk is too expensive, we could have a way to abort
 			// if there are any other references to that chunk
 			// That sounds fun?s

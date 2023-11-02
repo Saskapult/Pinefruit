@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use bytemuck::{Pod, Zeroable};
 use eks::prelude::*;
 use glam::{IVec3, UVec3};
-use krender::{BufferKey, prelude::{MaterialManager, BufferManager, Buffer, RenderContext, RenderInput}, MaterialKey, allocator::{SlabBufferAllocator, SlabAllocationKey, BufferAllocator}};
+use krender::{BufferKey, prelude::{BufferManager, Buffer, RenderContext, RenderInput}, MaterialKey, allocator::{SlabBufferAllocator, SlabAllocationKey, BufferAllocator}};
 use oktree::Octree;
 use slotmap::Key;
 
@@ -186,7 +186,8 @@ pub fn gpu_chunk_loading_system(
 	// Also check if current stuff is outdated
 	let mut counter = 0;
 	for (position, data) in octrees.chunks.iter_mut() {
-		if let Some(ChunkEntry::Complete(c)) = map.chunks.read().get(position) {
+		let chunks = map.chunks.read();
+		if let Some(ChunkEntry::Complete(c)) = chunks.key(position).and_then(|k| chunks.get(k)) {
 			if let Some((generation, _)) = data {
 				// test for generation outdated, if not then "continue"
 				if c.generation == *generation {

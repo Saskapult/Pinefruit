@@ -1,18 +1,18 @@
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use eks::prelude::*;
 use glam::{IVec3, UVec3, Vec3, Vec2};
 use krender::{MeshKey, MaterialKey, prelude::{Mesh, RenderInput}};
 use parking_lot::RwLock;
-use rustc_hash::FxHashMap;
-use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent}, ecs::{TransformComponent, ChunkEntry}, voxel::{chunk_of_point, VoxelSphere, Chunk, chunk::CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry}};
-use super::{MapResource, BlockResource};
+use slotmap::SecondaryMap;
+use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent}, ecs::{TransformComponent, ChunkEntry}, voxel::{chunk_of_point, Chunk, chunk::CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry, VoxelCube}};
+use super::{MapResource, BlockResource, ChunkKey, ChunkMap};
 
 
 
 #[derive(Debug)]
 pub struct MapModelEntry {
-	pub dependencies: Vec<(IVec3, KGeneration)>, // includes self (hopefully!)
+	pub dependencies: Vec<(IVec3, ChunkKey, KGeneration)>, // includes self (hopefully!)
 	pub models: Vec<(MaterialKey, MeshKey)>, // renderable things
 	pub entity: Entity,
 	pub outdated: bool,
@@ -40,11 +40,19 @@ impl MapModelState {
 #[derive(Debug, ResourceIdent)]
 pub struct MapModelResource {
 	// bool for if modelling job is active
-	pub chunks: HashMap<IVec3, (bool, MapModelState)>,
+	pub chunks: SecondaryMap<ChunkKey, (IVec3, bool, MapModelState)>,
 	// It may be better to retun a result for this 
 	// If a block must be read, but the chunk is not loaded, then give error. 
-	pub sender: Sender<(IVec3, Result<(Vec<(UVec3, u32, MaterialKey)>, Vec<(IVec3, KGeneration)>), MeshingError>)>, 
-	pub receiver: Receiver<(IVec3, Result<(Vec<(UVec3, u32, MaterialKey)>, Vec<(IVec3, KGeneration)>), MeshingError>)>,
+	pub sender: Sender<(
+		ChunkKey, 
+		IVec3, 
+		Result<(Vec<(UVec3, u32, MaterialKey)>, Vec<(IVec3, ChunkKey, KGeneration)>), 
+		MeshingError>)>, 
+	pub receiver: Receiver<(
+		ChunkKey, 
+		IVec3, 
+		Result<(Vec<(UVec3, u32, MaterialKey)>, Vec<(IVec3, ChunkKey, KGeneration)>), MeshingError>,
+	)>,
 	pub max_meshing_jobs: u8,
 	pub cur_meshing_jobs: u8,
 }
@@ -53,7 +61,7 @@ impl MapModelResource {
 		assert_ne!(0, max_meshing_jobs);
 		let (sender, receiver) = unbounded();
 		Self {
-			chunks: HashMap::new(),
+			chunks: SecondaryMap::new(),
 			sender,
 			receiver,
 			max_meshing_jobs,
@@ -61,6 +69,7 @@ impl MapModelResource {
 		}
 	}
 
+	#[profiling::function]
 	pub fn receive_jobs(
 		&mut self, 
 		meshes: &mut MeshResource,
@@ -68,12 +77,12 @@ impl MapModelResource {
 		transforms: &mut CompMut<TransformComponent>, 
 		modelmat: &mut CompMut<ModelMatrixComponent>,
 	) {
-		for (position, r) in self.receiver.try_iter() {
+		for (key, position, r) in self.receiver.try_iter() {
 			match r {
 				Ok((quads, dependencies)) => {
 					debug!("Received chunk model for {}", position);
 
-					debug!("Contains {} quads", quads.len());
+					trace!("Contains {} quads", quads.len());
 
 					// Group quads by material
 					let quads_by_key = quads.iter().fold(HashMap::new(), |mut a: HashMap<MaterialKey, Vec<(UVec3, u32, MaterialKey)>>, &v| {
@@ -122,25 +131,23 @@ impl MapModelResource {
 
 					// Todo: make sure it has higher generations than existing
 
-					self.chunks.insert(position, (false, MapModelState::Complete(entry)));
+					self.chunks.insert(key, (position, false, MapModelState::Complete(entry)));
 				},
 				Err(e) => {
 					warn!("Modelling failed for {position} - {e}");
-
-					self.chunks.insert(position, (false, MapModelState::Failed(e)));
-					// if let Some((m, _)) = self.chunks.get_mut(&position) {
-					// 	*m = false;
-					// }
+					self.chunks.insert(key, (position, false, MapModelState::Failed(e)));
 				},
 			}
 			self.cur_meshing_jobs -= 1;
 		}
 	}
 
+	#[profiling::function]
 	pub fn start_jobs(&mut self, map: &MapResource, blocks: &BlockResource) {
-		for (&position, (modelling, entry)) in self.chunks.iter_mut() {
+		for (key, (position, modelling, entry)) in self.chunks.iter_mut() {
+			let position = *position;
 			if self.cur_meshing_jobs >= self.max_meshing_jobs {
-				debug!("Reached maxium chunk generation jobs");
+				trace!("Reached maxium chunk generation jobs");
 				break;
 			}
 			// If not modelling and entry is outdated or none
@@ -151,14 +158,14 @@ impl MapModelResource {
 					MapModelState::Waiting => true,
 				} {
 					*modelling = true;
-					debug!("Begin modeling chunk {position}");
+					trace!("Begin modeling chunk {position}");
 					let sender = self.sender.clone();
 					let chunks = map.chunks.clone();
 					let blocks = blocks.blocks.clone();
 					rayon::spawn(move || {
 						let blocks = blocks.read();
 						let mesh_res = chunk_quads_simple(&blocks, &chunks, position);
-						sender.send((position, mesh_res)).unwrap();
+						sender.send((key, position, mesh_res)).unwrap();
 					});
 					self.cur_meshing_jobs += 1;
 				}
@@ -179,6 +186,15 @@ impl MapMeshingComponent {
 		assert!(tolerence >= 0);
 		Self { radius, tolerence, }
 	}
+
+	pub fn loading_volume(&self, transform: TransformComponent) -> VoxelCube {
+		VoxelCube::new(chunk_of_point(transform.translation), UVec3::splat(self.radius as u32))
+	}
+
+	// Volume but expanded by tolerence
+	pub fn un_loading_volume(&self, transform: TransformComponent) -> VoxelCube {
+		VoxelCube::new(chunk_of_point(transform.translation), UVec3::splat((self.radius + self.tolerence) as u32))
+	}
 }
 
 
@@ -195,68 +211,86 @@ pub fn map_modelling_system(
 ) {
 	info!("Map modeling system");
 
-	let mut chunks_to_load = HashSet::new();
-	for (loader, transform) in (&loaders, &transforms).iter() {
-		let loader_chunk = chunk_of_point(transform.translation);
-		for cpos in VoxelSphere::new(loader_chunk, loader.radius).iter() {
-			chunks_to_load.insert(cpos);
-		}			
-	}
+	let loading_volumes = (&loaders, &transforms).iter()
+		.map(|(l, t)| l.loading_volume(*t))
+		.collect::<Vec<_>>();
 
-	let mut chunks_to_unload = Vec::new();
-	for chunk_position in models.chunks.keys().copied() {
-		let should_keep = (&loaders, &transforms).iter().any(|(loader, transform)| {
-			let loader_chunk = chunk_of_point(transform.translation);
-			VoxelSphere::new(loader_chunk, loader.radius+loader.tolerence).is_within(chunk_position)
-		});
-		if !should_keep {
-			chunks_to_unload.push(chunk_position);
+	let un_loading_volumes = (&loaders, &transforms).iter()
+		.map(|(l, t)| l.un_loading_volume(*t))
+		.collect::<Vec<_>>();
+
+	{
+		let chunks = map.chunks.read();
+		profiling::scope!("Mark");
+		for (p, k) in chunks.positions.iter() {
+			if loading_volumes.iter().any(|lv| lv.contains(*p)) {
+				if !models.chunks.contains_key(*k) {
+					trace!("Chunk {p} must be modeled");
+					models.chunks.insert(*k, (*p, false, MapModelState::Waiting));
+					assert!(models.chunks.contains_key(*k))
+				}
+			}
 		}
 	}
 
-	for position in chunks_to_unload {
-		if let Some((_, MapModelState::Complete(_))) = models.chunks.remove(&position) {
-			debug!("Unloading model for chunk {position}");
-			// Remove meshes
-			// Remove entity
+	{
+		profiling::scope!("Prune");
+		let g = models.chunks.iter()
+			.map(|(key, (pos, _, _))| (key, *pos))
+			.collect::<Vec<_>>();
+		for (key, pos) in g {
+			if !un_loading_volumes.iter().any(|lv| lv.contains(pos)) {
+				if let Some((_, _, MapModelState::Complete(_))) = models.chunks.remove(key) {
+					trace!("Unloading model for chunk {}", pos);
+					// Remove meshes
+					// Remove entity
+				}
+			}
 		}
 	}
 
 	models.receive_jobs(&mut meshes, &mut entities, &mut transforms, &mut modelmat);
 
-	for position in chunks_to_load {
-		if models.chunks.get(&position).is_none() {
-			debug!("Chunk {position} must be modeled");
-			models.chunks.insert(position, (false, MapModelState::Waiting));
-		}
-	}
-
-	let chunks = map.chunks.read();
-	// Check for model validity
-	for (modelling, state) in models.chunks.values_mut() {
-		// Don't check if we're already trying to fix the issue
-		if !*modelling { 
-			match state {
-				MapModelState::Complete(entry) => {
-					entry.outdated = entry.dependencies.iter().any(|(pos, gen)| {
-						match chunks.get(pos) {
-							Some(ChunkEntry::Complete(g)) => g.generation != *gen,
-							_ => false,
-						}
-					});
-				},
-				MapModelState::Failed(dep) => {
-					match dep {
-						MeshingError::ChunkUnloaded(pos) => {
-							if let Some(ChunkEntry::Complete(_)) = chunks.get(pos) {
-								*state = MapModelState::Waiting;
+	{
+		profiling::scope!("Check for remesh viability");
+		let chunks = map.chunks.read();
+		// Check for model validity
+		let mut n_outdated = 0;
+		let mut n_failed = 0;
+		let mut n_waiting = 0;
+		for (_, modelling, state) in models.chunks.values_mut() {
+			// Don't check if we're already trying to fix the issue
+			if !*modelling { 
+				match state {
+					MapModelState::Complete(entry) => {
+						entry.outdated = entry.dependencies.iter().any(|(_, key, gen)| {
+							match chunks.get(*key) {
+								Some(ChunkEntry::Complete(g)) => g.generation != *gen,
+								_ => false,
 							}
-						},
-					}
-				},
-				MapModelState::Waiting => {},
-			}
-		}		
+						});
+						if entry.outdated {
+							n_outdated += 1;
+						}
+					},
+					MapModelState::Failed(dep) => {
+						n_failed += 1;
+						match dep {
+							MeshingError::ChunkUnloaded(pos) => {
+								if let Some(ChunkEntry::Complete(_)) = chunks.key(pos).and_then(|k| chunks.get(k)) {
+									*state = MapModelState::Waiting;
+									n_waiting += 1;
+								}
+							},
+						}
+					},
+					MapModelState::Waiting => {
+						n_waiting += 1;
+					},
+				}
+			}		
+		}
+		debug!("{} outdated, {} failed, {} retry", n_outdated, n_failed, n_waiting);
 	}
 
 	models.start_jobs(&map, &blocks);
@@ -272,19 +306,24 @@ pub enum MeshingError {
 
 fn chunk_quads_simple(
 	blocks: &BlockManager,
-	chunks: &Arc<RwLock<FxHashMap<IVec3, ChunkEntry>>>,
+	chunks: &Arc<RwLock<ChunkMap>>,
 	position: IVec3,
 ) -> Result<(
 	Vec<(UVec3, u32, MaterialKey)>, 
-	Vec<(IVec3, KGeneration)>, 
+	Vec<(IVec3, ChunkKey, KGeneration)>, 
 ), MeshingError> {
-	let chunk = chunks.read().get(&position)
-		.ok_or(MeshingError::ChunkUnloaded(position))?
-		.complete()
-		.ok_or(MeshingError::ChunkUnloaded(position))?
-		.clone();
+	fn get_chunk(chunks: &Arc<RwLock<ChunkMap>>, pos: IVec3) -> Result<(ChunkKey, Arc<Chunk>), MeshingError> {
+		let chunks = chunks.read();
+		let key = chunks.key(&pos).ok_or(MeshingError::ChunkUnloaded(pos))?;
+		let chunk = chunks.get(key).ok_or(MeshingError::ChunkUnloaded(pos))?
+			.complete().ok_or(MeshingError::ChunkUnloaded(pos))?
+			.clone();
+		Ok((key, chunk))
+	}
+
+	let (chunk_key, chunk) = get_chunk(chunks, position)?;
 	
-	let mut deps = vec![(position, chunk.generation)];
+	let mut deps = vec![(position, chunk_key, chunk.generation)];
 	let mut cxn = None;
 	let mut cyn = None;
 	let mut czn = None;
@@ -336,12 +375,8 @@ fn chunk_quads_simple(
 					// Access the adjacent chunk
 					if cxn.is_none() {
 						let pxn = position - IVec3::X;
-						let e = chunks.read().get(&pxn)
-							.ok_or(MeshingError::ChunkUnloaded(pxn))?
-							.complete()
-							.ok_or(MeshingError::ChunkUnloaded(pxn))?
-							.clone();
-						deps.push((pxn, e.generation));
+						let (k, e) = get_chunk(chunks, pxn)?;
+						deps.push((pxn, k, e.generation));
 						cxn = Some(e);
 					}
 					let cxn = cxn.as_mut().unwrap();
@@ -375,12 +410,8 @@ fn chunk_quads_simple(
 				let yn = if y == 0 {
 					if cyn.is_none() {
 						let pyn = position - IVec3::Y;
-						let e = chunks.read().get(&pyn)
-							.ok_or(MeshingError::ChunkUnloaded(pyn))?
-							.complete()
-							.ok_or(MeshingError::ChunkUnloaded(pyn))?
-							.clone();
-						deps.push((pyn, e.generation));
+						let (k, e) = get_chunk(chunks, pyn)?;
+						deps.push((pyn, k, e.generation));
 						cyn = Some(e);
 					}
 					let cyn = cyn.as_mut().unwrap();
@@ -414,12 +445,8 @@ fn chunk_quads_simple(
 				let zn = if z == 0 {
 					if czn.is_none() {
 						let pzn = position - IVec3::Z;
-						let e = chunks.read().get(&pzn)
-							.ok_or(MeshingError::ChunkUnloaded(pzn))?
-							.complete()
-							.ok_or(MeshingError::ChunkUnloaded(pzn))?
-							.clone();
-						deps.push((pzn, e.generation));
+						let (k, e) = get_chunk(chunks, pzn)?;
+						deps.push((pzn, k, e.generation));
 						czn = Some(e);
 					}
 					let czn = czn.as_mut().unwrap();
@@ -549,7 +576,7 @@ pub fn map_model_rendering_system(
 	(input,): (&mut RenderInput<Entity>,), 
 	models: Res<MapModelResource>,
 ) {
-	for entry in models.chunks.values().filter_map(|(_, g)| g.ref_complete()) {
+	for entry in models.chunks.values().filter_map(|(_, _, g)| g.ref_complete()) {
 		for &(material, mesh) in entry.models.iter() {
 			input.insert_item("models", material, Some(mesh), entry.entity);
 		}

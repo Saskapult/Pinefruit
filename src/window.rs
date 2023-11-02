@@ -2,8 +2,6 @@ use crossbeam_channel::Sender;
 use egui::{Context, DragValue};
 use egui_wgpu::renderer::ScreenDescriptor;
 use egui_wgpu::{Renderer, preferred_framebuffer_format};
-use parking_lot::{Mutex, MutexGuard};
-// use shipyard::*;
 use eks::prelude::*;
 use slotmap::SlotMap;
 use wgpu_profiler::GpuProfiler;
@@ -15,9 +13,7 @@ use winit::{
 };
 use wgpu;
 use std::collections::HashMap;
-use std::f32::consts::PI;
 use std::sync::Arc;
-use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 use crate::ecs::{TransformComponent, SSAOComponent, MovementComponent, CameraComponent};
 use crate::ecs::loading::ChunkLoadingResource;
