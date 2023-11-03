@@ -21,6 +21,7 @@ pub struct RenderBundle {
 	stages: Vec<RenderBundleStage>,
 }
 impl RenderBundle {
+	#[profiling::function]
 	pub fn execute(
 		&self,
 		shaders: &ShaderManager,
@@ -30,29 +31,39 @@ impl RenderBundle {
 		encoder: &mut wgpu::CommandEncoder,
 	) {
 		for bundle in self.stages.iter() {
-			for (&key, range) in bundle.clears.iter() {
-				info!("Clearing texture {key:?}");
-				let texture = textures.get(key).unwrap();
-				encoder.clear_texture(&texture.binding().unwrap().texture, range);
-			}
+			profiling::scope!("stage");
 
-			for &(key, bgs, [x,y,z]) in bundle.computes.iter() {
-				let shader = shaders.get(key).unwrap();
-				let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-					label: None,
-				});
-
-				pass.set_pipeline(shader.pipeline.as_ref().unwrap().compute().unwrap());
-				for (index, key) in bgs.iter().enumerate() {
-					if let &Some(key) = key {
-						let bind_group = bind_groups.get(key).unwrap();
-						pass.set_bind_group(index as u32, bind_group, &[]);
-					}
+			{
+				profiling::scope!("Texture Clears");
+				for (&key, range) in bundle.clears.iter() {
+					info!("Clearing texture {key:?}");
+					let texture = textures.get(key).unwrap();
+					encoder.clear_texture(&texture.binding().unwrap().texture, range);
 				}
-
-				pass.dispatch_workgroups(x, y, z);
 			}
 
+			{
+				profiling::scope!("Compute Items");
+				for &(key, bgs, [x,y,z]) in bundle.computes.iter() {
+					let shader = shaders.get(key).unwrap();
+					let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+						label: None,
+					});
+
+					pass.set_pipeline(shader.pipeline.as_ref().unwrap().compute().unwrap());
+					for (index, key) in bgs.iter().enumerate() {
+						if let &Some(key) = key {
+							let bind_group = bind_groups.get(key).unwrap();
+							pass.set_bind_group(index as u32, bind_group, &[]);
+						}
+					}
+
+					pass.dispatch_workgroups(x, y, z);
+				}
+			}
+
+			{
+			profiling::scope!("Polygonal Items");
 			for (target, groups) in bundle.targets.iter() {
 				let color_attachments = target.colour_attachments.iter().map(|&(attachment, resolve)| {
 					Some(wgpu::RenderPassColorAttachment {
@@ -138,6 +149,7 @@ impl RenderBundle {
 				}
 
 				trace!("End render target");
+			}
 			}
 		}
 		trace!("End execution");

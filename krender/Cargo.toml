@@ -24,6 +24,7 @@ crossbeam-channel = "0.5.8"
 dashmap = "5.4.0"
 arrayvec = { version = "0.7.4", features = ["serde"] }
 rand = "0.8.5"
+profiling = "1.0.11"
 
 [dev-dependencies]
 pollster = "0.3.0"

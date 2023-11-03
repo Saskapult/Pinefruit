@@ -160,6 +160,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 		order
 	}
 
+	#[profiling::function]
 	pub fn bundle<'a>(
 		&'a self,
 		device: &wgpu::Device,
@@ -172,6 +173,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 		let mut bundle = RetainedBundle::default();
 
 		for stage in self.stage_order() {
+			profiling::scope!("Stage");
 			let input = self.stages.get(stage).unwrap();
 
 			let mut bundle_stage = RetainedBundleStage::default();
@@ -179,6 +181,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 			// Collect by target
 			// Collect by shader
 			let mut targets = HashMap::new();
+			{profiling::scope!("Collect by target then shader");
 			for &(material_key, mesh, entity_id) in input.items.values() {
 				let material = materials.get(material_key).unwrap();
 				let shader_key = material.shader().unwrap();
@@ -189,7 +192,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 				let data = shader_groups.entry(shader_key).or_insert_with(|| Vec::new());
 
 				data.push((binding_config, mesh, entity_id));
-			}
+			}}
 
 			// Clears
 			let mut texture_clears = input.texture_clears.clone();
@@ -198,6 +201,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 			// Sort
 			// Fetch instance data
 			for (&target, shader_groups) in targets.iter_mut() {
+				profiling::scope!("Target");
 
 				// Todo: fold over the `store` field instead of assuming that we will write
 				let mut target = RenderTargetOperations::from_rt(target);
@@ -219,7 +223,11 @@ impl<E: EntityIdentifier> RenderInput<E> {
 				let mut bundle_target_entries = HashMap::new();
 
 				for (&shader_key, items) in shader_groups.iter_mut() {
+					profiling::scope!("Shader");
+
+					{profiling::scope!("Sort");
 					items.sort_unstable_by_key(|e| (e.0, e.1));
+					}
 
 					let shader = shaders.get(shader_key).unwrap();
 					let attributes = &shader.specification.base.polygonal().instance_attributes;
@@ -234,6 +242,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 					let mut instance_data = Vec::new();
 					let (mut current_binding_config, mut current_mesh, _) = items[0];
 					let mut count: u32 = 0;
+					{profiling::scope!("Fetch");
 					for &(binding_config, mesh, entity_id) in items.iter() {
 						if current_binding_config != binding_config || current_mesh != mesh {
 							instance_items.push((current_binding_config, current_mesh, count));
@@ -258,6 +267,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 						count += 1;
 					}
 					instance_items.push((current_binding_config, current_mesh, count));
+					}
 
 					let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
 						label: Some(&*format!("Stage {} shader {} instance buffer", stage, &shader.specification.name)),
@@ -265,6 +275,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 						usage: wgpu::BufferUsages::VERTEX,
 					});
 
+					{profiling::scope!("Bind");
 					// Also bind the meshes!
 					if let Some(format_key) = shader.mesh_format_key {
 						for (_, mesh_key, _) in instance_items.iter() {
@@ -272,6 +283,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 								meshes.get_mut(mesh_key).unwrap().bind(format_key);
 							}
 						}
+					}
 					}
 					
 					bundle_target_entries.insert(shader_key, vec![(MaybeOwned::Owned(instance_buffer), instance_items)]);
