@@ -1,16 +1,17 @@
+use arrayvec::ArrayVec;
 use crate::TextureKey;
 
 
 
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct RenderTarget {
-	pub colour_attachments: Vec<(TextureKey, Option<TextureKey>)>, // attachment, resolve 
+	pub colour_attachments: ArrayVec<(TextureKey, Option<TextureKey>), 4>, // attachment, resolve 
 	pub depth_attachment: Option<TextureKey>, // Can derive 'store' based on associated shaders
 }
 impl RenderTarget {
 	pub fn new() -> Self {
 		Self {
-			colour_attachments: Vec::new(),
+			colour_attachments: ArrayVec::new(),
 			depth_attachment: None,
 		}
 	}
