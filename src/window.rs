@@ -22,6 +22,7 @@ use crate::game::{Game, ContextResource, GameStatus};
 use crate::gui::{GameWidget, MessageWidget, RenderProfilingWidget, SplineWidget, MapLoadingWidget, SSAOWidget};
 use crate::input::*;
 use crate::util::RingDataHolder;
+use crate::voxel::chunk_of_point;
 
 
 
@@ -207,7 +208,7 @@ impl GameWindow {
 							ui.label(format!("Rotation: [{:.1}, {:.1}, {:.1}]", ex, ey, ez));
 							
 							// Current chunk
-							let [cx, cy, cz] = (tc.translation / 16.0).floor().as_ivec3().to_array();
+							let [cx, cy, cz] = chunk_of_point(tc.translation).to_array();
 							ui.label(format!("Chunk: [{}, {}, {}]", cx, cy, cz));
 						}
 

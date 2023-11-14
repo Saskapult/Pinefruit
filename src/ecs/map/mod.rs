@@ -6,7 +6,6 @@ use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use slotmap::{new_key_type, SlotMap};
 use crate::voxel::*;
-use crate::voxel::chunk::CHUNK_SIZE;
 
 pub mod loading;
 pub mod modification;

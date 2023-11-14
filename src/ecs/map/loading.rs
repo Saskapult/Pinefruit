@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc, time::{Instant, Duration}};
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use eks::prelude::*;
 use glam::{IVec3, UVec3};
-use crate::{ecs::*, voxel::{VoxelModification, chunk_of_point, Chunk, NewTerrainGenerator, chunk::CHUNK_SIZE, VoxelCube}, util::RingDataHolder};
+use crate::{ecs::*, voxel::{VoxelModification, chunk_of_point, Chunk, NewTerrainGenerator, CHUNK_SIZE, VoxelCube}, util::RingDataHolder};
 use super::ChunkEntry;
 
 

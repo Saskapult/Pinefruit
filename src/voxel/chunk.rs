@@ -1,14 +1,7 @@
 use glam::UVec3;
 
 use crate::util::KGeneration;
-use super::{ArrayVolume, BlockKey};
-
-
-/// Determines the chunk extent for the whole project! 
-/// It's here so I can replace it with 32 to test things. 
-/// 
-/// Hopefully I used this instead of just plugging in numbers...
-pub const CHUNK_SIZE: u32 = 16;
+use super::{ArrayVolume, BlockKey, CHUNK_SIZE};
 
 
 

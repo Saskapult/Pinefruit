@@ -5,7 +5,7 @@ use glam::{IVec3, UVec3, Vec3, Vec2};
 use krender::{MeshKey, MaterialKey, prelude::{Mesh, RenderInput, AbstractRenderTarget, RRID}, RenderContextKey};
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
-use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent, MaterialResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{chunk_of_point, Chunk, chunk::CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry, VoxelCube}};
+use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent, MaterialResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{chunk_of_point, Chunk, CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry, VoxelCube}};
 use super::{MapResource, BlockResource, ChunkKey, ChunkMap};
 
 

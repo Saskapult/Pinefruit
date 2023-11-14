@@ -6,7 +6,7 @@ use krender::{BufferKey, prelude::{BufferManager, Buffer, RenderContext, RenderI
 use oktree::Octree;
 use slotmap::Key;
 
-use crate::{util::KGeneration, game::{BufferResource, QueueResource, MaterialResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{VoxelSphere, chunk_of_point, Chunk, chunk::CHUNK_SIZE}};
+use crate::{util::KGeneration, game::{BufferResource, QueueResource, MaterialResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{VoxelSphere, chunk_of_point, Chunk, CHUNK_SIZE}};
 
 use super::{MapResource, BlockResource};
 
