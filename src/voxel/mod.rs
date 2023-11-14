@@ -17,7 +17,7 @@ use glam::{Vec3, IVec3, IVec2, UVec3};
 /// It's here so I can replace it with 32 to test things. 
 /// 
 /// Hopefully I used this instead of just plugging in numbers...
-pub const CHUNK_SIZE: u32 = 32;
+pub const CHUNK_SIZE: u32 = 16;
 
 
 pub fn voxel_of_point(point: Vec3) -> IVec3 {
