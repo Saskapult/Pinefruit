@@ -118,28 +118,21 @@ pub fn map_modification_system(
 	let mut chunks = map.chunks.write();
 	let mut mods = map.block_mods.write();
 	
-	// This should be a drain filter, but the function is not there!
-	// Should also be grouped into chunks for easier filtering
-	// Modifications should be grouped because:
-	// - Parallel application
-	// - Easier filtering
-	// - Can override based on priority (currently we don't do this)
-	for modification in mods.drain(..) {
-		let c = chunk_of_voxel(modification.position);
-		let v = voxel_relative_to_chunk(modification.position, c);
-		if let Some(ChunkEntry::Complete(chunk)) = chunks.key(&c).and_then(|k| chunks.get_mut(k)) {
-			// If potentially cloning the chunk is too expensive, we could have a way to abort
-			// if there are any other references to that chunk
-			// That sounds fun?s
+	mods.retain(|c, modifications| {
+		if let Some(ChunkEntry::Complete(chunk)) = chunks.key(c).and_then(|k| chunks.get_mut(k)) {
 			let inner = Arc::make_mut(chunk);
-			if let Some(b) = modification.set_to {
-				inner.insert(v.as_uvec3(), b);
-			} else {
-				inner.remove(v.as_uvec3());
+			for modification in modifications {
+				if let Some(b) = modification.set_to {
+					inner.insert(modification.position.as_uvec3(), b);
+				} else {
+					inner.remove(modification.position.as_uvec3());
+				}
 			}
 			inner.generation.increment();
+			
+			false
 		} else {
-			warn!("Could not apply a voxel modification ({}) to chunk {c}, discarding due to design decisions", modification.position);
+			true
 		}
-	}
+	});
 }

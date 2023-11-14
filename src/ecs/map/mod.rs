@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use glam::IVec3;
 use eks::prelude::*;
@@ -111,13 +112,19 @@ impl ChunkMap {
 #[derive(Debug, ResourceIdent)]
 pub struct MapResource {
 	pub chunks: Arc<RwLock<ChunkMap>>,
-	pub block_mods: RwLock<Vec<VoxelModification>>, // could group by chunk for embarassing parallelization, also reduce by priority
+	// Should these be in their own resource?
+	// Multiplayer says yes
+	// Todo: Have yet another hashmap for chunk-relative position
+	// Would allow for prioritizing
+	// Idea: Don't need the chunk hashing in that case, might cut down on 
+	// overhead if we only stored world-relative
+	pub block_mods: RwLock<HashMap<IVec3, Vec<VoxelModification>>>,
 }
 impl MapResource {
 	pub fn new() -> Self {
 		Self {
 			chunks: Arc::new(RwLock::new(ChunkMap::default())),
-			block_mods: RwLock::new(Vec::new()),
+			block_mods: RwLock::new(HashMap::new()),
 		}
 	}
 
@@ -132,13 +139,20 @@ impl MapResource {
 	}
 
 	pub fn modify_voxel(&self, modification: VoxelModification) {
-		self.block_mods.write().push(modification);
-	}
-	pub fn modify_voxels(&self, modifications: &[VoxelModification]) {
-		self.block_mods.write().extend_from_slice(modifications);
+		let (c, r) = modification.as_chunk_relative();
+		self.block_mods.write().entry(c).or_default().push(r);
 	}
 
-	/// Gets soem estimation of the map's data usage. 
+	pub fn modify_voxels(&self, modifications: &[VoxelModification]) {
+		let mut block_mods = self.block_mods.write();
+		
+		for modification in modifications {
+			let (c, r) = modification.as_chunk_relative();
+			block_mods.entry(c).or_default().push(r);
+		}
+	}
+
+	/// Gets some estimate of the map's data usage. 
 	/// Assumes that chunks are stored with array volumes with no optimization
 	pub fn approximate_size(&self) -> u64 {
 		// Currently chunks store Option<BlockKey>, which is 64 bits in size

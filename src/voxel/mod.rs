@@ -119,11 +119,46 @@ impl VoxelCube {
 }
 
 
+// #[derive(Debug, Clone, Copy)]
+// pub struct WorldVoxel(IVec3);
+// impl WorldVoxel {
+// 	pub fn as_chunk_relative(self) -> (IVec3, ChunkVoxel) {
+// 		let c = chunk_of_voxel(self.0);
+// 		let r = self.0 - c * (CHUNK_SIZE as i32);
+// 		(c, ChunkVoxel(r))
+// 	}
+// }
+
+
+// #[derive(Debug, Clone, Copy)]
+// pub struct ChunkVoxel(IVec3);
+// impl ChunkVoxel {
+// 	pub fn as_world_voxel(self, chunk: IVec3) -> WorldVoxel {
+// 		WorldVoxel(self.0 + chunk * (CHUNK_SIZE as i32))
+// 	}
+// }
+// impl std::ops::Deref for ChunkVoxel {
+// 	type Target = IVec3;
+// 	fn deref(&self) -> &Self::Target {
+// 		&self.0
+// 	}
+// }
+
+
+
 #[derive(Debug, Clone, Copy)]
 pub struct VoxelModification {
 	pub position: IVec3, // Usually world-relative, but it's left unclear so we don't have to write as much code
 	pub set_to: Option<BlockKey>,
 	pub priority: u32,
+}
+impl VoxelModification {
+	// This should return another type of struct but I'm lazy
+	pub fn as_chunk_relative(mut self) -> (IVec3, Self) {
+		let c = chunk_of_voxel(self.position);
+		self.position -= c * (CHUNK_SIZE as i32);
+		(c, self)
+	}
 }
 
 
