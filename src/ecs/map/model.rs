@@ -380,7 +380,7 @@ fn chunk_quads_simple(
 						cxn = Some(e);
 					}
 					let cxn = cxn.as_mut().unwrap();
-					cxn.get(UVec3::new(15, y, z))
+					cxn.get(UVec3::new(CHUNK_SIZE-1, y, z))
 				} else {
 					chunk.get(UVec3::new(x-1, y, z))
 				}; 
@@ -415,7 +415,7 @@ fn chunk_quads_simple(
 						cyn = Some(e);
 					}
 					let cyn = cyn.as_mut().unwrap();
-					cyn.get(UVec3::new(x, 15, z))
+					cyn.get(UVec3::new(x, CHUNK_SIZE-1, z))
 				} else {
 					chunk.get(UVec3::new(x, y-1, z))
 				}; 
@@ -450,7 +450,7 @@ fn chunk_quads_simple(
 						czn = Some(e);
 					}
 					let czn = czn.as_mut().unwrap();
-					czn.get(UVec3::new(x, y, 15))
+					czn.get(UVec3::new(x, y, CHUNK_SIZE-1))
 				} else {
 					chunk.get(UVec3::new(x, y, z-1))
 				}; 

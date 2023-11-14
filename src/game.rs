@@ -210,7 +210,7 @@ impl Game {
 		
 		self.world.insert_resource(MapResource::new());
 
-		self.world.insert_resource(MapModelResource::new(8));
+		self.world.insert_resource(MapModelResource::new(16));
 
 		self.world.insert_resource({
 			let blocks = BlockResource::default();
