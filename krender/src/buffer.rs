@@ -51,16 +51,16 @@ impl BufferManager {
 		self.buffers_by_id.get(&id.into()).cloned()
 	}
 
-	pub fn add_dependent_material(&self, key: BufferKey, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
+	pub fn add_usages(&self, key: BufferKey, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
 		if let Some(b) = self.buffers.get(key) {
-			b.add_dependent_material(material, context, usages);
+			b.add_usages(material, context, usages);
 		} else {
 			warn!("Tried to add dependent material to nonexistent buffer");
 		}
 	}
-	pub fn remove_dependent_material(&self, key: BufferKey, material: MaterialKey, context: RenderContextKey) {
+	pub fn remove_usages(&self, key: BufferKey, material: MaterialKey, context: RenderContextKey) {
 		if let Some(b) = self.buffers.get(key) {
-			b.remove_dependent_material(material, context);
+			b.remove_usages(material, context);
 		} else {
 			warn!("Tried to remove dependent material from nonexistent buffer");
 		}
@@ -103,7 +103,7 @@ impl BufferManager {
 pub struct Buffer {
 	pub name: String,
 	pub size: u64,
-	pub base_usages: wgpu::BufferUsages,
+	
 	readable: bool, 
 	writable: bool,
 	persistent: bool,
@@ -114,7 +114,9 @@ pub struct Buffer {
 	// Some iff the buffer is meant to be resized
 	// previous: Option<Option<wgpu::Buffer>>,
 
-	materials: RwLock<HashMap<(MaterialKey, RenderContextKey), wgpu::BufferUsages>>,
+	pub base_usages: wgpu::BufferUsages,
+	derived_usages: RwLock<Vec<(MaterialKey, RenderContextKey, wgpu::BufferUsages)>>,
+
 	dirty: AtomicBool, // true iff needs to be rebound
 	pub binding: Option<wgpu::Buffer>,
 	bind_groups: RwLock<HashSet<BindGroupKey>>,
@@ -141,7 +143,7 @@ impl Buffer {
 			persistent,
 			queued_writes: Vec::new(),
 			staging: readable.then(|| None),
-			materials: RwLock::new(HashMap::new()),
+			derived_usages: RwLock::new(Vec::new()),
 			dirty: AtomicBool::new(true),
 			binding: None,
 			bind_groups: RwLock::new(HashSet::new()),
@@ -203,23 +205,25 @@ impl Buffer {
 	}
 
 	pub fn usages(&self) -> wgpu::BufferUsages {
-		self.materials.read().values()
+		self.derived_usages.read()
+			.iter()
+			.map(|(_, _, u)| u)
 			.copied()
 			.fold(self.base_usages, |a, u| a | u)
 	}
 
-	fn add_dependent_material(&self, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
+	fn add_usages(&self, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
 		let current_usages = self.usages();
 		if current_usages | usages != current_usages {
 			trace!("Buffer '{}' is made invalid by an added material", self.name);
 			self.dirty.store(true, Ordering::Relaxed);
 		}
-		self.materials.write().insert((material, context), usages);
+		self.derived_usages.write().push((material, context, usages));
 	}
 
-	fn remove_dependent_material(&self, material: MaterialKey, context: RenderContextKey) {
+	fn remove_usages(&self, material: MaterialKey, context: RenderContextKey) {
 		let old_usages = self.usages();
-		self.materials.write().remove(&(material, context));
+		self.derived_usages.write().retain(|&(m, c, _)| (m, c) != (material, context));
 		let new_usages = self.usages();
 		if old_usages != new_usages {
 			trace!("Buffer '{}' is made invalid by a removed material", self.name);
@@ -264,12 +268,12 @@ impl Buffer {
 		device: &wgpu::Device, 
 		bind_groups: &BindGroupManager,
 	) {
-		if self.materials.read().is_empty() {
+		if self.derived_usages.read().is_empty() {
 			return;
 		}
 
 		let mut usages = self.usages();
-		debug!("Buffer '{}' binds with usages {:?} ({:?})", self.name, usages, self.materials.read().values());
+		debug!("Buffer '{}' binds with usages {:?}", self.name, usages);
 
 		// If we have a staging buffer then add CPY_SRC to usages and create staging buffer
 		if let Some(staging) = self.staging.as_mut() {

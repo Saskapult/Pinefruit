@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use bytemuck::{Pod, Zeroable};
 use eks::prelude::*;
 use glam::{IVec3, UVec3};
-use krender::{BufferKey, prelude::{BufferManager, Buffer, RenderContext, RenderInput}, MaterialKey, allocator::{SlabBufferAllocator, SlabAllocationKey, BufferAllocator}};
+use krender::{BufferKey, prelude::{BufferManager, Buffer, RenderContext, RenderInput, AbstractRenderTarget, RRID}, MaterialKey, allocator::{SlabBufferAllocator, SlabAllocationKey, BufferAllocator}};
 use oktree::Octree;
 use slotmap::Key;
 
@@ -357,7 +357,10 @@ pub fn chunk_rays_system(
 				.unwrap_or_else(|| materials.read("resources/materials/octree_chunks.ron"))
 			);
 
-			input.insert_item("voxels", material, None, entity);
+			input.stage("voxels")
+				.target(AbstractRenderTarget::new()
+					.with_colour(RRID::context("albedo"), None))
+				.push((material, None, entity));
 		}
 	}
 }

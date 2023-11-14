@@ -106,9 +106,10 @@ impl GameWidget {
 
 			let mut contexts = game.world.borrow::<ResMut<ContextResource>>();
 			
-			let context = RenderContext::new("default context")
-				.with_entity(entity_id);
-			contexts.contexts.insert(context)
+			let (key, context) = contexts.contexts.new_context("default context");
+			context.entity = Some(entity_id);
+
+			key
 		});
 
 		// Update size of display texture

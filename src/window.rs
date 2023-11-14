@@ -256,7 +256,7 @@ impl GameWindow {
 					ui.image(texture, texture.size_vec2());
 
 					// Toggle profiler
-					ui.toggle_value(&mut self.show_profiler, "Profiler");
+					ui.checkbox(&mut self.show_profiler, "Profiler");
 
 					// Update rate for the UI
 					let ui_update_rate = self.update_times.iter()
@@ -302,6 +302,8 @@ impl GameWindow {
 						ui.toggle_value(&mut game.render_polygons, "Polgyons");
 						ui.toggle_value(&mut game.render_rays, "Rays");
 					});
+
+					ui.checkbox(&mut game.render_sort, "render sort");
 				
 					// Shader refresh button
 					if ui.button("Refresh shaders").clicked() {

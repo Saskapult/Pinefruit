@@ -2,10 +2,10 @@ use std::{collections::HashMap, sync::Arc};
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use eks::prelude::*;
 use glam::{IVec3, UVec3, Vec3, Vec2};
-use krender::{MeshKey, MaterialKey, prelude::{Mesh, RenderInput}};
+use krender::{MeshKey, MaterialKey, prelude::{Mesh, RenderInput, AbstractRenderTarget, RRID}, RenderContextKey};
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
-use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent}, ecs::{TransformComponent, ChunkEntry}, voxel::{chunk_of_point, Chunk, chunk::CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry, VoxelCube}};
+use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent, MaterialResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{chunk_of_point, Chunk, chunk::CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry, VoxelCube}};
 use super::{MapResource, BlockResource, ChunkKey, ChunkMap};
 
 
@@ -573,12 +573,26 @@ fn quad_indices(direction: u32) -> [u32; 6] {
 
 #[profiling::function]
 pub fn map_model_rendering_system(
-	(input,): (&mut RenderInput<Entity>,), 
+	(
+		input,
+		context,
+	): (
+		&mut RenderInput<Entity>,
+		RenderContextKey,
+	), 
 	models: Res<MapModelResource>,
+	materials: Res<MaterialResource>,
 ) {
+	let target = AbstractRenderTarget::new()
+		.with_colour(RRID::context("albedo"), None)
+		.with_depth(RRID::context("depth"));
+	let items = input
+		.stage("models")
+		.target(target);
+
 	for entry in models.chunks.values().filter_map(|(_, _, g)| g.ref_complete()) {
 		for &(material, mesh) in entry.models.iter() {
-			input.insert_item("models", material, Some(mesh), entry.entity);
+			items.push((material, Some(mesh), entry.entity));
 		}
 	}
 }

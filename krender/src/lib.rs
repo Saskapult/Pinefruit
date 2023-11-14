@@ -32,7 +32,6 @@ mod rendercontext;
 mod util;
 pub mod allocator;
 mod bundle;
-mod input_revised;
 
 pub mod prelude {
 	pub use crate::input::RenderInput;
@@ -87,6 +86,7 @@ pub struct RenderResourcesRefMut<'a, T: EntityIdentifier> {
 
 
 // Put in RenderResourcesRefMut
+#[profiling::function]
 pub fn prepare_for_render<T: EntityIdentifier>(
 	device: &wgpu::Device,
 	queue: &wgpu::Queue,
@@ -96,44 +96,66 @@ pub fn prepare_for_render<T: EntityIdentifier>(
 	textures: &mut TextureManager,
 	buffers: &mut BufferManager,
 	bind_groups: &mut BindGroupManager,
-	contexts: &RenderContextManager<T>,
+	contexts: &mut RenderContextManager<T>,
 ) {
-	warn!("Preparing for render");
-	// Double space for stuff that can't be parallel
+	info!("Preparing for render");
 
+	
 	info!("Register shaders");
-	materials.read_unknown_shaders(shaders);
+	// Materials load their shaders (if DNE) and fetch their keys
+	materials.read_shaders_and_fetch_keys(shaders);
 
 
 	info!("Load shaders");
+	// Shaders are loaded
+	// Register bind group layout with BGM
+	// Register mesh format with MM
 	shaders.load_and_register(meshes, bind_groups);
 
-
+	
 	info!("Bind layouts");
+	// Layouts are built and bound
 	bind_groups.build_layouts(device);
 
 	
 	info!("Update materials");
-	materials.read_unknown_resources(shaders, textures, buffers).unwrap();
-	materials.update(shaders, textures, buffers, bind_groups, contexts);
+	// Materials load the resources in their specifications
+	materials.read_specified_resources(shaders, textures, buffers).unwrap();
 	
 
+	info!("Context materials");
+	// Contexts (create and) fetch bind group keys
+	// Apply usages to resources
+	contexts.bind_materials(
+		materials, 
+		shaders, 
+		textures, 
+		buffers, 
+		bind_groups, 
+	);
+
+
 	info!("Bind textures");
+	// Textures are bound
 	textures.update_bindings(device, queue, bind_groups);
+	// Queued work is done
 	textures.do_queued_writes(queue);
 
 	info!("Bind buffers");
+	// Buffers are bound
 	buffers.update_bindings(device, bind_groups);
+	// Queued work is done
 	buffers.do_queued_writes(queue);
 	
 
 	info!("Bind the bind groups");
+	// Bind groups are created
 	bind_groups.update_bindings(device, textures, buffers);
 
 	info!("Build shader pipelines");
+	// Pipelines are built
 	shaders.build_pipelines(device, bind_groups);
 
 
-	// info!("Mesh binding");
-	// meshes.bind_unbound(device);
+	// Be sure to bind the meshes!
 }

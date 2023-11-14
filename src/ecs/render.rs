@@ -387,7 +387,7 @@ pub fn ssao_system(
 					1, 
 					false,
 					false,
-				));
+				).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
 				context.insert_texture("ssao output", key);
 				key
 			});
@@ -399,13 +399,17 @@ pub fn ssao_system(
 			info!("Insert ssao generate material");
 			materials.read("resources/materials/ssao_generate.ron")
 		});
-		input.insert_item("ssao generate", ssao_generate_mtl, None, Entity::default());
+		input.stage("ssao generate")
+			.target(AbstractRenderTarget::new().with_colour(RRID::context("ssao output"), None))
+			.push((ssao_generate_mtl, None, Entity::default()));
 
 		let ssao_apply_mtl = *ssao.apply_mtl.get_or_insert_with(|| {
 			info!("Insert ssao apply material");
 			materials.read("resources/materials/ssao_apply.ron")
 		});
-		input.insert_item("ssao apply", ssao_apply_mtl, None, Entity::default());
+		input.stage("ssao apply")
+			.target(AbstractRenderTarget::new().with_colour(RRID::context("output_texture"), None))
+			.push((ssao_apply_mtl, None, Entity::default()));
 	}
 }
 
@@ -495,7 +499,7 @@ pub fn context_albedo_system(
 							1, 
 							false,
 							false,
-						));
+						).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
 						context.insert_texture("albedo", key);
 						key
 					});

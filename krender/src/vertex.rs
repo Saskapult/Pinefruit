@@ -11,6 +11,11 @@ pub struct InstanceAttribute {
 	pub fields: Vec<VertexFormatWrapper>,
 	pub default: Option<Vec<u8>>,
 }
+impl InstanceAttribute {
+	pub fn size(&self) -> u64 {
+		self.fields.iter().fold(0, |acc, vfw| acc + vfw.convert().size())
+	}
+}
 
 /// Attributes needed from a mesh for a shader
 #[derive(Debug, Serialize, Deserialize, Clone)]

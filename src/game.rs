@@ -158,6 +158,8 @@ pub struct Game {
 
 	pub render_rays: bool,
 	pub render_polygons: bool,
+
+	pub render_sort: bool,
 }
 impl Game {
 	/// Creating the game should be fast because it is done on the main thread. 
@@ -198,6 +200,7 @@ impl Game {
 			shaders, bind_groups, 
 			render_rays: false,
 			render_polygons: true,
+			render_sort: false,
 		}
 	}
 
@@ -325,41 +328,36 @@ impl Game {
 			profiling::scope!("Render Resource systems");
 			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
 			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
-			self.world.run_with_data((context_mut,), output_texture_system);
 
-			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
-			self.world.run_with_data((context_mut,), context_albedo_system);
-
-			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
-			self.world.run_with_data((context_mut,), context_camera_system);
+			self.world.run_with_data((&mut *context_mut,), output_texture_system);
+			self.world.run_with_data((&mut *context_mut,), context_albedo_system);
+			self.world.run_with_data((&mut *context_mut,), context_camera_system);
 
 			self.world.run(block_colours_system);
 		}
 
 		// Retain this?
-		// In a resource?
-		// In the context? That does seem best
 		let mut input = RenderInput::new();
-		// Collect stuff
 
-		let d = {
-			let textures = self.world.borrow::<Res<TextureResource>>();
-			textures.key_by_name(&"depth".to_string()).unwrap()
-		};
-		input.clear_depth("models", d);
+		input.stage("skybox").clear_depth(RRID::context("depth"));
+		input.stage("skybox").clear_colour(RRID::context("albedo"));
 		
 		{ // Render skybox
 			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
 			let skybox_mtl = materials.read("resources/materials/skybox.ron");
-			input.insert_item("skybox", skybox_mtl, None, Entity::default());
+			input.stage("skybox")
+				.target(AbstractRenderTarget::new()
+					.with_colour(RRID::context("albedo"), None)
+					.with_depth(RRID::context("depth")))
+				.push((skybox_mtl, None, Entity::default()));
 		}
 
 		input.add_dependency("models", "skybox");
-		self.world.run_with_data((&mut input,), model_render_system);
+		self.world.run_with_data((&mut input, context), model_render_system);
 		
 		// Render chunk meshes
 		if self.render_polygons {
-			self.world.run_with_data((&mut input,), map_model_rendering_system);
+			self.world.run_with_data((&mut input, context), map_model_rendering_system);
 		}
 
 		// Render chunks with rays
@@ -400,11 +398,25 @@ impl Game {
 			);
 		}
 
+		let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
 		let storage_provider = WorldWrapper { world: &self.world, };
 		let bundle = {
 			profiling::scope!("Render bundle");
-			input.bundle(&self.device, &mut meshes.meshes, &materials.materials, &self.shaders, context, &storage_provider)
+			input.bundle(
+				&self.device,
+				&textures,
+				&mut meshes, 
+				&materials, 
+				&self.shaders, 
+				&storage_provider, 
+				&context_mut,
+				self.render_sort,
+			)
 		};
+
+		meshes.bind_unbound(&self.device);
+
+		info!("{} draw calls", bundle.draw_count());
 
 		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 			label: None,
@@ -412,7 +424,15 @@ impl Game {
 
 		{
 			profiling::scope!("Render execute");
-			bundle.execute(&self.shaders, &self.bind_groups, &meshes.meshes, &textures.textures, &mut encoder, &self.device, profiler);
+			bundle.execute(
+				&self.device,
+				&self.shaders, 
+				&self.bind_groups, 
+				&meshes.meshes, 
+				&textures.textures, 
+				&mut encoder, 
+				profiler,
+			);
 		}		
 
 		let buf = encoder.finish();
@@ -459,7 +479,7 @@ pub fn output_texture_system(
 					wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
 					resolution.width, resolution.height, 
 					1, false, false, 
-				).with_usages(wgpu::TextureUsages::TEXTURE_BINDING);
+				).with_usages(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT);
 				let key = textures.insert(t);
 				context.insert_texture("output_texture", key);
 
@@ -478,11 +498,21 @@ pub fn output_texture_system(
 
 #[profiling::function]
 fn model_render_system(
-	(input,): (&mut RenderInput<Entity>,), 
+	(
+		input,
+		context,
+	): (
+		&mut RenderInput<Entity>,
+		RenderContextKey,
+	), 
 	models: Comp<ModelComponent>,
 ) {
+	let items = input.stage("models")
+		.target(AbstractRenderTarget::new()
+			.with_colour(RRID::context("albedo"), None)
+			.with_depth(RRID::context("depth")));
 	for (entity, (model,)) in (&models,).iter().with_entities() {
-		input.insert_item("models", model.material, Some(model.mesh), entity);
+		items.push((model.material, Some(model.mesh), entity));
 	}
 }
 

@@ -13,7 +13,7 @@
 //! In data? Idk what to call it.
 //! 
 
-use std::{collections::{HashMap, HashSet}, path::{PathBuf, Path}};
+use std::{collections::HashMap, path::{PathBuf, Path}};
 use bytemuck::{Pod, Zeroable};
 use slotmap::{SecondaryMap, SlotMap};
 use wgpu::util::DeviceExt;
@@ -28,6 +28,14 @@ pub struct MeshBindings {
 }
 
 
+#[derive(Debug)]
+pub enum IndexBufferType {
+	U32(wgpu::Buffer),
+	U16(wgpu::Buffer),
+	None,
+}
+
+
 // Lazy loading? Hot reloading/updating? Who needs that! Can offload though
 #[derive(Debug)]
 pub struct Mesh {
@@ -36,9 +44,6 @@ pub struct Mesh {
 	pub data: HashMap<String, Vec<u8>>,
 	pub n_vertices: u32,
 	pub indices: Option<Vec<u32>>,
-
-	pub bindings: Option<MeshBindings>,
-	pub pending_binds: HashSet<MeshFormatKey>,
 }
 impl Mesh {
 	pub fn new(name: impl Into<String>) -> Self {
@@ -48,17 +53,15 @@ impl Mesh {
 			data: HashMap::new(),
 			n_vertices: 0,
 			indices: None,
-			bindings: None,
-			pending_binds: HashSet::new(),
 		}
 	}
 
-	fn vertex_data(
+	pub fn data_with_attributes(
 		&self, 
-		vertex_attributes: &Vec<VertexAttribute>,
+		attributes: &[VertexAttribute],
 	) -> anyhow::Result<Vec<u8>> {
 		// Find data sources
-		let data = vertex_attributes.iter().map(|va| {
+		let data = attributes.iter().map(|va| {
 			if let Some(vas) = self.data.get(&va.source) {
 				assert_ne!(0, vas.len());
 				// trace!("{} bytes of {}", vas.len(), va.name);
@@ -69,10 +72,10 @@ impl Mesh {
 			} else {
 				panic!("Can't get vertex data for '{}' (not provided and no default), available feilds are {:?}", va.name, self.data.keys());
 			}
-		}).zip(vertex_attributes.iter()).collect::<Vec<_>>();
+		}).zip(attributes.iter()).collect::<Vec<_>>();
 
 		// Allocate vector to hold mesh data
-		let total_size = vertex_attributes.iter().fold(0, |acc, va| acc + va.size());
+		let total_size = attributes.iter().fold(0, |acc, va| acc + va.size());
 		let mut vertices_bytes = Vec::with_capacity(self.n_vertices as usize * total_size as usize);
 
 		for vertex_index in 0..self.n_vertices {
@@ -108,68 +111,6 @@ impl Mesh {
 	pub fn with_vertex_count(mut self, count: u32) -> Self {
 		self.n_vertices = count;
 		self
-	}
-
-	/// Asserts that a mesh format is loaded, otherwise queues it.
-	/// Doesn't handle duplicate requests but I'm not convinced that will be an issue.
-	pub fn bind(
-		&mut self, 
-		index: MeshFormatKey,
-	) {
-		debug!("Binding (pending) mesh '{}'", self.name);
-		if let Some(g) = self.bindings.as_ref() {
-			if g.vertex_buffers.contains_key(index) {
-				warn!("Hey that's already bound!");
-				return
-			}
-		}
-		self.pending_binds.insert(index);
-	}
-
-	/// Binds meshes that have been requested. 
-	/// To be called after a bunch of stuff idk. 
-	/// Return indicates if anything changed or not. 
-	pub(self) fn bind_unbound(
-		&mut self,
-		device: &wgpu::Device,
-		formats: &MeshFormatManager,
-	) -> bool {
-		if self.pending_binds.is_empty() {
-			debug!("Mesh '{}' has nothing to bind", self.name);
-			return false;
-		}
-		debug!("Mesh '{}' binds unbound formats", self.name);
-		self.bindings.get_or_insert_with(|| {
-			trace!("Init mesh bindings");
-			let mut b = MeshBindings::default();
-			if let Some(i) = self.indices.as_ref() {
-				trace!("hey this one has index data");
-				b.index_buffer = Some((device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-					label: Some(&*format!("{} index buffer", self.name)),
-					contents: bytemuck::cast_slice(i.as_slice()),
-					usage: wgpu::BufferUsages::INDEX,
-				}), wgpu::IndexFormat::Uint32));
-			}
-			b
-		});
-
-		for index in self.pending_binds.iter().copied() {
-			let vertex_attributes = formats.vertex_formats.get(index).unwrap();
-			let vertex_attribute_names = vertex_attributes.iter().map(|va| va.name.clone()).collect::<Vec<_>>();
-			debug!("Binding mesh '{}' with properties {vertex_attribute_names:?}", self.name);
-			let vertex_data = self.vertex_data(&vertex_attributes).unwrap();
-			self.bindings.as_mut().unwrap().vertex_buffers.insert(
-				index,
-				device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-					label: Some(&*format!("{} vertex buffer with properties {vertex_attribute_names:?}", self.name)),
-					contents: vertex_data.as_slice(),
-					usage: wgpu::BufferUsages::VERTEX,
-				}),
-			);
-		}
-		self.pending_binds.clear();
-
-		true
 	}
 
 	pub fn read_obj(path: impl AsRef<Path>) -> Self {
@@ -248,6 +189,17 @@ impl MeshFormatManager {
 #[derive(Debug, Default)]
 pub struct MeshManager {
 	meshes: SlotMap<MeshKey, Mesh>,
+
+	// A slotmap to hold bindings for each mesh
+	// This is done to reduce cache thrash when flagging for binding
+	// And also during the binding iteration
+	// Note: this design decision is not backed by profiling metrics
+	//
+	// If a mesh must be bound, then there will exist a None entry in the format
+	// This is how we mark things for binding
+	pub(crate) vertex_bindings: SecondaryMap<MeshFormatKey, SecondaryMap<MeshKey, Option<wgpu::Buffer>>>,
+	pub(crate) index_bindings: SecondaryMap<MeshKey, Option<IndexBufferType>>,
+	
 	key_by_name: HashMap<String, MeshKey>,
 	key_by_path: HashMap<PathBuf, MeshKey>,
 	formats: MeshFormatManager,
@@ -256,6 +208,8 @@ impl MeshManager {
 	pub fn new() -> Self {
 		Self {
 			meshes: SlotMap::with_key(), 
+			vertex_bindings: SecondaryMap::new(),
+			index_bindings: SecondaryMap::new(),
 			key_by_name: HashMap::new(), 
 			key_by_path: HashMap::new(), 
 			formats: MeshFormatManager::new(),
@@ -298,12 +252,37 @@ impl MeshManager {
 		self.formats.format_new_or_create(attributes)
 	}
 
+	#[profiling::function]
 	pub fn bind_unbound(&mut self, device: &wgpu::Device) -> bool {
-		// self.meshes.iter_mut().fold(false, |a, (_, m)| {
-		// 	a || m.bind_unbound(device, &self.formats)
-		// })
-		for mesh in self.meshes.values_mut() {
-			mesh.bind_unbound(device, &self.formats);
+		for (mesh_key, binding) in self.index_bindings.iter_mut() {
+			if binding.is_none() {
+				let mesh = self.meshes.get(mesh_key).unwrap();
+				let _ = binding.insert(IndexBufferType::U32(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+					label: Some(&*format!("{} index buffer", mesh.name)),
+					contents: bytemuck::cast_slice(mesh.indices.as_ref().expect("Todo: Non-u32 indices").as_slice()),
+					usage: wgpu::BufferUsages::INDEX,
+				})));
+			}
+		}
+
+		for (format_key, format_bindings) in self.vertex_bindings.iter_mut() {
+			let attributes = self.formats.vertex_formats.get(format_key).unwrap();
+			let attribute_names = attributes.iter().map(|va| &va.name).collect::<Vec<_>>();
+			
+			for (mesh_key, binding) in format_bindings.iter_mut() {
+				if binding.is_none() {
+					let mesh = self.meshes.get(mesh_key).unwrap();
+
+					trace!("Mesh {} ({:?}) binds with attributes {:?}", mesh.name, mesh_key, attribute_names);
+
+					let data = mesh.data_with_attributes(attributes.as_slice()).unwrap();
+					let _ = binding.insert(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+						label: Some(&*format!("{} vertex buffer with properties {:?}", mesh.name, attribute_names)),
+						contents: data.as_slice(),
+						usage: wgpu::BufferUsages::VERTEX,
+					}));
+				}
+			}
 		}
 		true
 	}
