@@ -32,11 +32,15 @@ impl OctreeNode {
 		offset
 	}
 
-	// USed to get a data offset, data should be at index (parent_index + 1 + this)
+	// Used to get a data offset, data should be at index (parent_index + 1 + this)
 	pub fn to_end_from(&self, octant: u8, leaf_size: usize) -> usize {
 		let total = self.octant_offset(8, leaf_size);
 		let preceding = self.octant_offset(octant + 1, leaf_size);
 		total - preceding
+	}
+
+	pub fn has_children(&self) -> bool {
+		self.node != 0 || self.leaf != 0
 	}
 }
 impl Into<u32> for OctreeNode {
@@ -509,6 +513,107 @@ fn are_elements_equal<T: PartialEq>(elems: &[T]) -> Option<&T> {
 		[] => None,
 	}
 }
+
+
+// pub struct Octree2 {
+// 	data: Vec<u32>,
+// 	// Depth is not needed actually!
+// 	leaf_size: u8,
+// }
+// impl Octree2 {
+// 	pub fn new(depth: u8, leaf_size: u8) -> Self {
+// 		Self {
+// 			data: vec![OctreeNode {
+// 				leaf: 0b00000000_u8,
+// 				node: 0b00000000_u8,
+// 				child_offset: 0,
+// 			}.into()],
+// 			// depth,
+// 			leaf_size,
+// 		}
+// 	}
+
+// 	/// Gets the leaf value of the root if it exists
+// 	/// 
+// 	/// This is a special case 
+// 	fn root_leaf(&self) -> Option<&[u32]> {
+// 		let root: OctreeNode = self.data[0].into();
+// 		(root.child_offset != 0).then(|| &self.data[1..(1 + self.leaf_size as usize)])
+// 	}
+
+// 	fn root(&self) -> OctreeNode {
+// 		self.data[0].into()
+// 	}
+
+// 	pub fn combine(
+// 		nnn: Self, 
+// 		nnp: Self, 
+// 		npn: Self, 
+// 		npp: Self, 
+// 		pnn: Self, 
+// 		pnp: Self, 
+// 		ppn: Self, 
+// 		ppp: Self, 
+// 	) -> Self {
+// 		// node then leaf this time
+// 		let octants = [
+// 			nnn, 
+// 			nnp, 
+// 			npn, 
+// 			npp, 
+// 			pnn, 
+// 			pnp, 
+// 			ppn, 
+// 			ppp, 
+// 		];
+// 		// let depth = octants[0].depth + 1;
+// 		// assert!(octants.iter().all(|o| o.depth == depth - 1), "Octants are not of same depth!");
+
+// 		let leaf_size = octants[0].leaf_size;
+// 		assert!(octants.iter().all(|o| o.leaf_size == leaf_size), "Octants do not have same leaf size!");
+
+// 		// If all do not have children
+// 		if octants.iter().all(|o| !o.root().has_children()) {
+// 			// And all have same content
+// 			let content = octants[0].root_leaf();
+// 			if octants.iter().all(|o| o.root_leaf() == content) {
+// 				// Combine them
+// 				println!("WE CAN COMBINE THEM");
+// 				// Can just return the first tree with one more depth
+// 				let mut data = octants[0];
+// 				data.depth += 1;
+// 				return data;
+// 			}
+// 		}
+
+// 		// Otherwise this is harder
+// 		let mut 
+// 		let child_offset = 0;
+// 		for octant in octants {
+// 			let mut data = octant.data;
+			
+// 			// Remove special case for root leaf flag
+// 			let root_mut: &mut OctreeNode = data.get_mut(0).unwrap().into();
+// 			let has_leaf = root_mut.child_offset != 0;
+// 			root_mut.child_offset = 0;
+
+
+
+
+// 		}
+
+// 		Self {
+
+// 		}
+// 	}
+
+// 	pub fn insert(
+// 		&mut self,
+// 		iterator: OctantCodeIterator,
+// 	) {
+// 		todo!()
+// 	}
+// }
 
 
 
