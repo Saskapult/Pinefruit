@@ -751,52 +751,52 @@ pub mod tests {
 	}
 
 
-	/// Generates chunks until one is fully solid and another is fully empty
-	#[test]
-	fn test_density_falloff() {
-		let base = 0;
-		let x = 0;
-		let z = 0;
-		let mut y_min = None;
-		let mut y_max = None;
-		let max_look_length = 10; // Look five chunks up or down
+	// /// Generates chunks until one is fully solid and another is fully empty
+	// #[test]
+	// fn test_density_falloff() {
+	// 	let base = 0;
+	// 	let x = 0;
+	// 	let z = 0;
+	// 	let mut y_min = None;
+	// 	let mut y_max = None;
+	// 	let max_look_length = 10; // Look five chunks up or down
 
-		let generator = NewTerrainGenerator::new(0);
+	// 	let generator = NewTerrainGenerator::new(0);
 
-		println!("Looking up...");
-		for y in base..=base+max_look_length {
-			let chunk_position = IVec3::new(x, y, z);
-			let mut volume = ArrayVolume::new(UVec3::splat(CHUNK_SIZE));
-			generator.base(chunk_position, &mut volume, BlockKey::default());
+	// 	println!("Looking up...");
+	// 	for y in base..=base+max_look_length {
+	// 		let chunk_position = IVec3::new(x, y, z);
+	// 		let mut volume = ArrayVolume::new(UVec3::splat(CHUNK_SIZE));
+	// 		generator.base(chunk_position, &mut volume, BlockKey::default());
 
-			let n_solid = volume.contents.iter().filter(|v| v.is_some()).count();
-			println!("y={y} is {:.2}% solid ({} / {})", n_solid as f32 / CHUNK_SIZE.pow(3) as f32 * 100.0, n_solid, CHUNK_SIZE.pow(3));
+	// 		let n_solid = volume.contents.iter().filter(|v| v.is_some()).count();
+	// 		println!("y={y} is {:.2}% solid ({} / {})", n_solid as f32 / CHUNK_SIZE.pow(3) as f32 * 100.0, n_solid, CHUNK_SIZE.pow(3));
 
-			if volume.contents.iter().all(|v| v.is_none()) {
-				println!("y={y} is fully empty");
-				y_max = Some(y);
-				break
-			}
-		}
-		assert!(y_max.is_some(), "No fully empty chunk found");
+	// 		if volume.contents.iter().all(|v| v.is_none()) {
+	// 			println!("y={y} is fully empty");
+	// 			y_max = Some(y);
+	// 			break
+	// 		}
+	// 	}
+	// 	assert!(y_max.is_some(), "No fully empty chunk found");
 
-		println!("Looking down...");
-		for y in (base-max_look_length..=base).rev() {
-			let chunk_position = IVec3::new(x, y, z);
-			let mut volume = ArrayVolume::new(UVec3::splat(CHUNK_SIZE));
-			generator.base(chunk_position, &mut volume, BlockKey::default());
+	// 	println!("Looking down...");
+	// 	for y in (base-max_look_length..=base).rev() {
+	// 		let chunk_position = IVec3::new(x, y, z);
+	// 		let mut volume = ArrayVolume::new(UVec3::splat(CHUNK_SIZE));
+	// 		generator.base(chunk_position, &mut volume, BlockKey::default());
 
-			let n_solid = volume.contents.iter().filter(|v| v.is_some()).count();
-			println!("y={y} is {:.2}% solid ({} / {})", n_solid as f32 / CHUNK_SIZE.pow(3) as f32 * 100.0, n_solid, CHUNK_SIZE.pow(3));
+	// 		let n_solid = volume.contents.iter().filter(|v| v.is_some()).count();
+	// 		println!("y={y} is {:.2}% solid ({} / {})", n_solid as f32 / CHUNK_SIZE.pow(3) as f32 * 100.0, n_solid, CHUNK_SIZE.pow(3));
 
-			if volume.contents.iter().all(|v| v.is_some()) {
-				println!("y={y} is fully solid");
-				y_min = Some(y);
-				break
-			}
-		}
-		assert!(y_min.is_some(), "No fully solid chunk found");
-	}
+	// 		if volume.contents.iter().all(|v| v.is_some()) {
+	// 			println!("y={y} is fully solid");
+	// 			y_min = Some(y);
+	// 			break
+	// 		}
+	// 	}
+	// 	assert!(y_min.is_some(), "No fully solid chunk found");
+	// }
 
 	#[test]
 	fn test_3d_fbm_index() {

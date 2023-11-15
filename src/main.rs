@@ -1,4 +1,4 @@
-#![feature(int_roundings, variant_count, test, return_position_impl_trait_in_trait)]
+#![feature(int_roundings, variant_count, test)]
 #![allow(dead_code, soft_unstable)]
 
 mod window;

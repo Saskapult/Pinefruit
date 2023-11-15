@@ -1247,7 +1247,7 @@ dependencies = [
  "oktree",
  "parking_lot",
  "poisson",
- "pollster",
+ "pollster 0.2.5",
  "profiling",
  "puffin_egui",
  "rand 0.8.5",
@@ -1280,6 +1280,7 @@ dependencies = [
  "image",
  "log",
  "parking_lot",
+ "pollster 0.3.0",
  "profiling",
  "rand 0.8.5",
  "ron",
@@ -1289,6 +1290,7 @@ dependencies = [
  "tobj 4.0.0",
  "wgpu",
  "wgpu-profiler",
+ "winit",
 ]
 
 [[package]]
@@ -1878,6 +1880,12 @@ name = "pollster"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5da3b0203fd7ee5720aa0b5e790b591aa5d3f41c3ed2c34a3a393382198af2f7"
+
+[[package]]
+name = "pollster"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22686f4785f02a4fcc856d3b3bb19bf6c8160d103f7a99cc258bddd0251dc7f2"
 
 [[package]]
 name = "powerfmt"

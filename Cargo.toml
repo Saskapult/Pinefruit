@@ -13,6 +13,14 @@ opt-level = 2
 [profile.dev]
 debug = 1
 
+# Rust analyzer does not like it when I remove this
+[workspace]
+members = [
+	"krender", 
+	"oktree",
+	"eks",
+]
+
 [dependencies]
 krender = { path = "./krender" }
 oktree = { path = "./oktree" }
