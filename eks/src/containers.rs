@@ -139,7 +139,7 @@ impl ResourceContainer {
 	fn drop_as<R: Resource>(&mut self) {
 		println!("Drop as R with name {}", R::RESOURCE_NAME);
 		let ptr = *self.data.get_mut();
-		let resource = unsafe { (ptr as *mut Option<R>).read() };
+		let resource = unsafe { (ptr as *mut R).read() };
 		drop(resource);
 	}
 }
