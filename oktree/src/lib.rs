@@ -1,5 +1,10 @@
+pub mod simple;
+
 use std::fmt::Debug;
 use bytemuck::{Pod, Zeroable};
+
+#[macro_use]
+extern crate log;
 
 
 
@@ -32,6 +37,10 @@ impl OctreeNode {
 		offset
 	}
 
+	pub fn octant_offset2(&self, octant: u8, leaf_size: usize) -> usize {
+		octant_offset2(octant, self.leaf, self.node, leaf_size)
+	}
+
 	// Used to get a data offset, data should be at index (parent_index + 1 + this)
 	pub fn to_end_from(&self, octant: u8, leaf_size: usize) -> usize {
 		let total = self.octant_offset(8, leaf_size);
@@ -39,7 +48,7 @@ impl OctreeNode {
 		total - preceding
 	}
 
-	pub fn has_children(&self) -> bool {
+	pub fn has_subtree(&self) -> bool {
 		self.node != 0 || self.leaf != 0
 	}
 }
@@ -399,7 +408,7 @@ impl Octree {
 	// - combine octants if they are all of the same type (None)
 	// - split combined octants if they are no longer of the same type
 	// I've thought about combining this with insert() but I became very scared
-	pub fn remove(&mut self, x: u32, y: u32, z: u32) {
+	pub fn remove(&mut self, _x: u32, _y: u32, _z: u32) {
 		todo!()
 	}
 
@@ -429,7 +438,7 @@ impl Octree {
 /// | pnp | 5 |
 /// | ppn | 6 |
 /// | ppp | 7 |
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct OctantCodeIterator {
 	edge: u32,
 	x: u32,
@@ -505,6 +514,21 @@ fn octant_offset(octant: u8, leaf: u8, node: u8, leaf_size: usize) -> usize {
 }
 
 
+// octant_offset but the lower octants are on the right
+fn octant_offset2(octant: u8, leaf: u8, node: u8, leaf_size: usize) -> usize {
+	let preced_mask = if octant == 8 {
+		0b11111111_u8
+	} else {
+		!(0xFF_u8.wrapping_shl(octant as u32))
+	};
+	// println!("Octant {} gives p-mask {:#010b}", octant, preced_mask);
+	let preceding_leaves = u8::count_ones(leaf & preced_mask) as usize;
+	let preceding_nodes = u8::count_ones(node & preced_mask) as usize;
+	let offset = preceding_leaves * leaf_size + preceding_nodes;
+	offset
+}
+
+
 // Credit to Sven Marnach
 // https://stackoverflow.com/questions/69396843/how-to-know-if-all-slice-elements-are-equal-and-if-so-return-a-reference-to-th
 fn are_elements_equal<T: PartialEq>(elems: &[T]) -> Option<&T> {
@@ -515,105 +539,1048 @@ fn are_elements_equal<T: PartialEq>(elems: &[T]) -> Option<&T> {
 }
 
 
-// pub struct Octree2 {
-// 	data: Vec<u32>,
-// 	// Depth is not needed actually!
-// 	leaf_size: u8,
-// }
-// impl Octree2 {
-// 	pub fn new(depth: u8, leaf_size: u8) -> Self {
-// 		Self {
-// 			data: vec![OctreeNode {
-// 				leaf: 0b00000000_u8,
-// 				node: 0b00000000_u8,
-// 				child_offset: 0,
-// 			}.into()],
-// 			// depth,
-// 			leaf_size,
-// 		}
-// 	}
+pub struct Octree2 {
+	// Always node AND THEN leaf, never leaf and then node
+	data: Vec<u32>,
+	// Depth is not needed actually!
+	// It is implicit and should be known externally
+	leaf_size: u8,
+}
+impl Octree2 {
+	pub fn new(leaf_size: u8) -> Self {
+		Self {
+			data: vec![OctreeNode {
+				leaf: 0b00000000_u8,
+				node: 0b00000000_u8,
+				child_offset: 0,
+			}.into()],
+			leaf_size,
+		}
+	}
 
-// 	/// Gets the leaf value of the root if it exists
-// 	/// 
-// 	/// This is a special case 
-// 	fn root_leaf(&self) -> Option<&[u32]> {
-// 		let root: OctreeNode = self.data[0].into();
-// 		(root.child_offset != 0).then(|| &self.data[1..(1 + self.leaf_size as usize)])
-// 	}
+	// For testing, probably remove once insert is done
+	pub fn new_leaf(leaf_data: &[u32]) -> Self {
+		let leaf_size = leaf_data.len();
+		let mut data = vec![OctreeNode {
+			leaf: 0b00000000_u8,
+			node: 0b00000000_u8,
+			child_offset: leaf_size as u16,
+		}.into()];
+		data.extend_from_slice(leaf_data);
+		Self {
+			data,
+			leaf_size: leaf_size as u8,
+		}
+	}
 
-// 	fn root(&self) -> OctreeNode {
-// 		self.data[0].into()
-// 	}
+	pub fn size(&self) -> usize {
+		std::mem::size_of::<Self>() + self.data.len() * 4
+	}
 
-// 	pub fn combine(
-// 		nnn: Self, 
-// 		nnp: Self, 
-// 		npn: Self, 
-// 		npp: Self, 
-// 		pnn: Self, 
-// 		pnp: Self, 
-// 		ppn: Self, 
-// 		ppp: Self, 
-// 	) -> Self {
-// 		// node then leaf this time
-// 		let octants = [
-// 			nnn, 
-// 			nnp, 
-// 			npn, 
-// 			npp, 
-// 			pnn, 
-// 			pnp, 
-// 			ppn, 
-// 			ppp, 
-// 		];
-// 		// let depth = octants[0].depth + 1;
-// 		// assert!(octants.iter().all(|o| o.depth == depth - 1), "Octants are not of same depth!");
+	pub fn data(&self) -> &[u32] {
+		self.data.as_slice()
+	}
 
-// 		let leaf_size = octants[0].leaf_size;
-// 		assert!(octants.iter().all(|o| o.leaf_size == leaf_size), "Octants do not have same leaf size!");
+	/// Gets the leaf value of the root if it exists
+	/// 
+	/// This is a special case 
+	fn root_leaf(&self) -> Option<&[u32]> {
+		let root: OctreeNode = self.data[0].into();
+		(root.child_offset != 0).then(|| &self.data[1..(1 + self.leaf_size as usize)])
+	}
 
-// 		// If all do not have children
-// 		if octants.iter().all(|o| !o.root().has_children()) {
-// 			// And all have same content
-// 			let content = octants[0].root_leaf();
-// 			if octants.iter().all(|o| o.root_leaf() == content) {
-// 				// Combine them
-// 				println!("WE CAN COMBINE THEM");
-// 				// Can just return the first tree with one more depth
-// 				let mut data = octants[0];
-// 				data.depth += 1;
-// 				return data;
-// 			}
-// 		}
+	fn root(&self) -> OctreeNode {
+		self.data[0].into()
+	}
 
-// 		// Otherwise this is harder
-// 		let mut 
-// 		let child_offset = 0;
-// 		for octant in octants {
-// 			let mut data = octant.data;
+	// Test this please
+	pub fn get(&self, mut iterator: OctantCodeIterator) -> Option<&[u32]> {
+		let octant = iterator.next().unwrap(); // If none, do root leaf case
+
+		let root = self.root();
+		let mut has_leaf = (root.leaf & (1 << octant)) != 0;
+		let mut has_node = (root.node & (1 << octant)) != 0;
+		let mut index = 1 + octant_offset2(octant, root.leaf, root.node, self.leaf_size as usize);
+
+		if self.root_leaf().is_some() {
+			index += self.leaf_size as usize;
+		}
+
+		println!("Subtree {octant} at idx {index}");
+		while let Some(octant) = iterator.next() {
+			println!("Subtree {octant} at idx {index}");
+			if !has_node {
+				println!("This has no subtree, terminating early");
+				break
+			}
+
+			let node: OctreeNode = self.data.get(index).unwrap().clone().into();
+
+			has_leaf = (node.leaf & (1_u8 << octant)) != 0;
+			has_node = (node.node & (1_u8 << octant)) != 0;
+
+			index += node.child_offset as usize + 1;
+			index += node.octant_offset2(octant, self.leaf_size as usize);
+		}
+
+		if has_node {
+			println!("Skip over node");
+			index += 1;
+		}
+
+		if has_leaf {
+			println!("Leaf at idx {index}");
+			return Some(&self.data[index..index + self.leaf_size as usize]);
+		} else {
+			println!("Empty");
+			return None;
+		}
+	}
+
+	pub fn combine(
+		nnn: Self, 
+		nnp: Self, 
+		npn: Self, 
+		npp: Self, 
+		pnn: Self, 
+		pnp: Self, 
+		ppn: Self, 
+		ppp: Self, 
+	) -> Self {
+		// node then leaf this time
+		let octants = [
+			nnn, 
+			nnp, 
+			npn, 
+			npp, 
+			pnn, 
+			pnp, 
+			ppn, 
+			ppp, 
+		];
+
+		let leaf_size = octants[0].leaf_size;
+		assert!(octants.iter().all(|o| o.leaf_size == leaf_size), "Octants do not have same leaf size!");
+
+		// If all have no children
+		if octants.iter().all(|o| !o.root().has_subtree()) {
+			println!("All childless...");
+			// If all leaves have same value
+			let content = octants[0].root_leaf();
+			if octants.iter().all(|o| o.root_leaf() == content) {
+				// Combine them
+				println!("Same content, we can combine them!");
+				// Can just return the first tree
+				let [g, _, _, _, _, _, _, _] = octants;
+				return g
+			} else {
+				println!("But differing content!");
+			}
+		}
+
+		// Make new root
+		let mut new_root = OctreeNode {
+			leaf: 0b00000000_u8,
+			node: 0b00000000_u8,
+			child_offset: 0,
+		};
+		// Make masks
+		for (i, octant) in octants.iter().enumerate() {
+			let octant_root: OctreeNode = octant.data[0].into();
+
+			// Only include it as a node it it has children
+			// Otherwise we just want the leaf value
+			if octant_root.has_subtree() {
+				println!("Octant {} has a subtree", i);
+				new_root.node |= 1 << i;
+			}
+
+			// If it has leaf content, set that flag
+			let root_leaf = octant_root.child_offset != 0;
+			if root_leaf {
+				println!("Octant {} has a leaf content", i);
+				new_root.leaf |= 1 << i;
+			}
+		}
+		
+		// Use basic combination function of the leaves of each node
+		let new_leaf = {
+			let content = octants[0].root_leaf();
+			if octants.iter().all(|o| o.root_leaf() == content) {
+				content
+			} else {
+				None
+			}
+		};
+		if let Some(s) = new_leaf {
+			new_root.child_offset = leaf_size as u16;
+			println!("Combined to content {s:?}");
+		} else {
+			println!("Combined to no content");
+		}
+		let mut new_data: Vec<u32> = vec![new_root.into()];
+		if let Some(s) = new_leaf {
+			new_data.extend_from_slice(s);
+		}
+
+		// Make nodes
+		let mut pushed_data_size = 0;
+		for (i, octant) in octants.iter().enumerate() {
 			
-// 			// Remove special case for root leaf flag
-// 			let root_mut: &mut OctreeNode = data.get_mut(0).unwrap().into();
-// 			let has_leaf = root_mut.child_offset != 0;
-// 			root_mut.child_offset = 0;
+			// If has a subtree, push a node to describe that
+			let has_node = new_root.node & (1 << i) != 0;
+			if has_node {
+				let mut octant_root = octant.root();
+				let to_end = new_root.to_end_from(i as u8, leaf_size as usize);
+				// Not adding because leaf offset is built in to to_end_from
+				octant_root.child_offset = (to_end + pushed_data_size) as u16;
+				pushed_data_size += octant.data.len() - 1;
+
+				println!("Push node for octant {} (offset will be is {})", i, octant_root.child_offset);
+
+				new_data.push(octant_root.into());
+			}
+
+			// If has leaf data, push that
+			let has_leaf = new_root.leaf & (1 << i) != 0;
+			if has_leaf {
+				println!("Push leaf for octant {}", i);
+				new_data.extend_from_slice(&octant.data[1..(leaf_size as usize + 1)]);
+			}
+		}
+
+		// Push subtrees
+		for (i, octant) in octants.iter().enumerate() {
+			let mut offset = 1;
+			let has_leaf = new_root.leaf & (1 << i) != 0;
+			if has_leaf {
+				offset += leaf_size as usize;
+			}
+
+			let s = &octant.data[offset..];
+			if s.len() != 0 {
+				println!("Push subtree for octant {} (len is {})", i, s.len());
+			}
+			new_data.extend_from_slice(s);
+		}
+
+		Self {
+			data: new_data,
+			leaf_size
+		}
+	}
+
+	// Accurate as long as your values are less than 2^16
+	pub fn print_guess(&self) {
+		let root = self.root();
+		println!("0: {root:?}");
+		for (i, value) in self.data[1..].iter().cloned().enumerate() {
+			let i = i + 1;
+			if value & 0xFFFF0000 > 0 {
+				let node: OctreeNode = value.into();
+				println!("{i}: {node:?}")
+			} else {
+				println!("{i}: {value}")	
+			}
+		}
+	}
+
+	pub fn print_pretty(&self) {
+		fn print_rec(
+			data: &[u32],
+			leaf: u8, 
+			node: u8, 
+			depth: usize, 
+			leaf_size: usize, 
+		) {
+			for octant in 0..8 {
+				let octant_mask = 1 << octant;
+				let mut octant_index = octant_offset2(octant, leaf, node, leaf_size);
+
+				let has_leaf = leaf & octant_mask != 0;
+				let has_node = node & octant_mask != 0;
+				if has_leaf || has_node {
+					// Print indentation
+					print!("{:indent$}", "", indent=depth);
+					// Print octant index
+					print!("{octant}: ");
+				}
+
+				// Print identifier
+				match (has_leaf, has_node) {
+					(false, false) => {}, //print!("empty"),
+					(true, false) => print!("leaf"),
+					(false, true) => print!("node"),
+					(true, true) => print!("leafnode"),
+				}
+
+				// Print leaf content
+				if has_leaf {
+					let leaf_data = &data[(octant_index)..(octant_index+leaf_size)];
+					print!(" ({:?})", leaf_data);
+					// Skip over leaf when going to children
+					if has_leaf {
+						octant_index += leaf_size;
+					}
+				}
+
+				// if has_node {
+				// 	let node: OctreeNode = data.get(octant_index).unwrap().clone().into();
+				// 	print!(" ({:?})", node);
+				// }
+
+				// End line
+				if has_leaf || has_node {
+					print!("\n");
+				}
+
+				// Print rest of subtree
+				if has_node {
+					let node: OctreeNode = data.get(octant_index).unwrap().clone().into();
+					let next_index = octant_index + node.child_offset as usize + 1;
+					// println!("Recurse {next_index} away");
+					print_rec(
+						&data[next_index..],
+						node.leaf, 
+						node.node, 
+						depth+1, 
+						leaf_size, 
+					)
+				}
+			}
+		}
+
+		let root = self.root();
+		println!("root {root:?}");
+		let mut offs = 1;
+		if let Some(v) = self.root_leaf() {
+			println!("{:?}", v);
+			offs += self.leaf_size as usize;
+		}
+		if root.has_subtree() {
+			// println!("offs {offs}");
+			print_rec(&self.data[offs..], root.leaf, root.node, 1, self.leaf_size as usize);
+		}		
+	}
+
+	// If data was created in a subtree, then we need to adjust the offset of everything that points to after that data was inserted
+	#[inline]
+	fn external_adjust(
+		octant: u8, leaf_mask: u8, node_mask: u8, leaf_size: usize, 
+		data_st: usize, data: &mut Vec<u32>, adjust: i32, 
+	) {
+		let octant_index = data_st + octant_offset2(octant, leaf_mask, node_mask, leaf_size);
+		let octant_node: OctreeNode = data[octant_index].into();
+		let octant_children_location = octant_index + octant_node.child_offset as usize + 1;
+		for other_octant in 0..8 {
+			if other_octant == octant { continue; } // Skip self
+			// If has subtree
+			if (node_mask & (1 << other_octant)) != 0 {
+				let offs = octant_offset2(other_octant, leaf_mask, node_mask, leaf_size);
+				let node_idx = data_st + offs;
+				debug!("Adjust node for octant {} ({} + {} = idx {}) ({})", other_octant, data_st, offs, node_idx, adjust);
+
+				let octant_node: &mut OctreeNode = (&mut data[node_idx]).into();
+
+				// If subtree location is greater than the insertion point
+				let other_children_location = node_idx + octant_node.child_offset as usize + 1;
+				trace!("{} >= {}", other_children_location, octant_children_location);
+				if other_children_location >= octant_children_location {
+					let n = octant_node.child_offset as i32 + adjust;
+					trace!("{} + {} = {}", octant_node.child_offset, adjust, n);
+					octant_node.child_offset = n as u16;
+				} else {
+					trace!("Lol nvm");
+				}						
+			}
+		}
+	}
+
+	// If data is created in this collection, then every subtree pointer before the creation point must be adjusted
+	#[inline]
+	fn internal_adjust(
+		octant: u8, leaf_mask: u8, node_mask: u8, leaf_size: usize, 
+		data_st: usize, data: &mut Vec<u32>, adjust: i32, 
+	) {
+		for other_octant in 0..octant {
+			if (node_mask & (1 << other_octant)) != 0 {
+				let offs = octant_offset2(other_octant, leaf_mask, node_mask, leaf_size);
+				let node_idx = data_st + offs;
+				debug!("Adjust node for (preceeding) octant {} ({} + {} = idx {}) ({})", other_octant, data_st, offs, node_idx, adjust);
+
+				let octant_node: &mut OctreeNode = (&mut data[node_idx]).into();
+				let n = octant_node.child_offset as i32 + adjust;
+				trace!("{} + {} = {}", octant_node.child_offset, adjust, n);
+				octant_node.child_offset = n as u16;
+			}
+		}
+	}
+
+	pub fn insert(
+		&mut self,
+		mut iterator: OctantCodeIterator,
+		content: &(impl Pod + Zeroable),
+	) {
+		fn print_tree_guess(data: &Vec<u32>, leaf_size: usize) {
+			Octree2 {
+				data: data.clone(),
+				leaf_size: leaf_size as u8,
+			}.print_guess();
+		}
+
+		// Returns (new node, new leaf, offset adjustment)
+		fn insert_rec(
+			mut iterator: OctantCodeIterator,
+			data: &mut Vec<u32>,
+			octant: u8,
+			leaf_mask: u8, // The parent's leaf mask
+			mut node_mask: u8, // The parent's node mask
+			leaf_size: usize,
+			data_st: usize,
+			content: &[u32],
+		) -> (bool, bool, i32) {
+			print_tree_guess(data, leaf_size);
+
+			debug!("Index {}, octant {}, leaf {:010b}, node {:010b}", data_st, octant, leaf_mask, node_mask);
+			if let Some(next_octant) = iterator.next() {
+				debug!("Want to go to subtree octant {}", next_octant);
+				// Find the index of the node for (octant)
+				let octant_index = data_st + octant_offset2(octant, leaf_mask, node_mask, leaf_size);
+
+				// If (octant) doesn't have a node entry
+				// Insert a node there
+				let mut before_adjust = 0; // Applied to offsets before octant
+				let has_node = (node_mask & (1 << octant)) != 0;
+				// println!("Mask is 0b{:010b} & 0b{:010b}", node_mask, 1 << octant);
+				if !has_node {
+					before_adjust += 1;
+					node_mask |= 1 << octant;
+					
+					let subtree_offset = octant_offset2(8, leaf_mask, node_mask, leaf_size) - octant_offset2(octant+1, leaf_mask, node_mask, leaf_size);
+					debug!("Doesn't have a subtree, create one at index {} with offset {}", octant_index, subtree_offset);
+					data.insert(octant_index, OctreeNode {
+						leaf: 0,
+						node: 0,
+						child_offset: subtree_offset as u16,
+					}.into());
+				}
+				
+				// Load node for (octant)
+				let octant_node: OctreeNode = data[octant_index].into();
+				let octant_children_location = octant_index + octant_node.child_offset as usize + 1;
+				
+				// Recurse at the location of its children
+				debug!("Recurse");
+				let (
+					set_node, 
+					set_leaf, 
+					mut all_adjust, 
+				) = insert_rec(
+					iterator, 
+					data, 
+					next_octant, 
+					octant_node.leaf, octant_node.node,
+					leaf_size, 
+					octant_children_location, 
+					content, 
+				);
+
+				print_tree_guess(data, leaf_size);
+
+				// Apply new_node, new_leaf to (octant)'s node entry
+				// Misnomer: we have to set them to this in any case
+				let octant_node: &mut OctreeNode = (&mut data[octant_index]).into();
+				if set_node {
+					// if (octant_node.node & (1 << next_octant)) == 0 {
+					// 	trace!("They made a node");
+					// }
+					octant_node.node |= 1 << next_octant;
+				} else {
+					// if (octant_node.node & (1 << next_octant)) != 0 {
+					// 	trace!("They removed a node");
+					// }
+					octant_node.node &= !(1 << next_octant);
+				}
+				if set_leaf {
+					// if (octant_node.leaf & (1 << next_octant)) == 0 {
+					// 	trace!("They made a leaf");
+					// }
+					octant_node.leaf |= 1 << next_octant;
+				} else {
+					// if (octant_node.leaf & (1 << next_octant)) != 0 {
+					// 	trace!("They removed a leaf");
+					// }
+					octant_node.leaf &= !(1 << next_octant);
+				}
+				let octant_node = octant_node.clone();
+
+				// print_tree_guess(data, leaf_size);
+
+				// If all of (octant)'s node's children have no children 
+				if octant_node.node == 0x00 {
+					trace!("This node does not have subtrees...");
+					// and have same leaf content
+					// (look in octant_children_location)
+					
+					// Uses heap allocation?! Todo: don't do that! 
+					let same = (0..8)
+						.map(|i| if (octant_node.leaf & (1 << i)) != 0 {
+							let o = octant_children_location + octant_node.octant_offset2(i as u8, leaf_size);
+							trace!("Octant {i} has leaf, read at {o} ({} + {})", octant_children_location, octant_node.octant_offset2(i as u8, leaf_size));
+							Some(&data[o..o+leaf_size])
+						} else {
+							None
+						})
+						.collect::<Vec<_>>()
+						.windows(2).all(|w| w[0] == w[1]);
+
+					if same {
+						trace!("And same leaf values, we can combine them!");
+						// Remove their entries and (octant)'s node becomes a leaf of that content
+						
+						let leaf_count = (0..8)
+							.filter(|&i| (octant_node.leaf & (1 << i)) != 0)
+							.count();
+
+						// Remove subtree
+						debug!("Remove subtree ({} leaves)", leaf_count);
+						let _ = data.drain(octant_children_location..octant_children_location+leaf_count*leaf_size);
+						all_adjust -= (8 * leaf_size) as i32;
+
+						print_tree_guess(data, leaf_size);				
+
+						// Remove node
+						debug!("Remove node");
+						data.remove(octant_index);
+						before_adjust -= 1; 
+						node_mask &= !(1 << octant);
+
+						print_tree_guess(data, leaf_size);
+
+						// Add or overwrite leaf
+						let has_leaf = (leaf_mask & (1 << octant)) != 0;
+						if has_leaf {
+							debug!("Overwrite leaf");
+							data.splice(octant_index..octant_index+leaf_size, content.iter().copied());
+						} else {
+							debug!("Create leaf");
+							before_adjust += leaf_size as i32;
+							data.splice(octant_index..octant_index, content.iter().copied());
+						}
+
+						// Make sure to return (false, true, _)
+					} else {
+						trace!("But has differing leaf values!");
+						// Else perform the blending function and overwrite leaf with that
+						// Todo: that
+					}
+				} else {
+					// Else perform the blending function and overwrite leaf with that
+					// Todo: that
+				}
+
+				// print_tree_guess(data, leaf_size);
+
+				// println!("");
+				Octree2::internal_adjust(octant, leaf_mask, node_mask, leaf_size, data_st, data, before_adjust);
+				// print_tree_guess(data, leaf_size);
+
+				// println!("");
+				Octree2::external_adjust(octant, leaf_mask, node_mask, leaf_size, data_st, data, all_adjust);
+				// print_tree_guess(data, leaf_size);
+
+				let set_node = (node_mask & (1 << octant)) != 0;
+				let set_leaf = (leaf_mask & (1 << octant)) != 0;
+
+				let adjust = all_adjust + before_adjust;
+				trace!("return {:?}", (set_node, set_leaf, adjust));
+				(set_node, set_leaf, adjust)
+			} else {
+				// We're here!
+				debug!("Terminal!");
+				
+				// If (octant) has a node, skip over that data for writing
+				let mut leaf_idx = data_st + octant_offset2(octant, leaf_mask, node_mask, leaf_size);
+				let has_node = (node_mask & (1 << octant)) != 0;
+				if has_node {
+					trace!("Has a node, so skipping over it");
+					leaf_idx += 1;
+				}
+
+				// If (octant) did not have a leaf, add size to adjustment
+				let mut before_adjust = 0;
+				let has_leaf = (leaf_mask & (1 << octant)) != 0;
+				if !has_leaf {
+					trace!("Insert leaf at index {}", leaf_idx);
+					data.splice(leaf_idx..leaf_idx, content.iter().copied());
+					before_adjust += leaf_size as i32;
+				} else {
+					trace!("Overwrite leaf at index {}", leaf_idx);
+					data.splice(leaf_idx..leaf_idx+leaf_size, content.iter().copied());
+				}
+
+				Octree2::internal_adjust(octant, leaf_mask, node_mask, leaf_size, data_st, data, before_adjust);
+
+				trace!("return {:?}", (has_node, true, before_adjust));
+				(has_node, true, before_adjust)
+			}
+		}
+
+		let content = bytemuck::bytes_of(content);
+		let content = bytemuck::try_cast_slice::<_, u32>(content)
+			.expect("data content is not tetrabyte aligned!");
+		let leaf_size = self.leaf_size as usize;
+		assert_eq!(leaf_size, content.len());
+		let root = self.root();
+
+		if let Some(octant) = iterator.next() {
+			let data_st = root.child_offset as usize + 1;
+			let (set_node, set_leaf, _) = insert_rec(
+				iterator, 
+				&mut self.data, 
+				octant, 
+				root.leaf, 
+				root.node, 
+				leaf_size, 
+				data_st, 
+				content,
+			);
+
+			let root_mut: &mut OctreeNode = (&mut self.data[0]).into();
+			if set_node {
+				root_mut.node |= 1 << octant;
+			} else {
+				root_mut.node &= !(1 << octant);
+			}
+			if set_leaf {
+				root_mut.leaf |= 1 << octant;
+			} else {
+				root_mut.leaf &= !(1 << octant);
+			}
+
+			// external_adjust(octant, root_mut.leaf, root_mut.node, leaf_size, data_st, &mut self.data, adjust);
+		} else {
+			if root.child_offset != 0 {
+				debug!("Overwrite root leaf");
+				self.data.splice(1..1+leaf_size, content.iter().copied());
+			} else {
+				debug!("Create root leaf");
+				self.data.splice(1..1, content.iter().copied());
+				let root_mut: &mut OctreeNode = (&mut self.data[0]).into();
+				root_mut.child_offset = leaf_size as u16;
+			}
+		}
+		
+	}
+	
+	// This doesn't delete subtrees, only leaf values
+	pub fn remove(
+		&mut self,
+		mut iterator: OctantCodeIterator,
+	) {
+		// This should be like insert but maybe more simple
+
+		fn remove_rec(
+			mut iterator: OctantCodeIterator,
+			data: &mut Vec<u32>,
+			octant: u8,
+			leaf_mask: u8, // The parent's leaf mask
+			mut node_mask: u8, // The parent's node mask
+			leaf_size: usize,
+			data_st: usize,
+		) -> (bool, bool, i32) {
+			if let Some(next_octant) = iterator.next() {
+				let has_node = (node_mask & (1 << octant)) != 0;
+				if has_node {
+					// Load node for (octant)
+					let octant_index = data_st + octant_offset2(octant, leaf_mask, node_mask, leaf_size);
+					let octant_node: OctreeNode = data[octant_index].into();
+					let octant_children_location = octant_index + octant_node.child_offset as usize + 1;
+
+					let (
+						set_node, 
+						set_leaf, 
+						all_adjust, // Applied to offsets before AND after octant
+					) = remove_rec(
+						iterator, 
+						data, 
+						next_octant, 
+						octant_node.leaf, octant_node.node,
+						leaf_size, 
+						octant_children_location,  
+					);
+
+					// Apply new_node, new_leaf to (octant)'s node entry
+					// Misnomer: we have to set them to this in any case
+					let octant_node: &mut OctreeNode = (&mut data[octant_index]).into();
+					if set_node {
+						// if (octant_node.node & (1 << next_octant)) == 0 {
+						// 	trace!("They made a node");
+						// }
+						octant_node.node |= 1 << next_octant;
+					} else {
+						// if (octant_node.node & (1 << next_octant)) != 0 {
+						// 	trace!("They removed a node");
+						// }
+						octant_node.node &= !(1 << next_octant);
+					}
+					if set_leaf {
+						// if (octant_node.leaf & (1 << next_octant)) == 0 {
+						// 	trace!("They made a leaf");
+						// }
+						octant_node.leaf |= 1 << next_octant;
+					} else {
+						// if (octant_node.leaf & (1 << next_octant)) != 0 {
+						// 	trace!("They removed a leaf");
+						// }
+						octant_node.leaf &= !(1 << next_octant);
+					}
+					let octant_node = octant_node.clone();
+
+					// Can we combine them?
+					// Special case: are all empty leaves
+					let mut before_adjust = 0;
+					if octant_node.node == 0x00 && octant_node.leaf == 0x00 {
+						trace!("Can combine leaf values (all empty)");
+						data.remove(octant_index);
+						before_adjust -= 1;
+						node_mask &= !(1 << octant);
+						// Idk if this will work, my head hurts
+					}
+
+					Octree2::internal_adjust(octant, leaf_mask, node_mask, leaf_size, data_st, data, before_adjust);
+					Octree2::external_adjust(octant, leaf_mask, node_mask, leaf_size, data_st, data, all_adjust);
+
+					let set_node = (node_mask & (1 << octant)) != 0;
+					let set_leaf = (leaf_mask & (1 << octant)) != 0;
+
+					let adjust = all_adjust + before_adjust;
+					trace!("return {:?}", (set_node, set_leaf, adjust));
+					(set_node, set_leaf, adjust)
+				} else {
+					// can't go deeper, terminate
+					trace!("Terminated before reaching end");
+					let has_leaf = (leaf_mask & (1 << octant)) != 0;
+					(has_node, has_leaf, 0)
+				}
+			} else {
+				// remove leaf if exists
+				let mut leaf_idx = data_st + octant_offset2(octant, leaf_mask, node_mask, leaf_size);
+
+				let has_node = (node_mask & (1 << octant)) != 0;
+				if has_node {
+					trace!("Has a node, so skipping over it");
+					leaf_idx += 1;
+				}
+
+				let mut before_adjust = 0;
+				let has_leaf = (leaf_mask & (1 << octant)) != 0;
+				if has_leaf {
+					before_adjust -= leaf_size as i32;
+					data.drain(leaf_idx..leaf_idx+leaf_size);
+				} else {
+					trace!("Nothing to remove!");
+				}
+
+				Octree2::internal_adjust(octant, leaf_mask, node_mask, leaf_size, data_st, data, before_adjust);
+
+				(has_node, false, before_adjust)
+			}
+		}
+
+		let leaf_size = self.leaf_size as usize;
+		let root = self.root();
+
+		if let Some(octant) = iterator.next() {
+			let data_st = root.child_offset as usize + 1;
+			let (set_node, set_leaf, _) = remove_rec(
+				iterator, 
+				&mut self.data, 
+				octant, 
+				root.leaf, 
+				root.node, 
+				leaf_size, 
+				data_st, 
+			);
+
+			let root_mut: &mut OctreeNode = (&mut self.data[0]).into();
+			if set_node {
+				root_mut.node |= 1 << octant;
+			} else {
+				root_mut.node &= !(1 << octant);
+			}
+			if set_leaf {
+				root_mut.leaf |= 1 << octant;
+			} else {
+				root_mut.leaf &= !(1 << octant);
+			}
+		} else {
+			// Remove root leaf if exists
+			if root.child_offset != 0 {
+				self.data.drain(1..1+leaf_size);
+				let root_mut: &mut OctreeNode = (&mut self.data[0]).into();
+				root_mut.child_offset = 0;
+			}
+		}
+	}
+
+	pub fn set(&mut self, iterator: OctantCodeIterator, content: Option<&(impl Pod + Zeroable)>) {
+		match content {
+			Some(content) => self.insert(iterator, content),
+			None => self.remove(iterator),
+		}
+	}
+}
 
 
+#[cfg(test)]
+mod tests {
+    use crate::{Octree2, OctantCodeIterator};
 
+	#[test]
+	fn test_print_leaf() {
+		let o = Octree2::new_leaf(&[42]);
 
-// 		}
+		o.print_pretty()
+	}
 
-// 		Self {
+	#[test]
+	fn test_combine_empty() {
+		let o = Octree2::combine(
+			Octree2::new(1), 
+			Octree2::new(1), 
+			Octree2::new(1), 
+			Octree2::new(1), 
+			Octree2::new(1), 
+			Octree2::new(1), 
+			Octree2::new(1), 
+			Octree2::new(1),
+		);
 
-// 		}
-// 	}
+		o.print_guess()
+	}
 
-// 	pub fn insert(
-// 		&mut self,
-// 		iterator: OctantCodeIterator,
-// 	) {
-// 		todo!()
-// 	}
-// }
+	#[test]
+	fn test_combine_leaf_same() {
+		let o = Octree2::combine(
+			Octree2::new_leaf(&[42]), 
+			Octree2::new_leaf(&[42]), 
+			Octree2::new_leaf(&[42]), 
+			Octree2::new_leaf(&[42]), 
+			Octree2::new_leaf(&[42]), 
+			Octree2::new_leaf(&[42]), 
+			Octree2::new_leaf(&[42]), 
+			Octree2::new_leaf(&[42]),
+		);
 
+		o.print_guess()
+	}
 
+	#[test]
+	fn test_combine_leaf_different() {
+		let o = Octree2::combine(
+			Octree2::new_leaf(&[0]), 
+			Octree2::new_leaf(&[1]), 
+			Octree2::new_leaf(&[2]), 
+			Octree2::new_leaf(&[3]), 
+			Octree2::new_leaf(&[4]), 
+			Octree2::new_leaf(&[5]), 
+			Octree2::new_leaf(&[6]), 
+			Octree2::new_leaf(&[7]),
+		);
 
+		o.print_guess();
+		o.print_pretty();
+	}
+
+	#[test]
+	fn test_combine_subtree() {
+		let o1 = Octree2::combine(
+			Octree2::new_leaf(&[0]), 
+			Octree2::new_leaf(&[1]), 
+			Octree2::new_leaf(&[2]), 
+			Octree2::new_leaf(&[3]), 
+			Octree2::new_leaf(&[4]), 
+			Octree2::new_leaf(&[5]), 
+			Octree2::new_leaf(&[6]), 
+			Octree2::new_leaf(&[7]),
+		);
+
+		let o = Octree2::combine(
+			o1,
+			Octree2::new_leaf(&[41]), 
+			Octree2::new_leaf(&[42]), 
+			Octree2::new_leaf(&[43]), 
+			Octree2::new_leaf(&[44]), 
+			Octree2::new_leaf(&[45]), 
+			Octree2::new_leaf(&[46]), 
+			Octree2::new_leaf(&[47]),
+		);
+
+		o.print_guess();
+		o.print_pretty();
+	}
+
+	#[test]
+	fn test_combine_subtrees() {
+		let o1 = Octree2::combine(
+			Octree2::new_leaf(&[0]), 
+			Octree2::new_leaf(&[1]), 
+			Octree2::new_leaf(&[2]), 
+			Octree2::new_leaf(&[3]), 
+			Octree2::new_leaf(&[4]), 
+			Octree2::new_leaf(&[5]), 
+			Octree2::new_leaf(&[6]), 
+			Octree2::new_leaf(&[7]),
+		);
+
+		let o2 = Octree2::combine(
+			Octree2::new_leaf(&[30]), 
+			Octree2::new_leaf(&[31]), 
+			Octree2::new_leaf(&[32]), 
+			Octree2::new_leaf(&[33]), 
+			Octree2::new_leaf(&[34]), 
+			Octree2::new_leaf(&[35]), 
+			Octree2::new_leaf(&[36]), 
+			Octree2::new_leaf(&[37]),
+		);
+
+		let o = Octree2::combine(
+			o1,
+			Octree2::new_leaf(&[41]), 
+			Octree2::new_leaf(&[42]), 
+			o2, 
+			Octree2::new_leaf(&[44]), 
+			Octree2::new_leaf(&[45]), 
+			Octree2::new_leaf(&[46]), 
+			Octree2::new_leaf(&[47]),
+		);
+
+		o.print_guess();
+		o.print_pretty();
+	}
+
+	#[test]
+	fn test_insert_root_empty() {
+		let mut o = Octree2::new(1);
+
+		o.insert(OctantCodeIterator::new(0, 0, 0, 0), &[42]);
+
+		println!("-");
+		o.print_guess();
+		println!("-");
+		o.print_pretty();
+	}
+
+	#[test]
+	fn test_insert_root_leaf() {
+		let mut o = Octree2::new_leaf(&[41]);
+
+		o.insert(OctantCodeIterator::new(0, 0, 0, 0), &[42]);
+
+		println!("-");
+		o.print_guess();
+		println!("-");
+		o.print_pretty();
+	}
+
+	#[test]
+	fn test_insert_subtree_empty() {
+		let mut o = Octree2::new(1);
+
+		o.insert(OctantCodeIterator::new(0, 0, 0, 2), &[42]);
+
+		println!("-");
+		o.print_guess();
+		println!("-");
+		o.print_pretty();
+	}
+
+	#[test]
+	fn test_insert_subtree_empty_overwrite() {
+		let mut o = Octree2::new(1);
+
+		let items = [
+			[3, 0, 0],
+			[0, 0, 0],
+		].iter().copied().collect::<Vec<_>>();
+
+		for (i, [x, y, z]) in items.iter().copied().enumerate() {
+			println!("Insert {i} at [{x}, {y}, {z}]");
+			o.insert(OctantCodeIterator::new(x, y, z, 2), &[i as u32]);
+			println!("Now it looks like:");
+			o.print_guess();
+			println!("-");
+			o.print_pretty();
+			println!("\n-\n");
+		}
+		
+		for (i, [x, y, z]) in items.iter().copied().enumerate() {
+			println!("Get at [{x}, {y}, {z}] ({i})");
+			let v = o.get(OctantCodeIterator::new(x, y, z, 2));
+			let g = [i as u32];
+			let int = Some(g.as_slice());
+			assert_eq!(int, v);
+		}
+	}
+
+	#[test]
+	fn test_insert_subtree_group() {
+		let mut o = Octree2::new(1);
+
+		let depth = 2;
+		let max = 2_u32.pow(depth);
+
+		let mut previous = Vec::new();
+		let mut i = 0;
+		for x in 0..max {
+			for y in 0..max {
+				for z in 0..max {
+					println!("-");
+					o.print_pretty();
+					o.print_guess();
+
+					println!("Insert {i} to [{x}, {y}, {z}]");
+					o.insert(OctantCodeIterator::new(x, y, z, depth), &[i]);
+					
+					println!("Check integrity...");
+					o.print_guess();
+					previous.push((i, (x, y, z)));
+					for (v, (x, y, z)) in previous.iter().copied() {
+						let i = OctantCodeIterator::new(x, y, z, depth);
+						let octants = i.collect::<Vec<_>>();
+						println!("[{x}, {y}, {z}] ({octants:?}) should be {v}");
+
+						let actual = o.get(i);
+						assert_eq!(Some([v].as_slice()), actual);
+					}
+
+					i += 1;
+				}
+			}
+		}
+
+		println!("-");
+		o.print_guess();
+		println!("-");
+		o.print_pretty();
+
+		o.remove(OctantCodeIterator::new(1, 1, 1, depth));
+		assert_eq!(None, o.get(OctantCodeIterator::new(1, 1, 1, depth)));
+	}
+
+	#[test]
+	fn test_get() {
+		let mut o = Octree2::new(1);
+
+		o.insert(OctantCodeIterator::new(0, 0, 0, 2), &[42]);
+
+		println!("-");
+		o.print_guess();
+		println!("-");
+		o.print_pretty();
+		
+		let v = o.get(OctantCodeIterator::new(0, 0, 0, 2));
+		println!("{v:?}");
+	}
+}
