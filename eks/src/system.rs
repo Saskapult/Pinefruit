@@ -75,6 +75,8 @@ impl_system_function!(A, B, C, D, E);
 impl_system_function!(A, B, C, D, E, F);
 impl_system_function!(A, B, C, D, E, F, G);
 impl_system_function!(A, B, C, D, E, F, G, H);
+impl_system_function!(A, B, C, D, E, F, G, H, I);
+impl_system_function!(A, B, C, D, E, F, G, H, I, J);
 
 
 // Systems can be view, name, function pointer

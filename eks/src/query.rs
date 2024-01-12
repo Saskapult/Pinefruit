@@ -34,6 +34,8 @@ impl_queriable!(A, B, C, D, E);
 impl_queriable!(A, B, C, D, E, F);
 impl_queriable!(A, B, C, D, E, F, G);
 impl_queriable!(A, B, C, D, E, F, G, H);
+impl_queriable!(A, B, C, D, E, F, G, H, I);
+impl_queriable!(A, B, C, D, E, F, G, H, I, J);
 
 
 /// Things that store component data. 
