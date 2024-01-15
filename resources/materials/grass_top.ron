@@ -1,6 +1,6 @@
 (
 	name: "grass top",
-	shader: "../shaders/object_albedo.ron",
+	shader: "../shaders/lit_material/lit_material.ron",
 	mappings: {
 		"albedo": Context("albedo"),
 		"camera": Context("camera"),

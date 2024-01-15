@@ -8,10 +8,12 @@ use std::ops::{Deref, DerefMut};
 use std::time::{Instant, Duration};
 use std::sync::Arc;
 use crate::ecs::*;
-use crate::ecs::loading::{map_loading_system, ChunkLoadingResource};
+use crate::ecs::chunks::{ChunksResource, chunk_loading_system};
+use crate::ecs::light::{TorchLightChunksResource, torchlight_chunk_init_system, torchlight_debug_place_system, torchlight_update_system};
 use crate::ecs::model::{map_modelling_system, map_model_rendering_system, MapModelResource};
 use crate::ecs::modification::{map_modification_system, map_placement_system};
 use crate::ecs::octree::{gpu_chunk_loading_system, chunk_rays_system, BigBufferResource, GPUChunksResource, block_colours_system};
+use crate::ecs::terrain::{TerrainResource, TerrainLoadingResource, terrain_loading_system};
 use crate::rendering_integration::WorldWrapper;
 use crate::util::RingDataHolder;
 use crate::voxel::load_all_blocks_in_file;
@@ -208,7 +210,9 @@ impl Game {
 	pub fn initialize(&mut self) {
 		self.world.insert_resource(ControlMap::new());
 		
-		self.world.insert_resource(MapResource::new());
+		self.world.insert_resource(ChunksResource::new());
+		self.world.insert_resource(TerrainResource::default());
+		self.world.insert_resource(TorchLightChunksResource::default());
 
 		self.world.insert_resource(MapModelResource::new(16));
 
@@ -221,7 +225,7 @@ impl Game {
 			blocks
 		});
 
-		self.world.insert_resource(ChunkLoadingResource::new(42));
+		self.world.insert_resource(TerrainLoadingResource::new(42));
 
 		{ // Octree thing
 			let r = GPUChunksResource::default();
@@ -286,13 +290,17 @@ impl Game {
 		self.world.run(movement_system);
 		self.world.run(map_placement_system);
 
-		self.world.run(map_loading_system);
+		self.world.run(chunk_loading_system);
+		self.world.run(terrain_loading_system);
 		self.world.run(map_modification_system);
 
 		if self.render_rays {
 			self.world.run(gpu_chunk_loading_system); // Could be moved to render, but that'd give frame out of date issues
 		}
 		if self.render_polygons {
+			self.world.run(torchlight_chunk_init_system);
+			self.world.run(torchlight_debug_place_system);
+			self.world.run(torchlight_update_system);
 			self.world.run(map_modelling_system);
 		}
 

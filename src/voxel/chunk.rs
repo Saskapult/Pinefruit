@@ -1,40 +1,48 @@
 use glam::UVec3;
 
 use crate::util::KGeneration;
-use super::{ArrayVolume, BlockKey, CHUNK_SIZE};
+use super::{ArrayVolume, CHUNK_SIZE};
 
 
 
+/// A generic container for a generational volume. 
 #[derive(Clone)]
-pub struct Chunk {
-	pub storage: ArrayVolume<BlockKey>, // array or octree
+pub struct Chunk<T: std::fmt::Debug + Clone> {
+	pub contents: ArrayVolume<T>, // array or octree
 	pub generation: KGeneration,
 	// tickable blocks? 
 	// other info?
 }
-impl Chunk {
+impl<T: std::fmt::Debug + Clone> Chunk<T> {
 	pub fn new() -> Self {
 		Self {
-			storage: ArrayVolume::new(UVec3::new(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)),
+			contents: ArrayVolume::new(UVec3::new(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SIZE)),
+			generation: KGeneration::new(),
+		}
+	}
+
+	pub fn new_with_contents(contents: ArrayVolume<T>) -> Self {
+		Self {
+			contents,
 			generation: KGeneration::new(),
 		}
 	}
 }
-impl std::fmt::Debug for Chunk {
+impl<T: std::fmt::Debug + Clone> std::fmt::Debug for Chunk<T> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		f.debug_struct("Chunk")
 			.field("generation", &self.generation)
 			.finish()
 	}
 }
-impl std::ops::Deref for Chunk {
-	type Target = ArrayVolume<BlockKey>;
+impl<T: std::fmt::Debug + Clone> std::ops::Deref for Chunk<T> {
+	type Target = ArrayVolume<T>;
 	fn deref(&self) -> &Self::Target {
-		&self.storage
+		&self.contents
 	}
 }
-impl std::ops::DerefMut for Chunk {
+impl<T: std::fmt::Debug + Clone> std::ops::DerefMut for Chunk<T> {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.storage
+		&mut self.contents
 	}
 }

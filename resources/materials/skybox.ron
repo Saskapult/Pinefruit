@@ -1,6 +1,6 @@
 (
 	name: "skybox material",
-	shader: "../shaders/skybox.ron",
+	shader: "../shaders/skybox/skybox.ron",
 	mappings: {
 		"albedo": Context("albedo"),
 		"texture": Global(Path("../textures/skybox/skybox.ron")),

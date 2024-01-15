@@ -5,10 +5,9 @@ use glam::{IVec3, UVec3};
 use krender::{BufferKey, prelude::{BufferManager, Buffer, RenderContext, RenderInput, AbstractRenderTarget, RRID}, MaterialKey, allocator::{SlabBufferAllocator, SlabAllocationKey, BufferAllocator}};
 use oktree::Octree;
 use slotmap::Key;
+use crate::{util::KGeneration, game::{BufferResource, QueueResource, MaterialResource}, ecs::TransformComponent, voxel::{VoxelSphere, chunk_of_point, Chunk, CHUNK_SIZE, BlockKey}};
+use super::{BlockResource, terrain::{TerrainResource, TerrainEntry}, chunks::ChunksResource};
 
-use crate::{util::KGeneration, game::{BufferResource, QueueResource, MaterialResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{VoxelSphere, chunk_of_point, Chunk, CHUNK_SIZE}};
-
-use super::{MapResource, BlockResource};
 
 
 #[derive(Debug, ResourceIdent)]
@@ -135,7 +134,8 @@ impl GPUChunkLoadingComponent {
 #[profiling::function]
 pub fn gpu_chunk_loading_system(
 	queue: Res<QueueResource>,
-	map: Res<MapResource>,
+	chunks: Res<ChunksResource>,
+	terrain: Res<TerrainResource>,
 	mut buffers: ResMut<BufferResource>,
 	mut bigbuffer: ResMut<BigBufferResource>,
 	mut octrees: ResMut<GPUChunksResource>,
@@ -143,6 +143,7 @@ pub fn gpu_chunk_loading_system(
 	loaders: Comp<GPUChunkLoadingComponent>,
 ) {
 	info!("Octree loading system");
+	let chunks = chunks.read();
 	
 	// Collect every chunk that should be loaded
 	let mut chunks_to_load = HashSet::new();
@@ -185,9 +186,9 @@ pub fn gpu_chunk_loading_system(
 	// Load unloaded things
 	// Also check if current stuff is outdated
 	let mut counter = 0;
-	for (position, data) in octrees.chunks.iter_mut() {
-		let chunks = map.chunks.read();
-		if let Some(ChunkEntry::Complete(c)) = chunks.key(position).and_then(|k| chunks.get(k)) {
+	for (&position, data) in octrees.chunks.iter_mut() {
+		let terrain_chunks = terrain.chunks.read();
+		if let Some(TerrainEntry::Complete(c)) = chunks.get_position(position).and_then(|k| terrain_chunks.get(k)) {
 			if let Some((generation, _)) = data {
 				// test for generation outdated, if not then "continue"
 				if c.generation == *generation {
@@ -197,7 +198,7 @@ pub fn gpu_chunk_loading_system(
 			}
 
 			debug!("Treeing chunk {position}");
-			let tree = chunk_to_octree(c, CHUNK_SIZE);
+			let tree = chunk_to_octree(&c, CHUNK_SIZE);
 			let tree_data = tree.data();
 
 			let key = bigbuffer.insert(&queue, &mut buffers, bytemuck::cast_slice(tree_data.as_slice()));
@@ -216,7 +217,7 @@ pub fn gpu_chunk_loading_system(
 
 
 // Makes an octree with contents that match the chunk
-fn chunk_to_octree(chunk: &Chunk, chunk_extent: u32) -> Octree {
+fn chunk_to_octree(chunk: &Chunk<BlockKey>, chunk_extent: u32) -> Octree {
 	let depth = chunk_extent.ilog2();
 	let mut tree = Octree::new(depth, 1);
 	

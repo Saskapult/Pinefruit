@@ -21,6 +21,7 @@ use profiling::puffin;
 extern crate log;
 
 
+
 fn main() {
 	env_logger::init();
 	info!("Initialized env_logger");

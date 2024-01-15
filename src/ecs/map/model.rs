@@ -1,18 +1,26 @@
 use std::{collections::HashMap, sync::Arc};
+use arrayvec::ArrayVec;
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use eks::prelude::*;
 use glam::{IVec3, UVec3, Vec3, Vec2};
 use krender::{MeshKey, MaterialKey, prelude::{Mesh, RenderInput, AbstractRenderTarget, RRID}, RenderContextKey};
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
-use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent, MaterialResource}, ecs::{TransformComponent, ChunkEntry}, voxel::{chunk_of_point, Chunk, CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry, VoxelCube}};
-use super::{MapResource, BlockResource, ChunkKey, ChunkMap};
+use smallvec::{SmallVec, smallvec};
+use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent, MaterialResource}, ecs::TransformComponent, voxel::{chunk_of_point, Chunk, CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry, VoxelCube, BlockKey}};
+use super::{BlockResource, ChunkKey, light::TorchLightChunksResource, terrain::{TerrainResource, TerrainEntry}, chunks::ChunksResource};
+use crate::ecs::light::LightRGBA;
 
 
 
 #[derive(Debug)]
 pub struct MapModelEntry {
-	pub dependencies: Vec<(IVec3, ChunkKey, KGeneration)>, // includes self (hopefully!)
+	// A model will (almost (if not full of model blocks)) always depend on itself and its negative neighbours
+	// It can also depend on any other number of chunks, so a smallvec is necessary
+	pub terrain_dependencies: SmallVec<[(IVec3, ChunkKey, KGeneration); 4]>, 
+	// A model will always depend on light from itself
+	// It might also depend on its negative neighbours
+	pub light_dependencies: ArrayVec<(IVec3, ChunkKey, KGeneration), 4>,
 	pub models: Vec<(MaterialKey, MeshKey)>, // renderable things
 	pub entity: Entity,
 	pub outdated: bool,
@@ -46,12 +54,18 @@ pub struct MapModelResource {
 	pub sender: Sender<(
 		ChunkKey, 
 		IVec3, 
-		Result<(Vec<(UVec3, u32, MaterialKey)>, Vec<(IVec3, ChunkKey, KGeneration)>), 
-		MeshingError>)>, 
+		Result<(
+			Vec<(UVec3, u32, MaterialKey)>, 
+			SmallVec<[(IVec3, ChunkKey, KGeneration); 4]>,
+		), MeshingError>,
+	)>, 
 	pub receiver: Receiver<(
 		ChunkKey, 
 		IVec3, 
-		Result<(Vec<(UVec3, u32, MaterialKey)>, Vec<(IVec3, ChunkKey, KGeneration)>), MeshingError>,
+		Result<(
+			Vec<(UVec3, u32, MaterialKey)>, 
+			SmallVec<[(IVec3, ChunkKey, KGeneration); 4]>,
+		), MeshingError>,
 	)>,
 	pub max_meshing_jobs: u8,
 	pub cur_meshing_jobs: u8,
@@ -76,10 +90,13 @@ impl MapModelResource {
 		entities: &mut EntitiesMut,
 		transforms: &mut CompMut<TransformComponent>, 
 		modelmat: &mut CompMut<ModelMatrixComponent>,
+		torchlight: &TorchLightChunksResource,
 	) {
+		let torchlight_chunks = torchlight.chunks.read();
+
 		for (key, position, r) in self.receiver.try_iter() {
 			match r {
-				Ok((quads, dependencies)) => {
+				Ok((quads, terrain_dependencies)) => {
 					debug!("Received chunk model for {}", position);
 
 					trace!("Contains {} quads", quads.len());
@@ -94,21 +111,68 @@ impl MapModelResource {
 						a
 					});
 					trace!("Contains {} materials", quads_by_key.len());
+
+					let torchlight_c = torchlight_chunks.get(key)
+						.expect("Torchlight entry not exists!");
+					
+					// let mut torchlight_cxn = None;
+
+					let mut light_dependencies = ArrayVec::new();
+					light_dependencies.push((position, key, torchlight_c.generation));
 					
 					// Construct meshes
-					let mut models = Vec::new();
+					let mut models = Vec::with_capacity(quads_by_key.len());
 					for g in quads_by_key.values() {
 						let mut positions = Vec::with_capacity(g.len() * 4);
+						let mut lights = Vec::with_capacity(g.len() * 4);
 						let mut uvs = Vec::with_capacity(g.len() * 4);
 						let mut indices = Vec::with_capacity(g.len() * 6);
 						for &(position, direction, _) in g {
 							positions.extend_from_slice(quad_positions(position, direction).as_slice());
+
+							// Find the voxel this face is facing, then get light data from it
+							// If on edge and facing negative (to neighbouring chunk)
+							let light: f32 = if position.to_array().iter().any(|&p| p == 0) && ((direction & 0b001) != 0) {
+								// if position.x == 0 {
+								// 	// get cxn 16-1, y, z
+								// 	// How do we know the key??
+								//  // Maybe deps[2]?
+								// 	let cxn = torchlight_cxn.get_or_insert_with(|| torchlight_chunks.get(key))
+								// } else if position.y == 0 {
+
+								// } else {
+
+								// }
+								1.0
+							} else {
+								let offs = match direction {
+									// Every positive face is just zero
+									0b000 => UVec3::ZERO,
+									0b001 => UVec3::X,
+									0b010 => UVec3::ZERO,
+									0b011 => UVec3::Y,
+									0b100 => UVec3::ZERO,
+									0b101 => UVec3::Z,
+									_ => unreachable!(),
+								};
+								let p = position - offs;
+								let l: LightRGBA = torchlight_c.get(p).copied().into();
+
+								if l.r != 0 {
+									error!("{p}: {}", l.r);
+								}
+
+								l.as_vec4().x
+							};
+							lights.extend_from_slice(&[light; 4]);
+							
 							uvs.extend_from_slice(quad_uvs().as_slice());
 							indices.extend_from_slice(quad_indices(direction).map(|i| i + positions.len() as u32).as_slice());
 						}
 
 						let mesh = Mesh::new(format!("Chunk {position} material {:?}", g[0].2))
 							.with_data("positions", positions.as_slice())
+							.with_data("lights", lights.as_slice())
 							.with_data("uvs", uvs.as_slice())
 							.with_vertex_count(positions.len() as u32)
 							.with_indices(indices);
@@ -126,12 +190,26 @@ impl MapModelResource {
 					modelmat.insert(entity, ModelMatrixComponent::new());
 
 					let entry = MapModelEntry {
-						dependencies, models, entity, outdated: false,
+						terrain_dependencies, light_dependencies, models, entity, outdated: false,
 					};
+
+					trace!("Insert with key {:?}", key);
 
 					// Todo: make sure it has higher generations than existing
 
-					self.chunks.insert(key, (position, false, MapModelState::Complete(entry)));
+					// Insert and (maybe) unload
+					if let Some((_, _, MapModelState::Complete(e))) = self.chunks.insert(key, (position, false, MapModelState::Complete(entry))) {
+						let entity = e.entity;
+						warn!("Remove entity {entity:?}");
+						transforms.remove(entity);
+						modelmat.remove(entity);
+						entities.remove(entity);
+						
+						for (_, key) in e.models {
+							warn!("Remove mesh {key:?}");
+							meshes.remove(key);
+						}
+					}
 				},
 				Err(e) => {
 					warn!("Modelling failed for {position} - {e}");
@@ -143,7 +221,12 @@ impl MapModelResource {
 	}
 
 	#[profiling::function]
-	pub fn start_jobs(&mut self, map: &MapResource, blocks: &BlockResource) {
+	pub fn start_jobs(
+		&mut self, 
+		chunks: &ChunksResource,
+		terrain: &TerrainResource, 
+		blocks: &BlockResource,
+	) {
 		for (key, (position, modelling, entry)) in self.chunks.iter_mut() {
 			let position = *position;
 			if self.cur_meshing_jobs >= self.max_meshing_jobs {
@@ -160,11 +243,12 @@ impl MapModelResource {
 					*modelling = true;
 					trace!("Begin modeling chunk {position}");
 					let sender = self.sender.clone();
-					let chunks = map.chunks.clone();
+					let terrain_chunks = terrain.chunks.clone();
 					let blocks = blocks.blocks.clone();
+					let chunks = chunks.clone();
 					rayon::spawn(move || {
 						let blocks = blocks.read();
-						let mesh_res = chunk_quads_simple(&blocks, &chunks, position);
+						let mesh_res = chunk_quads_simple(&blocks, &chunks, &terrain_chunks, position);
 						sender.send((key, position, mesh_res)).unwrap();
 					});
 					self.cur_meshing_jobs += 1;
@@ -201,7 +285,9 @@ impl MapMeshingComponent {
 #[profiling::function]
 pub fn map_modelling_system(
 	mut entities: EntitiesMut,
-	map: Res<MapResource>,
+	chunks: Res<ChunksResource>,
+	terrain: Res<TerrainResource>,
+	torchlight: Res<TorchLightChunksResource>,
 	mut models: ResMut<MapModelResource>,
 	loaders: Comp<MapMeshingComponent>,
 	mut transforms: CompMut<TransformComponent>,
@@ -209,8 +295,6 @@ pub fn map_modelling_system(
 	mut modelmat: CompMut<ModelMatrixComponent>,
 	blocks: Res<BlockResource>,
 ) {
-	info!("Map modeling system");
-
 	let loading_volumes = (&loaders, &transforms).iter()
 		.map(|(l, t)| l.loading_volume(*t))
 		.collect::<Vec<_>>();
@@ -220,14 +304,13 @@ pub fn map_modelling_system(
 		.collect::<Vec<_>>();
 
 	{
-		let chunks = map.chunks.read();
 		profiling::scope!("Mark");
-		for (p, k) in chunks.positions.iter() {
-			if loading_volumes.iter().any(|lv| lv.contains(*p)) {
-				if !models.chunks.contains_key(*k) {
+		let chunks_chunks = chunks.read();
+		for (k, &p) in chunks_chunks.chunks.iter() {
+			if loading_volumes.iter().any(|lv| lv.contains(p)) {
+				if !models.chunks.contains_key(k) {
 					trace!("Chunk {p} must be modeled");
-					models.chunks.insert(*k, (*p, false, MapModelState::Waiting));
-					assert!(models.chunks.contains_key(*k))
+					models.chunks.insert(k, (p, false, MapModelState::Waiting));
 				}
 			}
 		}
@@ -249,51 +332,71 @@ pub fn map_modelling_system(
 		}
 	}
 
-	models.receive_jobs(&mut meshes, &mut entities, &mut transforms, &mut modelmat);
+	models.receive_jobs(&mut meshes, &mut entities, &mut transforms, &mut modelmat, &torchlight);
 
 	{
 		profiling::scope!("Check for remesh viability");
-		let chunks = map.chunks.read();
+		let chunks_chunks = chunks.read();
+		let terrain_chunks = terrain.chunks.read();
+		let light_chunks = torchlight.chunks.read();
 		// Check for model validity
-		let mut n_outdated = 0;
-		let mut n_failed = 0;
-		let mut n_waiting = 0;
+		// let mut n_outdated = 0;
+		// let mut n_failed = 0;
+		// let mut n_waiting = 0;
 		for (_, modelling, state) in models.chunks.values_mut() {
 			// Don't check if we're already trying to fix the issue
 			if !*modelling { 
 				match state {
 					MapModelState::Complete(entry) => {
-						entry.outdated = entry.dependencies.iter().any(|(_, key, gen)| {
-							match chunks.get(*key) {
-								Some(ChunkEntry::Complete(g)) => g.generation != *gen,
+						if entry.outdated {
+							// Don't test if we already know it's bad
+							continue;
+						}
+
+						entry.outdated = entry.terrain_dependencies.iter().any(|(_, key, gen)| {
+							match terrain_chunks.get(*key) {
+								Some(TerrainEntry::Complete(g)) => g.generation != *gen,
 								_ => false,
 							}
 						});
-						if entry.outdated {
-							n_outdated += 1;
-						}
+						entry.outdated |= entry.light_dependencies.iter().any(|(p, key, gen)| {
+							match light_chunks.get(*key) {
+								Some(c) => {
+									let g = c.generation != *gen;
+									if g {
+										warn!("{p}: {:?} != {:?}", c.generation, gen);
+									}
+									g
+								},
+								_ => false,
+							}
+						});
+						
+						// if entry.outdated {
+						// 	n_outdated += 1;
+						// }
 					},
 					MapModelState::Failed(dep) => {
-						n_failed += 1;
-						match dep {
+						// n_failed += 1;
+						match *dep {
 							MeshingError::ChunkUnloaded(pos) => {
-								if let Some(ChunkEntry::Complete(_)) = chunks.key(pos).and_then(|k| chunks.get(k)) {
+								if let Some(TerrainEntry::Complete(_)) = chunks_chunks.get_position(pos).and_then(|k| terrain_chunks.get(k)) {
 									*state = MapModelState::Waiting;
-									n_waiting += 1;
+									// n_waiting += 1;
 								}
 							},
 						}
 					},
 					MapModelState::Waiting => {
-						n_waiting += 1;
+						// n_waiting += 1;
 					},
 				}
 			}		
 		}
-		debug!("{} outdated, {} failed, {} retry", n_outdated, n_failed, n_waiting);
+		// debug!("{} outdated, {} failed, {} retry", n_outdated, n_failed, n_waiting);
 	}
 
-	models.start_jobs(&map, &blocks);
+	models.start_jobs(&chunks, &terrain, &blocks);
 }
 
 
@@ -306,24 +409,29 @@ pub enum MeshingError {
 
 fn chunk_quads_simple(
 	blocks: &BlockManager,
-	chunks: &Arc<RwLock<ChunkMap>>,
+	chunks: &ChunksResource, 
+	terrain_chunks: &Arc<RwLock<SecondaryMap<ChunkKey, TerrainEntry>>>,
 	position: IVec3,
 ) -> Result<(
+	// Direction - 000 xp 001 xn 010 yp 011 100 zp 101 zn
 	Vec<(UVec3, u32, MaterialKey)>, 
-	Vec<(IVec3, ChunkKey, KGeneration)>, 
+	SmallVec<[(IVec3, ChunkKey, KGeneration); 4]>,
 ), MeshingError> {
-	fn get_chunk(chunks: &Arc<RwLock<ChunkMap>>, pos: IVec3) -> Result<(ChunkKey, Arc<Chunk>), MeshingError> {
-		let chunks = chunks.read();
-		let key = chunks.key(&pos).ok_or(MeshingError::ChunkUnloaded(pos))?;
-		let chunk = chunks.get(key).ok_or(MeshingError::ChunkUnloaded(pos))?
-			.complete().ok_or(MeshingError::ChunkUnloaded(pos))?
+	fn get_chunk(
+		chunks: &ChunksResource, 
+		terrain_chunks: &Arc<RwLock<SecondaryMap<ChunkKey, TerrainEntry>>>,
+		pos: IVec3,
+	) -> Result<(ChunkKey, Arc<Chunk<BlockKey>>), MeshingError> {
+		let key = chunks.read().get_position(pos).ok_or(MeshingError::ChunkUnloaded(pos))?;
+		let chunk = terrain_chunks.read().get(key).ok_or(MeshingError::ChunkUnloaded(pos))?
+			.complete_ref().ok_or(MeshingError::ChunkUnloaded(pos))?
 			.clone();
 		Ok((key, chunk))
 	}
 
-	let (chunk_key, chunk) = get_chunk(chunks, position)?;
+	let (chunk_key, chunk) = get_chunk(chunks, terrain_chunks, position)?;
 	
-	let mut deps = vec![(position, chunk_key, chunk.generation)];
+	let mut deps = smallvec![(position, chunk_key, chunk.generation)];
 	let mut cxn = None;
 	let mut cyn = None;
 	let mut czn = None;
@@ -375,7 +483,7 @@ fn chunk_quads_simple(
 					// Access the adjacent chunk
 					if cxn.is_none() {
 						let pxn = position - IVec3::X;
-						let (k, e) = get_chunk(chunks, pxn)?;
+						let (k, e) = get_chunk(chunks, terrain_chunks, pxn)?;
 						deps.push((pxn, k, e.generation));
 						cxn = Some(e);
 					}
@@ -410,7 +518,7 @@ fn chunk_quads_simple(
 				let yn = if y == 0 {
 					if cyn.is_none() {
 						let pyn = position - IVec3::Y;
-						let (k, e) = get_chunk(chunks, pyn)?;
+						let (k, e) = get_chunk(chunks, terrain_chunks, pyn)?;
 						deps.push((pyn, k, e.generation));
 						cyn = Some(e);
 					}
@@ -445,7 +553,7 @@ fn chunk_quads_simple(
 				let zn = if z == 0 {
 					if czn.is_none() {
 						let pzn = position - IVec3::Z;
-						let (k, e) = get_chunk(chunks, pzn)?;
+						let (k, e) = get_chunk(chunks, terrain_chunks, pzn)?;
 						deps.push((pzn, k, e.generation));
 						czn = Some(e);
 					}
@@ -483,39 +591,39 @@ fn chunk_quads_simple(
 }
 
 
-fn quads_greedy(
-	blocks: &BlockManager,
-	chunk: &Chunk,
-) -> Vec<(IVec3, IVec3, bool, MaterialKey)> {
-	let mut quads = Vec::new();
-	for pass in 0..3 {
-		for mut x in 0..CHUNK_SIZE {
-			for mut y in 0..CHUNK_SIZE {
-				for mut z in 0..CHUNK_SIZE {
-					// Re-order to fit the pass
-					match pass {
-						0 => {},
-						1 => {
-							let b = z;
-							z = y;
-							y = x;
-							x = b;
-						},
-						2 => {
-							let b = y;
-							z = x;
-							y = z;
-							x = b;
-						},
-						_ => unreachable!(),
-					}
-					println!("get {} {} {}", x, y, z);
-				}
-			}
-		}
-	}
-	quads
-}
+// fn quads_greedy(
+// 	blocks: &BlockManager,
+// 	chunk: &Chunk,
+// ) -> Vec<(IVec3, IVec3, bool, MaterialKey)> {
+// 	let mut quads = Vec::new();
+// 	for pass in 0..3 {
+// 		for mut x in 0..CHUNK_SIZE {
+// 			for mut y in 0..CHUNK_SIZE {
+// 				for mut z in 0..CHUNK_SIZE {
+// 					// Re-order to fit the pass
+// 					match pass {
+// 						0 => {},
+// 						1 => {
+// 							let b = z;
+// 							z = y;
+// 							y = x;
+// 							x = b;
+// 						},
+// 						2 => {
+// 							let b = y;
+// 							z = x;
+// 							y = z;
+// 							x = b;
+// 						},
+// 						_ => unreachable!(),
+// 					}
+// 					println!("get {} {} {}", x, y, z);
+// 				}
+// 			}
+// 		}
+// 	}
+// 	quads
+// }
 
 
 // u=x
@@ -575,13 +683,13 @@ fn quad_indices(direction: u32) -> [u32; 6] {
 pub fn map_model_rendering_system(
 	(
 		input,
-		context,
+		_context,
 	): (
 		&mut RenderInput<Entity>,
 		RenderContextKey,
 	), 
 	models: Res<MapModelResource>,
-	materials: Res<MaterialResource>,
+	_materials: Res<MaterialResource>,
 ) {
 	let target = AbstractRenderTarget::new()
 		.with_colour(RRID::context("albedo"), None)

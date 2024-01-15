@@ -1,7 +1,8 @@
 use eks::prelude::*;
 use glam::{Vec3, Quat};
 use crate::{voxel::BlockKey, ecs::TransformComponent, rays::{FVTIterator, FVTIteratorItem}, game::{MeshResource, ModelMatrixComponent}};
-use super::MapResource;
+
+use super::{terrain::TerrainResource, chunks::ChunksResource};
 
 
 
@@ -14,14 +15,15 @@ pub struct VoxelLookingComponent {
 pub fn voxel_looking_system(
 	mut lookers: CompMut<VoxelLookingComponent>,
 	transforms: Comp<TransformComponent>,
-	map: Res<MapResource>,
+	terrain: Res<TerrainResource>,
+	cr: Res<ChunksResource>,
 ) {
 	for (looker, transform) in (&mut lookers, &transforms).iter() {
 		looker.result = FVTIterator::new(
 			transform.translation, 
 			transform.rotation.mul_vec3(Vec3::Z), 
 			0.0, 100.0, 1.0,
-		).find_map(|i| map.get_voxel(i.voxel).and_then(|v| Some((v, i))));
+		).find_map(|i| terrain.get_voxel(&cr, i.voxel).and_then(|v| Some((v, i))));
 	}
 }
 
@@ -35,7 +37,7 @@ pub struct VoxelLookingMarkerComponent {
 pub fn voxel_looking_marker_system(
 	lookers: Comp<VoxelLookingComponent>,
 	mut markers: CompMut<VoxelLookingMarkerComponent>,
-	mut meshes: ResMut<MeshResource>,
+	mut _meshes: ResMut<MeshResource>,
 	mut transforms: CompMut<TransformComponent>,
 	mut mmc: CompMut<ModelMatrixComponent>,
 	mut entities: EntitiesMut,

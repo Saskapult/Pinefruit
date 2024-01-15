@@ -1,8 +1,8 @@
 use std::{time::{Instant, Duration}, sync::Arc};
 
-use crate::{ecs::{TransformComponent, ControlComponent, ControlMap, ControlKey, KeyModifiers, KeyCombo, ChunkEntry}, rays::FVTIterator, voxel::{VoxelModification, chunk_of_voxel, voxel_relative_to_chunk}, input::KeyKey};
+use crate::{ecs::{TransformComponent, ControlComponent, ControlMap, ControlKey, KeyModifiers, KeyCombo}, rays::FVTIterator, voxel::VoxelModification, input::KeyKey};
 
-use super::{MapResource, BlockResource};
+use super::{BlockResource, terrain::{TerrainResource, TerrainEntry}, chunks::ChunksResource};
 use arrayvec::ArrayVec;
 use eks::prelude::*;
 use glam::Vec3;
@@ -58,7 +58,8 @@ impl VoxelModifierComponent {
 
 #[profiling::function]
 pub fn map_placement_system(
-	map: Res<MapResource>,
+	cr: Res<ChunksResource>,
+	terrain: Res<TerrainResource>,
 	transforms: Comp<TransformComponent>,
 	controls: Comp<ControlComponent>,
 	mut modifiers: CompMut<VoxelModifierComponent>,
@@ -74,12 +75,12 @@ pub fn map_placement_system(
 				transform.translation, 
 				transform.rotation.mul_vec3(Vec3::Z), 
 				0.0, 10.0, 1.0,
-			).find(|r| map.get_voxel(r.voxel).is_some());
+			).find(|r| terrain.get_voxel(&cr, r.voxel).is_some());
 
 			if let Some(v) = v {
 				let position = v.voxel + v.normal;
 				debug!("Place voxel at {position}");
-				map.modify_voxel(VoxelModification {
+				terrain.modify_voxel(VoxelModification {
 					position,
 					set_to: Some(blocks.read().key_by_name(&"grass".to_string()).unwrap()),
 					priority: 0,
@@ -95,11 +96,11 @@ pub fn map_placement_system(
 				transform.translation, 
 				transform.rotation.mul_vec3(Vec3::Z), 
 				0.0, 10.0, 1.0,
-			).find(|r| map.get_voxel(r.voxel).is_some());
+			).find(|r| terrain.get_voxel(&cr, r.voxel).is_some());
 
 			if let Some(v) = v {
 				debug!("Remove voxel at {}", v.voxel);
-				map.modify_voxel(VoxelModification {
+				terrain.modify_voxel(VoxelModification {
 					position: v.voxel,
 					set_to: None,
 					priority: 0,
@@ -113,13 +114,15 @@ pub fn map_placement_system(
 /// Applies queued voxel modifications. 
 #[profiling::function]
 pub fn map_modification_system(
-	map: ResMut<MapResource>,
+	chunks: Res<ChunksResource>, 
+	terrain: ResMut<TerrainResource>,
 ) {
-	let mut chunks = map.chunks.write();
-	let mut mods = map.block_mods.write();
+	let chunks = chunks.read();
+	let mut terrain_chunks = terrain.chunks.write();
+	let mut mods = terrain.block_mods.write();
 	
 	mods.retain(|c, modifications| {
-		if let Some(ChunkEntry::Complete(chunk)) = chunks.key(c).and_then(|k| chunks.get_mut(k)) {
+		if let Some(TerrainEntry::Complete(chunk)) = chunks.get_position(*c).and_then(|k| terrain_chunks.get_mut(k)) {
 			let inner = Arc::make_mut(chunk);
 			for modification in modifications {
 				if let Some(b) = modification.set_to {

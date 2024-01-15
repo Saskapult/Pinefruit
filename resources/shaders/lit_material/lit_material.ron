@@ -1,14 +1,14 @@
 (
-    name: "testing vertex shader",
+    name: "lit material shader",
     base: Polygonal((
 		vertex: (
 			language: Glsl,
-			path: "testing_vertex.vert",
+			path: "lit_material.vert",
 			entry: "main",
 		),
 		fragment: Some((
 			language: Glsl,
-			path: "texture.frag",
+			path: "lit_material.frag",
 			entry: "main",
 		)),
 		polygon_input: Mesh([
@@ -19,13 +19,19 @@
 				default: None,
 			),
 			(
+				name: "light",
+				source: "lights",
+				fields: [Float32],
+				default: None,
+			),
+			(
 				name: "uvs",
 				source: "uvs",
 				fields: [Float32x2],
 				default: None,
 			),
 		]),
-		polygon_mode: Fill,
+				polygon_mode: Fill,
 		instance_attributes: [
 			(
 				name: "model matrix",
@@ -37,15 +43,20 @@
 		attachments: [
 			(
 				source: "albedo",
-				format: Rgba8UnormSrgb,
+				format: Rgba8Unorm,
 				blend_colour: Replace,
 				blend_alpha: Replace,
 			),
 		],
-		depth: None,
+		depth: Some((
+			source: "depth",
+			format: Depth32Float,
+			write: true,
+			comparison: Less,
+		)),
 		multisample_count: 1,
 		topology: TriangleList,
-		face_culling: Back,
+		face_culling: None, //Back,
 		unclipped_depth: false,
 		conservative: false,
 	)),
@@ -54,8 +65,8 @@
             0: UniformBuffer("camera", [Vertex]),
 		},
 		1: {
-            0: Texture("t", Rgba8Unorm, D2, false, Float, [Fragment]),
-			1: Sampler("idk", Repeat, Linear, Linear, Linear, 0.0, 32.0, [Fragment]),
+            0: Texture("texture", Rgba8Unorm, D2, false, Float, [Fragment]),
+			1: Sampler("sampler", Repeat, Nearest, Nearest, Nearest, 0.0, 32.0, [Fragment]),
 		},
 	},
 	push_constant_range: [],

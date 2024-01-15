@@ -15,8 +15,8 @@ use wgpu;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Instant, Duration};
+use crate::ecs::terrain::TerrainLoadingResource;
 use crate::ecs::{TransformComponent, SSAOComponent, MovementComponent, CameraComponent};
-use crate::ecs::loading::ChunkLoadingResource;
 use crate::ecs::octree::GPUChunksResource;
 use crate::game::{Game, ContextResource, GameStatus};
 use crate::gui::{GameWidget, MessageWidget, RenderProfilingWidget, SplineWidget, MapLoadingWidget, SSAOWidget};
@@ -283,7 +283,7 @@ impl GameWindow {
 					ui.label(format!("GPU chunks: {}kb", g as f32 / 1000.0));
 
 					// Shows what chunks are being loaded
-					let loading = game.world.borrow::<Res<ChunkLoadingResource>>();
+					let loading = game.world.borrow::<Res<TerrainLoadingResource>>();
 					MapLoadingWidget::display(ui, &loading);
 				});
 			});

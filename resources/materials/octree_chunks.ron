@@ -1,6 +1,6 @@
 (
 	name: "octree chunks material",
-	shader: "../shaders/octree_chunks.ron",
+	shader: "../shaders/octree_chunks/octree_chunks.ron",
 	mappings: {
 		"albedo": Context("albedo"),
 		"camera": Context("camera"),

@@ -69,4 +69,6 @@ profiling = { version = "1.0.10", features = ["profile-with-puffin"] }
 puffin_egui = "0.22.0"
 simdnoise = "3.1.6"
 rustc-hash = "1.1.0"
+smallvec = "1.11.2"
+variantly = "0.4.0"
 

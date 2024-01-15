@@ -3,7 +3,7 @@
     base: Polygonal((
 		vertex: (
 			language: Glsl,
-			path: "fullquad.vert",
+			path: "../fullquad.vert",
 			entry: "main",
 		),
 		fragment: Some((

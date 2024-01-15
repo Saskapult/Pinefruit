@@ -1,6 +1,6 @@
 (
 	name: "ssao generate material",
-	shader: "../shaders/ssao_generate.ron",
+	shader: "../shaders/ssao/ssao_generate.ron",
 	mappings: {
 		"camera": Context("camera"),
 		"settings": Context("ssao settings"),

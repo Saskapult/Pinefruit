@@ -6,7 +6,7 @@ use krender::{RenderContextKey, prelude::RenderContext};
 use eks::prelude::*;
 use wgpu_profiler::GpuTimerScopeResult;
 use std::sync::mpsc::sync_channel;
-use crate::{window::{WindowPropertiesAndSettings, GraphicsHandle}, game::{Game, ContextResource, TextureResource, OutputResolutionComponent}, input::{KeyDeduplicator, InputEvent}, ecs::{octree::{GPUChunkViewer, GPUChunkLoadingComponent}, loading::{ChunkLoadingComponent, ChunkLoadingResource}, model::MapMeshingComponent, modification::VoxelModifierComponent}, util::RingDataHolder};
+use crate::{window::{WindowPropertiesAndSettings, GraphicsHandle}, game::{Game, ContextResource, TextureResource, OutputResolutionComponent}, input::{KeyDeduplicator, InputEvent}, ecs::{octree::{GPUChunkViewer, GPUChunkLoadingComponent}, model::MapMeshingComponent, modification::VoxelModifierComponent, light::TorchLightModifierComponent, chunks::ChunkLoadingComponent, terrain::TerrainLoadingResource}, util::RingDataHolder};
 use crate::ecs::*;
 
 
@@ -88,6 +88,7 @@ impl GameWidget {
 			let mut control_map = game.world.borrow::<ResMut<ControlMap>>();
 			let movement = MovementComponent::new(&mut control_map);
 			let modifier_comp = VoxelModifierComponent::new(&mut control_map);
+			let tl_mod_comp = TorchLightModifierComponent::new(&mut control_map);
 			drop(control_map);
 
 			let entity_id = game.world.spawn()
@@ -96,11 +97,12 @@ impl GameWidget {
 				.with(ControlComponent::new())
 				.with(CameraComponent::new())
 				.with(movement)
-				.with(ChunkLoadingComponent::new(8))
+				.with(ChunkLoadingComponent::new(7))
 				.with(GPUChunkLoadingComponent::new(4, 2))
 				.with(GPUChunkViewer::new(3))
-				.with(MapMeshingComponent::new(7, 2))
+				.with(MapMeshingComponent::new(5, 2))
 				.with(modifier_comp)
+				.with(tl_mod_comp)
 				.with(SSAOComponent::default())
 				.finish();
 
@@ -207,7 +209,7 @@ pub struct MapLoadingWidget;
 impl MapLoadingWidget {
 	pub fn display(
 		ui: &mut egui::Ui,
-		loading: &ChunkLoadingResource,
+		loading: &TerrainLoadingResource,
 	) {
 		ui.collapsing("Chunk Loading", |ui| {
 			ui.label(format!("{} / {} jobs", loading.cur_generation_jobs, loading.max_generation_jobs));

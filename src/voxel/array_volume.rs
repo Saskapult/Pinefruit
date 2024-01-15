@@ -2,19 +2,23 @@ use glam::UVec3;
 
 
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct ArrayVolume<V> {
+#[derive(Clone, Debug)]
+pub struct ArrayVolume<V: std::fmt::Debug> {
 	pub size: UVec3,
 	contents: Option<Vec<Option<V>>>,
 	contents_count: usize,
 }
-impl<V: PartialEq + Eq + Clone> ArrayVolume<V> {
+impl<V: Clone + std::fmt::Debug> ArrayVolume<V> {
 	pub fn new(size: UVec3) -> Self {
 		Self { 
 			size, 
 			contents: None, 
 			contents_count: 0,
 		}
+	}
+
+	pub fn is_empty(&self) -> bool {
+		self.contents.is_none()
 	}
 
 	pub fn in_bounds(&self, position: UVec3) -> bool {
@@ -52,6 +56,13 @@ impl<V: PartialEq + Eq + Clone> ArrayVolume<V> {
 		self.contents_count += 1;
 	}
 
+	pub fn fill_with(&mut self, data: V) {
+		let c = self.contents.get_or_insert_with(|| Self::make_data(self.size));
+		c.clear();
+		let len = self.size.to_array().iter().copied().reduce(|a, v| a * v).unwrap() as usize;
+		c.resize(len, Some(data));
+	}
+
 	pub fn remove(&mut self, position: UVec3) {
 		let i = self.index_of(position).unwrap();
 		if let Some(c) = self.contents.as_mut() {
@@ -73,7 +84,8 @@ impl<V: PartialEq + Eq + Clone> ArrayVolume<V> {
 			0
 		}
 	}
-
+}
+impl<V: Clone + std::fmt::Debug + PartialEq + Eq> ArrayVolume<V> {
 	// Tip: you can compress the result with lz4
 	pub fn run_length_encode(&self) -> Vec<(Option<V>, u32)> {
 		let mut runs = Vec::new();
