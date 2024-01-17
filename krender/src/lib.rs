@@ -131,7 +131,7 @@ pub fn prepare_for_render<T: EntityIdentifier>(
 		textures, 
 		buffers, 
 		bind_groups, 
-	);
+	).unwrap();
 
 
 	info!("Bind textures");

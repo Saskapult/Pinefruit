@@ -31,7 +31,7 @@
 				default: None,
 			),
 		]),
-				polygon_mode: Fill,
+		polygon_mode: Fill,
 		instance_attributes: [
 			(
 				name: "model matrix",
@@ -63,6 +63,7 @@
 	bind_groups: {
 		0: {
             0: UniformBuffer("camera", [Vertex]),
+			1: UniformBuffer("time", [Fragment]),
 		},
 		1: {
             0: Texture("texture", Rgba8Unorm, D2, false, Float, [Fragment]),

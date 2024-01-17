@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use crate::{TextureKey, rendercontext::RenderContext, EntityIdentifier, texture::TextureManager, buffer::{BufferManager, Buffer}, BufferKey};
+use crate::{TextureKey, rendercontext::RenderContext, EntityIdentifier, texture::TextureManager, buffer::BufferManager, BufferKey};
 
 
 
@@ -70,10 +70,10 @@ impl AbstractRenderTarget {
 		context: &RenderContext<T>,
 		textures: &TextureManager,
 	) -> SpecificRenderTarget {
-		let map_thing = |t: &RRID| match t {
-			RRID::Global(id) => textures.key_by_name(id),
-			RRID::Context(id) => context.texture(id),
-		};
+		// let map_thing = |t: &RRID| match t {
+		// 	RRID::Global(id) => textures.key_by_name(id),
+		// 	RRID::Context(id) => context.texture(id),
+		// };
 
 		let colour_attachments = self.colour_attachments.iter()
 			.map(|(t, r)| {

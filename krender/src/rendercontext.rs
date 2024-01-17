@@ -83,12 +83,42 @@ impl<T: EntityIdentifier> RenderContext<T> {
 		bind_groups: &mut BindGroupManager,
 	) -> Result<(), MaterialError> {
 		info!("Binding materials for render context '{}'", self.name);
+		
+		let names = materials.materials.values()
+			.map(|e| &e.specification.name)
+			.collect::<Vec<_>>();
+		info!("{:?}", names);
+
 		for (material_key, material) in materials.materials.iter() {
+			error!("{}", material.specification.name);
+			if let Some(binding) = self.material_bindings.get(material_key) {
+				if binding.dirty.load(Ordering::Relaxed) {
+					error!("Is dirty");
+				} else {
+					error!("Is clean");
+				}
+			} else {
+				error!("Has no entry");
+			}
+		}
+
+		for (material_key, material) in materials.materials.iter() {
+			
+			error!("{}", material.specification.name);
+			if let Some(binding) = self.material_bindings.get(material_key) {
+				if binding.dirty.load(Ordering::Relaxed) {
+					error!("Is dirty");
+				} else {
+					error!("Is clean");
+				}
+			} else {
+				error!("Has no entry");
+			}
+
 			// If dirty or DNE
-			if match self.material_bindings.get(material_key) {
-				Some(binding) => binding.dirty.load(Ordering::Relaxed),
-				None => true,
-			} {
+			if self.material_bindings.get(material_key)
+				.and_then(|binding| Some(binding.dirty.load(Ordering::Relaxed)))
+				.unwrap_or(true) {
 				// Remove old usages if old binding exists
 				if let Some(binding) = self.material_bindings.remove(material_key) {
 					debug!("(Re)Binding material '{}'", material.specification.name);
@@ -204,7 +234,7 @@ impl<T: EntityIdentifier> RenderContext<T> {
 								trace!("Adding uniform usages to buffer {:?} ({:?})", data, key);
 								buffer_usages.push((key, wgpu::BufferUsages::STORAGE));
 								BindGroupEntryContentDescriptor::Buffer(key)
-							}
+							},
 							_ => todo!(),
 						};
 						binding_config[j as usize] = Some(content);
@@ -277,6 +307,4 @@ impl<T: EntityIdentifier> RenderContextManager<T> {
 		}
 		Ok(())
 	}
-
-
 }

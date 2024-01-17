@@ -7,7 +7,8 @@ use winit::event_loop::*;
 use std::ops::{Deref, DerefMut};
 use std::time::{Instant, Duration};
 use std::sync::Arc;
-use crate::ecs::*;
+use crate::ecs::{ControlMap, BlockResource, TransformComponent, ModelComponent, raw_control_system, movement_system, context_albedo_system, context_camera_system, ssao_system};
+use crate::ecs::time::{time_buffer_system, TimeResource};
 use crate::ecs::chunks::{ChunksResource, chunk_loading_system};
 use crate::ecs::light::{TorchLightChunksResource, torchlight_chunk_init_system, torchlight_debug_place_system, torchlight_update_system};
 use crate::ecs::model::{map_modelling_system, map_model_rendering_system, MapModelResource};
@@ -214,6 +215,8 @@ impl Game {
 		self.world.insert_resource(TerrainResource::default());
 		self.world.insert_resource(TorchLightChunksResource::default());
 
+		self.world.insert_resource(TimeResource::new());
+
 		self.world.insert_resource(MapModelResource::new(16));
 
 		self.world.insert_resource({
@@ -343,6 +346,8 @@ impl Game {
 
 			self.world.run(block_colours_system);
 		}
+
+		self.world.run(time_buffer_system);
 
 		// Retain this?
 		let mut input = RenderInput::new();

@@ -1,6 +1,6 @@
-use std::{path::{PathBuf, Path}, collections::HashMap, sync::atomic::{AtomicBool, Ordering}, ffi::OsStr};
+use std::{path::{PathBuf, Path}, collections::HashMap, ffi::OsStr};
 use serde::{Serialize, Deserialize};
-use slotmap::{SlotMap, SecondaryMap, SparseSecondaryMap};
+use slotmap::{SlotMap, SparseSecondaryMap};
 use crate::{ShaderKey, BindGroupKey, shader::{ShaderManager, ShaderEntry, BindGroupEntry}, texture::{TextureManager, Texture}, buffer::BufferManager, MaterialKey, TextureKey, BufferKey, rendertarget::AbstractRenderTarget, RenderContextKey};
 
 
@@ -115,7 +115,6 @@ pub struct MaterialEntry {
 
 	// If it's some, then the material is in the shaders dependents list
 	pub shader_key: Option<ShaderKey>,
-	bindings: SecondaryMap<RenderContextKey, (AtomicBool, MaterialBinding)>,
 }
 impl MaterialEntry {
 	fn shader_entry<'a>(&mut self, shaders: &'a ShaderManager) -> Result<&'a ShaderEntry, MaterialError> {
@@ -196,7 +195,6 @@ impl MaterialManager {
 			path: None,
 			key,
 			shader_key: None,
-			bindings: SecondaryMap::new(),
 		});
 		self.materials_by_name.insert(name, k);
 		k
@@ -218,7 +216,6 @@ impl MaterialManager {
 			path: Some(path.clone()),
 			key,
 			shader_key: None,
-			bindings: SecondaryMap::new(),
 		});
 		self.materials_by_name.insert(name, k);
 		self.materials_by_path.insert(path, k);
@@ -252,15 +249,16 @@ impl MaterialManager {
 	}
 
 	pub(crate) fn mark_dirty(&self, key: MaterialKey, context: RenderContextKey) {
-		if let Some(material) = self.materials.get(key) {
-			if let Some((d, _)) = material.bindings.get(context) {
-				d.store(true, Ordering::Relaxed);
-			} else {
-				warn!("Tried to mark a nonexistent context binding as dirty");
-			}
-		} else {
-			warn!("Tried to mark a material as dirty");
-		}
+		// if let Some(material) = self.materials.get(key) {
+		// 	if let Some((d, _)) = material.bindings.get(context) {
+		// 		d.store(true, Ordering::Relaxed);
+		// 	} else {
+		// 		warn!("Tried to mark a nonexistent context binding as dirty");
+		// 	}
+		// } else {
+		// 	warn!("Tried to mark a material as dirty");
+		// }
+		todo!()
 	}
 
 	/// Register shaders found in the material specification. 

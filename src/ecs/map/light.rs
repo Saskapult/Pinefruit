@@ -5,7 +5,7 @@ use eks::prelude::*;
 use glam::{UVec3, Vec4, IVec3, Vec3};
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
-use crate::{voxel::{CHUNK_SIZE, ArrayVolume, chunk_of_voxel, voxel_relative_to_chunk, chunk_of_point}, util::KGeneration, ecs::{ControlKey, ControlMap, KeyCombo, KeyModifiers, TransformComponent, ControlComponent}, input::KeyKey, rays::FVTIterator};
+use crate::{voxel::{CHUNK_SIZE, ArrayVolume, chunk_of_voxel, voxel_relative_to_chunk, chunk_of_point}, util::KGeneration, ecs::{ControlKey, ControlMap, KeyCombo, KeyModifiers, TransformComponent, ControlComponent}, input::KeyKey, rays::FVTIterator, game::BufferResource};
 use super::{model::MapModelResource, chunks::{ChunkKey, ChunksResource}, terrain::TerrainResource};
 
 
@@ -395,4 +395,18 @@ pub fn torchlight_debug_place_system(
 			}
 		}
 	}
+}
+
+
+// In the future, this should nto be derived directly form time. 
+pub fn daylight_buffer_system(
+	buffers: ResMut<BufferResource>,
+) {
+	struct DaylightBuffer {
+		// Angle of the light (radians)
+		pub angle: f32,
+		// Brightness of the light ([0, 1])
+		pub brightness: f32,
+	}
+
 }

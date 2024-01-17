@@ -111,16 +111,17 @@ impl<T: EntityIdentifier> RenderInputStage<T> {
 
 			// Extract shader and bind groups from material
 			let mut mapped_items = {
+				trace!("Mapping render items");
 				profiling::scope!("map");
 				items.iter()
 					.map(|&(mtl, mesh, e)| {
 						// (shader, bgs, mesh, entity)
 						let entry = materials.get(mtl)
-							.expect("Materials does not exist!");
+							.expect(&*format!("Material key {mtl:?} is not valid!"));
 						let shader = entry.shader_key
-							.expect("Material has no shader key!");
+							.expect(&*format!("Material '{}' has no shader key!", entry.specification.name));
 						let binding = context.material_bindings.get(mtl)
-							.expect("Material is not bound for context!");
+							.expect(&*format!("Material '{}' is not bound for this context!", entry.specification.name));
 						(shader, binding.bind_groups, mesh, e)
 					})
 					.collect::<Vec<_>>()

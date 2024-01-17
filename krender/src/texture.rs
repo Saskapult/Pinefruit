@@ -1,7 +1,6 @@
 use std::{path::{PathBuf, Path}, collections::{HashMap, HashSet}, num::NonZeroU32, sync::atomic::{AtomicBool, Ordering}};
 use image::DynamicImage;
 use parking_lot::RwLock;
-use ron::ser::PrettyConfig;
 use serde::{Serialize, Deserialize};
 use slotmap::SlotMap;
 use crate::{TextureKey, MaterialKey, BindGroupKey, prelude::BindGroupManager, RenderContextKey, util::read_ron};
