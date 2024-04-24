@@ -1,9 +1,6 @@
 //! Krender is here becuse my build times were awful.
 //! It is extensible I hope.
 
-#![feature(return_position_impl_trait_in_trait)]
-#![feature(let_chains)]
-
 use std::{collections::{BTreeMap, HashMap}, hash::Hash};
 use bindgroup::BindGroupManager;
 use material::MaterialManager;

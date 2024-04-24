@@ -301,10 +301,12 @@ impl Buffer {
 			mapped_at_creation: false,
 		});
 
-		if self.persistent && let Some(_) = self.binding.as_ref() {
-			warn!("Copy buffer contents to new binding");
-			println!("old usages {:?}", self.binding.as_ref().unwrap().usage());
-			todo!("Oh no that needs a command encoder!");
+		if self.persistent {
+			if let Some(_) = self.binding.as_ref() {
+				warn!("Copy buffer contents to new binding");
+				println!("old usages {:?}", self.binding.as_ref().unwrap().usage());
+				todo!("Oh no that needs a command encoder!");
+			}
 		}
 
 		self.dirty.store(false, Ordering::Relaxed);

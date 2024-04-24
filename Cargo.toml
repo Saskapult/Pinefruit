@@ -1,3 +1,5 @@
+# cargo-features = ["codegen-backend"] # Cranelift back-end
+
 [package]
 name = "kkraft"
 version = "0.1.0"
@@ -5,12 +7,15 @@ authors = ["Saskapult <“kieransmith@gmail.com”>"]
 edition = "2021"
 resolver = "2"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+#
+# [build]
+# rustflags = ["-Z", "threads=8"] # Parallel front-end
 
 [profile.dev.package."*"]
 opt-level = 2
 
 [profile.dev]
+# codegen-backend = "cranelift" # Cranelift back-end
 debug = 1
 
 # Rust analyzer does not like it when I remove this

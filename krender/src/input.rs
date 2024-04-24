@@ -178,11 +178,12 @@ impl<T: EntityIdentifier> RenderInputStage<T> {
 					let mut buffer_data = Vec::with_capacity(r.clone().count() * attributes_len);
 					for &(_, _, _, e) in &mapped_items[r.clone()] {
 						for (attribute, storage) in storages.iter() {
-							let data = if storage.is_some() && let Some(s) = match storage.as_ref().unwrap() {
+							let d = match storage.as_ref().unwrap() {
 								FetchedInstanceAttributeSource::Component(storage) => storage.get_component(e),
 								FetchedInstanceAttributeSource::Resource(r) => Some(*r)
-							} {
-								s
+							};
+							let data = if storage.is_some() && d.is_some() {
+								d.unwrap()
 							} else if let Some(d) = attribute.default.as_ref() {
 								d.as_slice()
 							} else {
