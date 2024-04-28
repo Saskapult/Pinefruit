@@ -4,7 +4,7 @@ use glam::{Vec3, Mat4, Vec4, Vec2};
 use krender::{prelude::*, MeshKey, MaterialKey, TextureKey, BufferKey};
 use ekstensions::prelude::*;
 use rand::Rng;
-use crate::game::{BufferResource, TextureResource, QueueResource, MaterialResource, OutputResolutionComponent};
+use crate::game::{BufferResource, TextureResource, MaterialResource, OutputResolutionComponent};
 use super::TransformComponent;
 
 
@@ -73,12 +73,12 @@ pub fn context_camera_system(
 		view_projection: Mat4,
 	}
 
-	let opengl_wgpu_matrix = Mat4 {
-		x_axis: Vec4::new(1.0, 0.0, 0.0, 0.0),
-		y_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
-		z_axis: Vec4::new(0.0, 0.0, 0.5, 0.5),
-		w_axis: Vec4::new(0.0, 0.0, 0.0, 1.0),
-	};
+	// let opengl_wgpu_matrix = Mat4 {
+	// 	x_axis: Vec4::new(1.0, 0.0, 0.0, 0.0),
+	// 	y_axis: Vec4::new(0.0, 1.0, 0.0, 0.0),
+	// 	z_axis: Vec4::new(0.0, 0.0, 0.5, 0.5),
+	// 	w_axis: Vec4::new(0.0, 0.0, 0.0, 1.0),
+	// };
 
 	if let Some(entity) = context.entity {
 		if !cameras.contains(entity) {
@@ -270,7 +270,6 @@ pub fn ssao_system(
 		&mut RenderContext<Entity>,
 		&mut RenderInput<Entity>,
 	),
-	queue: Res<QueueResource>,
 	mut buffers: ResMut<BufferResource>,
 	mut textures: ResMut<TextureResource>,
 	mut ssaos: CompMut<SSAOComponent>,

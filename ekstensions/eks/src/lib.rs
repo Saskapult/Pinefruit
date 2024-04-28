@@ -82,16 +82,6 @@ impl<R: Resource> Storage for Option<R> {
 }
 
 
-
-// Once rust has specialization, we can use this trait in a specialization
-// of UntypedSparseSet and UntypedResource in order to extract functions
-// for snapping
-// Progress on this feature is infuriatingly slow 
-// I am limited by the technology of my time... 
-//
-// pub trait Snappable<'a>: Serialize + Deserialize<'a> {}
-
-
 #[derive(thiserror::Error, Debug)]
 pub enum BorrowError {
 	#[error("Storage `{0}` does not exist")]
@@ -122,15 +112,6 @@ impl<S> WorldStorage<S> {
 		let mut storages = self.storages.write();
 		storages.insert(k, Box::into_raw(Box::new(AtomicRefCell::new(s))));
 	}
-
-	// pub fn get_or_create(&self, k: impl Into<String>, f: impl FnOnce() -> S) -> *mut AtomicRefCell<S> {
-	// 	// Not actually sync, bad! 
-	// 	let k: String = k.into();
-	// 	if !self.storages.read().contains_key(&k) {
-	// 		self.insert(k.clone(), f());
-	// 	}
-	// 	self.get(&k).unwrap()
-	// }
 
 	pub fn remove(&self, k: impl AsRef<str>) -> Option<S> {
 		let mut s = self.storages.write();
@@ -274,8 +255,6 @@ impl World {
 		);
 		f
 	}
-
-	// resource_raw
 	
 	pub fn spawn<'w>(&'w mut self) -> WorldEntitySpawn<'w> {
 		let entity = self.entities.get_mut().spawn();

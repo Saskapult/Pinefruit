@@ -21,12 +21,12 @@ pub struct MovementComponent {
 }
 impl MovementComponent {
 	pub fn new(control_map: &mut ControlMap) -> Self {
-		let KEY_FORWARD: KeyKey = KeyKey::BoardKey(KeyCode::KeyW.into());
-		let KEY_BACKWARD: KeyKey = KeyKey::BoardKey(KeyCode::KeyS.into());
-		let KEY_RIGHT: KeyKey = KeyKey::BoardKey(KeyCode::KeyD.into());
-		let KEY_LEFT: KeyKey = KeyKey::BoardKey(KeyCode::KeyA.into());
-		let KEY_UP: KeyKey = KeyKey::BoardKey(KeyCode::Space.into());
-		let KEY_DOWN: KeyKey = KeyKey::BoardKey(KeyCode::ShiftLeft.into());
+		let key_forward = KeyKey::BoardKey(KeyCode::KeyW.into());
+		let key_backward = KeyKey::BoardKey(KeyCode::KeyS.into());
+		let key_right = KeyKey::BoardKey(KeyCode::KeyD.into());
+		let key_left = KeyKey::BoardKey(KeyCode::KeyA.into());
+		let key_up = KeyKey::BoardKey(KeyCode::Space.into());
+		let key_down = KeyKey::BoardKey(KeyCode::ShiftLeft.into());
 
 		let cid_right = control_map.new_control(
 			"Move Right", 
@@ -34,7 +34,7 @@ impl MovementComponent {
 		);
 		control_map.add_control_binding(cid_right, KeyCombo {
 			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([KEY_RIGHT].as_slice()).unwrap(),
+			keys: ArrayVec::try_from([key_right].as_slice()).unwrap(),
 		});
 		let cid_left = control_map.new_control(
 			"Move Left", 
@@ -42,7 +42,7 @@ impl MovementComponent {
 		);
 		control_map.add_control_binding(cid_left, KeyCombo {
 			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([KEY_LEFT].as_slice()).unwrap(),
+			keys: ArrayVec::try_from([key_left].as_slice()).unwrap(),
 		});
 		let cid_up = control_map.new_control(
 			"Move Up", 
@@ -50,7 +50,7 @@ impl MovementComponent {
 		);
 		control_map.add_control_binding(cid_up, KeyCombo {
 			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([KEY_UP].as_slice()).unwrap(),
+			keys: ArrayVec::try_from([key_up].as_slice()).unwrap(),
 		});
 		let cid_down = control_map.new_control(
 			"Move Down", 
@@ -58,7 +58,7 @@ impl MovementComponent {
 		);
 		control_map.add_control_binding(cid_down, KeyCombo {
 			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([KEY_DOWN].as_slice()).unwrap(),
+			keys: ArrayVec::try_from([key_down].as_slice()).unwrap(),
 		});
 		let cid_forward = control_map.new_control(
 			"Move Forward", 
@@ -66,7 +66,7 @@ impl MovementComponent {
 		);
 		control_map.add_control_binding(cid_forward, KeyCombo {
 			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([KEY_FORWARD].as_slice()).unwrap(),
+			keys: ArrayVec::try_from([key_forward].as_slice()).unwrap(),
 		});
 		let cid_backward = control_map.new_control(
 			"Move Back", 
@@ -74,7 +74,7 @@ impl MovementComponent {
 		);
 		control_map.add_control_binding(cid_backward, KeyCombo {
 			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([KEY_BACKWARD].as_slice()).unwrap(),
+			keys: ArrayVec::try_from([key_backward].as_slice()).unwrap(),
 		});
 
 		MovementComponent {

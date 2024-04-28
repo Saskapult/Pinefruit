@@ -1,19 +1,12 @@
 pub mod viewport;
 
-use std::{sync::{mpsc::{Receiver, SyncSender}, Arc}, time::{Duration, Instant}};
+use std::time::Instant;
 use crossbeam_channel::Sender;
-use egui::{self, ComboBox};
 use glam::Vec3;
-use krender::{RenderContextKey, prelude::RenderContext};
 use ekstensions::prelude::*;
-use parking_lot::Mutex;
-use wgpu_profiler::GpuTimerQueryResult;
-use std::sync::mpsc::sync_channel;
-use crate::{game::{ContextResource, Game, OutputResolutionComponent, TextureResource}, input::{InputEvent, KeyDeduplicator}, util::RingDataHolder, window::{GraphicsHandle, WindowPropertiesAndSettings}};
+use crate::{game::{ContextResource, Game}, input::{InputEvent, KeyDeduplicator}, window::WindowPropertiesAndSettings};
 use crate::ecs::*;
-
 use self::viewport::{ViewportManager, ViewportWidget};
-
 
 
 #[derive(Debug)]
@@ -21,39 +14,44 @@ pub struct GameWidget {
 	viewport: ViewportWidget,
 
 	deduplicator: KeyDeduplicator,
-	game_input: Option<Sender<(InputEvent, Instant)>>,
+	client_input: Sender<(InputEvent, Instant)>,
 }
 impl GameWidget {
-	pub fn new(game: &mut Game, viewports: &mut ViewportManager) -> Self {
-		let (raw_input, game_input) = LocalInputComponent::new();
-		let game_input = Some(game_input);
-		
+	pub fn new(
+		game: &mut Game, 
+		viewports: &mut ViewportManager,
+		entity: Entity,
+	) -> Self {
+		// Insert input component
+		// Other storages, like ControlMap and MovementComponent, are assumed to be present 
+		// Also ControlComponent but I don't remember what that is
+		let (input_component, client_input) = LocalInputComponent::new();
+		{
+			if game.world.query::<CompMut<LocalInputComponent>>().insert(entity, input_component).is_some() {
+				warn!("Overwrote a LocalInputComponent for entity {:?}", entity);
+			}
+		}
+
+		// Create render context
+		// Insert required components for that
+		// Not sure what should be here and what should be in the spawn function
+		{ // Camera
+			game.world.query::<CompMut<CameraComponent>>()
+				.insert(entity, CameraComponent::new());
+		}
+		{ // SSAO
+			game.world.query::<CompMut<SSAOComponent>>()
+				.insert(entity, SSAOComponent::default());
+		}
+		{ // Control
+			game.world.query::<CompMut<ControlComponent>>()
+				.insert(entity, ControlComponent::new());
+		}
 		let context = {
-			let mut control_map = game.world.query::<ResMut<ControlMap>>();
-			let movement = MovementComponent::new(&mut control_map);
-			// let modifier_comp = VoxelModifierComponent::new(&mut control_map);
-			// let tl_mod_comp = TorchLightModifierComponent::new(&mut control_map);
-			drop(control_map);
-
-			let entity_id = game.world.spawn()
-				.with(TransformComponent::new().with_position(Vec3::new(0.0, 0.0, 0.0)))
-				.with(raw_input)
-				.with(ControlComponent::new())
-				.with(CameraComponent::new())
-				.with(movement)
-				// .with(ChunkLoadingComponent::new(7))
-				// .with(GPUChunkLoadingComponent::new(4, 2))
-				// .with(GPUChunkViewer::new(3))
-				// .with(MapMeshingComponent::new(5, 2))
-				// .with(modifier_comp)
-				// .with(tl_mod_comp)
-				.with(SSAOComponent::default())
-				.finish();
-
 			let mut contexts = game.world.query::<ResMut<ContextResource>>();
 			
 			let (key, context) = contexts.contexts.new_context("default context");
-			context.entity = Some(entity_id);
+			context.entity = Some(entity);
 
 			key
 		};
@@ -63,7 +61,7 @@ impl GameWidget {
 		Self {
 			viewport,
 			deduplicator: KeyDeduplicator::new(),
-			game_input: None,
+			client_input,
 		}
 	}
 

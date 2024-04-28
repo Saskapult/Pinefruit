@@ -223,13 +223,13 @@ impl GameWindow {
 		self.ui(graphics, game);
 		let full_output = self.context.end_frame();
 
+		// Create command buffers for any viewports
+		// Todo: tick game here, potentially in parallel! 
+		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = self.viewports.update_viewports(graphics, game).into_iter().unzip();
+
 		let device = &graphics.device;
 		let queue = &graphics.queue;
 		let renderer = &mut graphics.egui_renderer;
-
-		// Create command buffers for any viewports
-		// Todo: tick game here, potentially in parallel! 
-		let mut command_buffers = self.viewports.update_viewports(game);
 
 		// Collect egui output
 		self.state.handle_platform_output(&self.window_surface.window, full_output.platform_output);
@@ -275,8 +275,8 @@ impl GameWindow {
 
 		queue.submit(command_buffers);
 
-		self.profiler.end_frame();
-		// TODO: End frame for all contributing viewports please
+		self.profiler.end_frame().unwrap();
+		profilers.iter_mut().for_each(|p| p.end_frame().unwrap());
 
 		surface.present();
 

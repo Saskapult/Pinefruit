@@ -82,11 +82,11 @@ impl ViewportEntry {
 		self.update_delay.is_none() || self.last_update.is_none() || self.last_update.unwrap().elapsed() >= self.update_delay.unwrap()
 	}
 
-	pub fn update(
-		&mut self, 
+	pub fn update<'a>(
+		&'a mut self, 
 		graphics: &mut GraphicsHandle,
 		game: &mut Game, // Replace with (render)world? 
-	) -> wgpu::CommandBuffer {
+	) -> (wgpu::CommandBuffer, &'a mut wgpu_profiler::GpuProfiler) {
 		// Record update
 		if let Some(t) = self.last_update {
 			self.update_times.insert(t.elapsed());
@@ -130,13 +130,9 @@ impl ViewportEntry {
 			);
 			self.display_texture = Some(id);
 		}
-
-		// Resolve queries here 
-		todo!("Resolve queries");
-		// We need another command buffer? Depends what game render is doing... 
-		// self.profiler.resolve_queries(encoder)
-
-		b
+		
+		// Queries must be resolved after work has been submitted
+		(b, &mut self.profiler)
 	}
 }
 
@@ -148,10 +144,10 @@ pub struct ViewportManager {
 impl ViewportManager {
 
 	/// Output command buffers for each viewport to be redrawn. 
-	pub fn update_viewports(&mut self, game: &mut Game) -> Vec<wgpu::CommandBuffer> {
+	pub fn update_viewports(&mut self, graphics: &mut GraphicsHandle, game: &mut Game) -> Vec<(wgpu::CommandBuffer, &mut wgpu_profiler::GpuProfiler)> {
 		self.contexts.iter_mut()
 			.filter(|(_, v)| v.should_update())
-			.map(|(c, v)| game.render(c, &mut v.profiler))
+			.map(|(_, v)| v.update(graphics, game))
 			.collect()
 	}
 
