@@ -5,8 +5,8 @@ pub use misc::*;
 mod movement;
 pub use movement::*;
 
-mod map;
-pub use map::*;
+// mod map;
+// pub use map::*;
 
 pub mod render;
 pub use render::*;

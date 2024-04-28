@@ -1,4 +1,5 @@
 use winit::event::*;
+use winit::keyboard::PhysicalKey;
 use std::time::Instant;
 use std::collections::HashSet;
 
@@ -11,6 +12,11 @@ pub enum InputEvent {
 	CursorMoved([f64; 2]),
 	MouseMotion([f64; 2]),
 	Scroll([f32; 2]),
+}
+impl<K: Into<KeyKey>, S: Into<ActiveState>> From<(K, S)> for InputEvent {
+	fn from((k, s): (K, S)) -> Self {
+		Self::KeyEvent((k.into(), s.into()))
+	}
 }
 
 
@@ -32,10 +38,10 @@ impl From<ElementState> for ActiveState {
 /// Board or mouse key. 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum KeyKey {
-	BoardKey(VirtualKeyCode),
+	BoardKey(PhysicalKey),
 	MouseKey(MouseButton),
 }
-impl Into<KeyKey> for VirtualKeyCode {
+impl Into<KeyKey> for PhysicalKey {
 	fn into(self) -> KeyKey {
 		KeyKey::BoardKey(self)
 	}

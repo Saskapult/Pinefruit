@@ -2,14 +2,14 @@ use std::time::Instant;
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec3, Mat4, Vec4, Vec2};
 use krender::{prelude::*, MeshKey, MaterialKey, TextureKey, BufferKey};
-use eks::prelude::*;
+use ekstensions::prelude::*;
 use rand::Rng;
 use crate::game::{BufferResource, TextureResource, QueueResource, MaterialResource, OutputResolutionComponent};
 use super::TransformComponent;
 
 
 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct CameraComponent {
 	pub fovy: f32, // In radians, don't forget
 	pub near: f32,
@@ -137,21 +137,21 @@ pub fn context_camera_system(
 }
 
 
-#[derive(ComponentIdent, Debug)]
+#[derive(Component, Debug)]
 pub struct ModelComponent {
 	pub material: MaterialKey,
 	pub mesh: MeshKey,
 }
 
 
-#[derive(ComponentIdent, Debug)]
+#[derive(Component, Debug)]
 pub struct SkeletalAttachmentComponent {
 	pub entity: Entity,
 	pub bone: usize,
 }
 
 
-#[derive(ComponentIdent, Debug)]
+#[derive(Component, Debug)]
 /// A straight line between two points.
 /// Usually accompanied by a RenderMarkerComponent.
 /// Might be accompanied by a LifetimeComponent.
@@ -161,7 +161,7 @@ pub struct SimpleLineComponent {
 }
 
 
-#[derive(ComponentIdent, Debug)]
+#[derive(Component, Debug)]
 /// A marker to remove this entity after a point in time.
 pub struct LifetimeComponent {
 	pub expiry: Instant,
@@ -181,14 +181,14 @@ pub struct LifetimeComponent {
 /// In this version it's just a static set of these functions. 
 /// Can't be a workload either 
 
-#[derive(ComponentIdent, Debug)]
+#[derive(Component, Debug)]
 pub struct RenderTargetSizeComponent {
 	pub size: [u32; 2],
 } 
 // And then have a system that resizes the context's result texture?
 
 
-#[derive(Debug, ComponentIdent, Default)]
+#[derive(Debug, Component, Default)]
 pub struct SSAOComponent {
 	// No kernel settings because we can't adjust the sample count
 	// Fixed size unifiorm buffer issue!
@@ -455,7 +455,7 @@ fn make_ssao_noise(settings: SSAONoiseSettings) -> Vec<Vec2> {
 }
 
 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct AlbedoOutputComponent {
 	pub width: u32,
 	pub height: u32,

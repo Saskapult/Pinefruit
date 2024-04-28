@@ -1,0 +1,15 @@
+[package]
+name = "example0"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "dylib"]
+
+# [workspace]
+
+[build]
+rustc-wrapper = "/usr/bin/sccache"
+
+[dependencies]
+ekstensions = { path = "../../ekstensions"}

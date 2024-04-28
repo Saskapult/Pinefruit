@@ -45,7 +45,7 @@ impl MapModelState {
 }
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 pub struct MapModelResource {
 	// bool for if modelling job is active
 	pub chunks: SecondaryMap<ChunkKey, (IVec3, bool, MapModelState)>,
@@ -259,7 +259,7 @@ impl MapModelResource {
 }
 
 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct MapMeshingComponent {
 	pub radius: i32,
 	pub tolerence: i32,

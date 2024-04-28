@@ -1,33 +1,27 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use glam::*;
-// use shipyard::*;
-use eks::prelude::*;
+use ekstensions::prelude::*;
 
 
 
-#[derive(ResourceIdent, Debug)]
+#[derive(Resource, Debug)]
 pub struct TimeResource {
-	pub this_tick_start: Instant,
-	pub last_tick_start: Instant,
+	pub this: Instant, // time of this tick
+	pub last: Instant, // time of last tick
+	pub diff: Duration, // |this - last|
 }
 impl TimeResource {
-	pub fn new() -> Self {
-		Self {
-			this_tick_start: Instant::now(),
-			last_tick_start: Instant::now(),
-		}
-	}
-
-	pub fn next_tick(&mut self) {
-		self.last_tick_start = self.this_tick_start;
-		self.this_tick_start = Instant::now();
+	pub fn next(&mut self) {
+		self.last = self.this;
+		self.this = Instant::now();
+		self.diff = self.this - self.last;
 	}
 }
 
 
 // Todo: Rename to WorldTransform
 #[repr(C)]
-#[derive(ComponentIdent, Debug, Clone, Copy)]
+#[derive(Component, Debug, Clone, Copy)]
 pub struct TransformComponent {
 	pub translation: Vec3,
 	pub rotation: Quat,

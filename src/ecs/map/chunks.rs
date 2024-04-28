@@ -33,7 +33,7 @@ new_key_type! {
 /// This may cause problems as volumes increase in size. 
 /// The meshing system holds a copy of this resource for the duration of its meshing. 
 /// Be aware of this. 
-#[derive(Debug, ResourceIdent, Clone)]
+#[derive(Debug, Resource, Clone)]
 pub struct ChunksResource(Arc<RwLock<Chunks>>);
 impl ChunksResource {
 	pub fn new() -> Self {
@@ -50,7 +50,7 @@ impl std::ops::Deref for ChunksResource {
 
 /// The chunks resouce describes the chunks of the world that are loaded. 
 /// Other resources, such as for terrain and lighting, are based on this. 
-#[derive(Debug, ResourceIdent, Clone)]
+#[derive(Debug, Resource, Clone)]
 pub struct Chunks {
 	// We could reduce memory usage by not storing positions here but it is 
 	// useful to iterate over these
@@ -108,7 +108,7 @@ impl Chunks {
 
 
 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct ChunkLoadingComponent {
 	pub radius: i32,
 	pub tolerence: i32,

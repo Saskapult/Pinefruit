@@ -60,7 +60,7 @@ impl<'a> RenderBundle<'a> {
 	) {
 		for (i, bundle) in self.stages.iter().enumerate() {
 			profiling::scope!("stage");
-			profiler.begin_scope(&*format!("Stage {i}"), encoder, device);
+			let mut scope = profiler.scope(format!("Stage {i}"), encoder, device);
 	
 			for (&key, range) in bundle.attachment_clears.iter() {
 				profiling::scope!("clear");
@@ -78,9 +78,8 @@ impl<'a> RenderBundle<'a> {
 			for &(key, bgs, [x,y,z]) in bundle.computes.iter() {
 				profiling::scope!("compute");
 				let shader = shaders.get(key).unwrap();
-				let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-					label: None,
-				});
+
+				let mut pass = scope.scoped_compute_pass("compute", device);
 
 				pass.set_pipeline(shader.pipeline.as_ref().unwrap().compute().unwrap());
 				for (index, key) in bgs.iter().enumerate() {
@@ -109,7 +108,7 @@ impl<'a> RenderBundle<'a> {
 					})
 				}).collect::<Vec<_>>();
 
-				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+				let mut pass = scope.scoped_render_pass("target", device, wgpu::RenderPassDescriptor {
 					label: None, 
 					color_attachments: color_attachments.as_slice(), 
 					depth_stencil_attachment: target.depth_attachment.and_then(|(d, depth_ops)| {
@@ -122,13 +121,16 @@ impl<'a> RenderBundle<'a> {
 							stencil_ops: None,
 						})
 					}), 
+					timestamp_writes: None,
+					occlusion_query_set: None,
 				});
 
 				for (shader_key, batches) in groups.iter() {
 					profiling::scope!("shader");
 					let shader = shaders.get(*shader_key).unwrap();
 					trace!("Shader {}", shader.specification.name);
-					profiler.begin_scope(&*format!("Shader '{}'", shader.specification.name), &mut pass, device);
+
+					let mut pass = pass.scope(format!("Shader '{}'", shader.specification.name), device);
 
 					pass.set_pipeline(shader.pipeline.as_ref().unwrap().polygon().unwrap());
 
@@ -200,10 +202,8 @@ impl<'a> RenderBundle<'a> {
 							current_count += count;
 						}
 					}
-					profiler.end_scope(&mut pass);
 				}
 			}
-			profiler.end_scope(encoder);
 		}
 	}
 }

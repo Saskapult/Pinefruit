@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use eks::{query::ResMut, prelude::ResourceIdent};
+use eks::{query::ResMut, prelude::Resource};
 use glam::UVec3;
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
@@ -44,7 +44,7 @@ impl std::ops::DerefMut for LiquidChunk {
 }
 
 
-#[derive(Debug, Default, ResourceIdent)]
+#[derive(Debug, Default, Resource)]
 pub struct LiquidChunksResource {
 	pub chunks: Arc<RwLock<SecondaryMap<ChunkKey, LiquidChunk>>>,
 }

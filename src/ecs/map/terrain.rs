@@ -19,7 +19,7 @@ pub enum TerrainEntry {
 }
 
 
-#[derive(Debug, Default, ResourceIdent)]
+#[derive(Debug, Default, Resource)]
 pub struct TerrainResource {
 	pub chunks: Arc<RwLock<SecondaryMap<ChunkKey, TerrainEntry>>>,
 	pub block_mods: RwLock<HashMap<IVec3, Vec<VoxelModification>>>,
@@ -62,7 +62,7 @@ impl TerrainResource {
 }
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 pub struct TerrainLoadingResource {
 	pub chunk_sender: Sender<(IVec3, ArrayVolume<BlockKey>, Vec<VoxelModification>)>,
 	pub chunk_receiver: Receiver<(IVec3, ArrayVolume<BlockKey>, Vec<VoxelModification>)>,

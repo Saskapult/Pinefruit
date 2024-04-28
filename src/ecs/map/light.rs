@@ -5,6 +5,7 @@ use eks::prelude::*;
 use glam::{UVec3, Vec4, IVec3, Vec3};
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
+use winit::keyboard::KeyCode;
 use crate::{voxel::{CHUNK_SIZE, ArrayVolume, chunk_of_voxel, voxel_relative_to_chunk, chunk_of_point}, util::KGeneration, ecs::{ControlKey, ControlMap, KeyCombo, KeyModifiers, TransformComponent, ControlComponent}, input::KeyKey, rays::FVTIterator, game::BufferResource};
 use super::{model::MapModelResource, chunks::{ChunkKey, ChunksResource}, terrain::TerrainResource};
 
@@ -114,7 +115,7 @@ impl std::ops::DerefMut for LightChunk {
 
 
 
-#[derive(Debug, Default, ResourceIdent)]
+#[derive(Debug, Default, Resource)]
 pub struct TorchLightChunksResource {
 	pub chunks: Arc<RwLock<SecondaryMap<ChunkKey, LightChunk>>>,
 	pub new_lights: Vec<(IVec3, LightRGBA)>,
@@ -242,7 +243,7 @@ pub fn torchlight_update_system(
 
 
 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct TorchLightModifierComponent {
 	pub place: ControlKey,
 	pub remove: ControlKey,
@@ -260,7 +261,7 @@ impl TorchLightModifierComponent {
 			control_map.add_control_binding(control, KeyCombo {
 				modifiers: KeyModifiers::EMPTY,
 				keys: ArrayVec::try_from([
-					KeyKey::BoardKey(winit::event::VirtualKeyCode::T),
+					KeyKey::BoardKey(KeyCode::KeyT.into()),
 				].as_slice()).unwrap(),
 			});
 			control
@@ -274,7 +275,7 @@ impl TorchLightModifierComponent {
 			control_map.add_control_binding(control, KeyCombo {
 				modifiers: KeyModifiers::EMPTY,
 				keys: ArrayVec::try_from([
-					KeyKey::BoardKey(winit::event::VirtualKeyCode::Y),
+					KeyKey::BoardKey(KeyCode::KeyY.into()),
 				].as_slice()).unwrap(),
 			});
 			control
@@ -288,7 +289,7 @@ impl TorchLightModifierComponent {
 			control_map.add_control_binding(control, KeyCombo {
 				modifiers: KeyModifiers::EMPTY,
 				keys: ArrayVec::try_from([
-					KeyKey::BoardKey(winit::event::VirtualKeyCode::M),
+					KeyKey::BoardKey(KeyCode::KeyM.into()),
 				].as_slice()).unwrap(),
 			});
 			control
@@ -302,7 +303,7 @@ impl TorchLightModifierComponent {
 			control_map.add_control_binding(control, KeyCombo {
 				modifiers: KeyModifiers::EMPTY,
 				keys: ArrayVec::try_from([
-					KeyKey::BoardKey(winit::event::VirtualKeyCode::N),
+					KeyKey::BoardKey(KeyCode::KeyN.into()),
 				].as_slice()).unwrap(),
 			});
 			control

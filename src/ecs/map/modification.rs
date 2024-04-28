@@ -6,10 +6,11 @@ use super::{BlockResource, terrain::{TerrainResource, TerrainEntry}, chunks::Chu
 use arrayvec::ArrayVec;
 use eks::prelude::*;
 use glam::Vec3;
+use winit::keyboard::KeyCode;
 
 
 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct VoxelModifierComponent {
 	pub place: ControlKey,
 	pub remove: ControlKey,
@@ -26,7 +27,7 @@ impl VoxelModifierComponent {
 				modifiers: KeyModifiers::EMPTY,
 				keys: ArrayVec::try_from([
 					// KeyKey::MouseKey(winit::event::MouseButton::Right),
-					KeyKey::BoardKey(winit::event::VirtualKeyCode::E),
+					KeyKey::BoardKey(KeyCode::KeyE.into()),
 				].as_slice()).unwrap(),
 			});
 			control
@@ -41,7 +42,7 @@ impl VoxelModifierComponent {
 				modifiers: KeyModifiers::EMPTY,
 				keys: ArrayVec::try_from([
 					// KeyKey::MouseKey(winit::event::MouseButton::Left),
-					KeyKey::BoardKey(winit::event::VirtualKeyCode::Q),
+					KeyKey::BoardKey(KeyCode::KeyQ.into()),
 				].as_slice()).unwrap(),
 			});
 			control

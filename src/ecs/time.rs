@@ -1,11 +1,11 @@
 use std::time::Instant;
-use eks::prelude::*;
+use ekstensions::prelude::*;
 use krender::prelude::Buffer;
 use crate::game::{BufferResource, QueueResource};
 
 
 
-#[derive(Debug, Clone, Copy, ResourceIdent)]
+#[derive(Debug, Clone, Copy, Resource)]
 pub struct TimeResource {
 	pub start: Instant,
 	// Tick info?

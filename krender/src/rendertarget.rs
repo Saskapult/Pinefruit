@@ -82,14 +82,14 @@ impl AbstractRenderTarget {
 					Some(t.texture(context, textures).expect("Failed to locate target texture (todo: give more information)")));
 				(t, r, wgpu::Operations {
 					load: wgpu::LoadOp::Load,
-					store: true,
+					store: wgpu::StoreOp::Store,
 				})
 			}).collect::<ArrayVec<_, 4>>();
 
 		let depth_attachment = self.depth_attachment.as_ref().and_then(|t| 
 			Some((t.texture(context, textures).expect("Failed to locate target texture (todo: give more information)"), wgpu::Operations {
 				load: wgpu::LoadOp::Load,
-				store: true,
+				store: wgpu::StoreOp::Store,
 			})));
 
 		SpecificRenderTarget { colour_attachments, depth_attachment, }

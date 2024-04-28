@@ -1,10 +1,10 @@
 use crossbeam_channel::Sender;
-use egui::{Context, DragValue};
-use egui_wgpu::renderer::ScreenDescriptor;
-use egui_wgpu::{Renderer, preferred_framebuffer_format};
-use eks::prelude::*;
-use slotmap::SlotMap;
-use wgpu_profiler::GpuProfiler;
+use egui::{Context, DragValue, ViewportId};
+use egui_wgpu::{preferred_framebuffer_format, Renderer, ScreenDescriptor};
+use ekstensions::prelude::*;
+use krender::RenderContextKey;
+use slotmap::{new_key_type, SlotMap};
+use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
 use winit::dpi::{PhysicalSize, PhysicalPosition};
 use winit::{
 	event::*,
@@ -15,18 +15,16 @@ use wgpu;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Instant, Duration};
-use crate::ecs::terrain::TerrainLoadingResource;
 use crate::ecs::{TransformComponent, SSAOComponent, MovementComponent, CameraComponent};
-use crate::ecs::octree::GPUChunksResource;
 use crate::game::{Game, ContextResource, GameStatus};
-use crate::gui::{GameWidget, MessageWidget, RenderProfilingWidget, SplineWidget, MapLoadingWidget, SSAOWidget};
-use crate::input::*;
+use crate::gui::viewport::ViewportManager;
+use crate::gui::GameWidget;
 use crate::util::RingDataHolder;
-use crate::voxel::chunk_of_point;
 
 
 
-/// Window settings (things you can modify)
+/// Window settings (things you can modify). 
+/// Mainly here becuase egui lacks a way to lock the cursor. 
 #[derive(Debug)]
 pub struct WindowSettings {
 	pub cursor_captured: bool, 
@@ -40,7 +38,7 @@ impl WindowSettings {
 }
 
 
-/// Window properties (stuff that's decided by external forces)
+/// Window properties (stuff that's decided by external forces). 
 #[derive(Debug)]
 pub struct WindowProperties {
 	pub cursor_inside: bool,
@@ -78,34 +76,29 @@ impl<'a> WindowPropertiesAndSettings<'a> {
 }
 
 
-pub struct GameWindow {
-	pub window: winit::window::Window,
-	
-	surface: WindowSurface,
-	
-	properties: WindowProperties,
-	settings: WindowSettings,
-
-	last_update: Option<Instant>,
-	update_delay: Duration, // Can have another for unfocused delay
-	update_times: RingDataHolder<Duration>,
-
+struct GameWindow {
+	window_surface: WindowSurface,
+	surface_config: SurfaceConfiguration,
 	context: egui::Context,
 	state: egui_winit::State,
-	egui_test_texture: Option<egui::TextureHandle>,
-
-	pub game_widget: GameWidget,
-	message_widget: MessageWidget,
-	
-	profiling_widget: RenderProfilingWidget,
-
-	spline_widget: SplineWidget,
-
-	show_profiler: bool,
+	properties: WindowProperties,
+	settings: WindowSettings,
+	profiler: wgpu_profiler::GpuProfiler, // For egui renders
 
 	// Winit doesn't support locking the cursor on x11, only confining it
 	// We need to do this manually (brings needless mess)
 	manual_cursor_lock_last_position: Option<PhysicalPosition<f64>>,
+
+	last_update: Option<Instant>,
+	update_period: Duration, // Can have another for unfocused delay
+	update_times: RingDataHolder<Duration>,
+
+	viewports: ViewportManager,
+
+	// game_widget: GameWidget,
+	// message_widget: MessageWidget,
+	// profiling_widget: RenderProfilingWidget,
+	// show_profiler: bool,
 }
 impl GameWindow {
 	pub fn new(
@@ -115,73 +108,70 @@ impl GameWindow {
 		event_loop: &EventLoopWindowTarget::<WindowCommand>,
 	) -> Self {
 		let window = window_builder.build(event_loop).unwrap();
-		let surface = unsafe { 
-			instance.create_surface(&window) 
-		}.unwrap();
-		Self::new_from_window_surface(adapter, window, surface)
+		let window_surface = WindowSurface::new(instance, window);
+		Self::new_from_window_surface(adapter, window_surface)
 	}
 
-	// Used for startup window because of contstruction order
+	// Used when creating the first window because the GraphicsHandle needs to know the compatible surface 
 	pub fn new_from_window_surface(
 		adapter: &wgpu::Adapter, 
-		window: winit::window::Window,
-		surface: wgpu::Surface,
+		window_surface: WindowSurface, 
 	) -> Self {
-		let surface = WindowSurface::new(adapter, &window, surface, 1);
-		let state = egui_winit::State::new(&window);
+		let surface = SurfaceConfiguration::new(adapter, &window_surface, 1);
+		let egui_context = Context::default();
+		egui_context.style_mut(|style| {
+			style.override_text_style = Some(egui::TextStyle::Monospace);
+		});
+		let state = egui_winit::State::new(
+			egui_context, 
+			ViewportId::from_hash_of(window_surface.window.id()), 
+			&window_surface.window,
+			None,
+			None,
+		);
 		Self {
-			window,
-			surface,
-
-			properties: WindowProperties::new(),
-			settings: WindowSettings::new(),
-			
-			last_update: None,
-			update_delay: Duration::from_secs_f32(1.0 / 60.0),
-			update_times: RingDataHolder::new(30),
-			
+			window_surface,
+			surface_config: surface,
 			context: Context::default(),
 			state,
-			egui_test_texture: None,
-
-			game_widget: GameWidget::new(),
-			message_widget: MessageWidget::new(),
-			profiling_widget: RenderProfilingWidget::new(),
-
-			spline_widget: SplineWidget::new(64),
-
-			show_profiler: false,
+			properties: WindowProperties::new(),
+			settings: WindowSettings::new(),
+			profiler: GpuProfiler::new(GpuProfilerSettings::default()).unwrap(),
 
 			manual_cursor_lock_last_position: None,
+			
+			last_update: None,
+			update_period: Duration::from_secs_f32(1.0 / 60.0),
+			update_times: RingDataHolder::new(30),
+
+			viewports: ViewportManager::default(),
+
+			// game_widget: GameWidget::new(),
+			// message_widget: MessageWidget::new(),
+			// profiling_widget: RenderProfilingWidget::new(),
+			// show_profiler: false,
 		}
 	}
 
 	pub fn resize(&mut self, width: u32, height: u32) {
-		self.surface.set_size([width, height]);
+		self.surface_config.set_size([width, height]);
 		self.last_update = None;
 	}
 
+	/// The code for displaying the UI. 
+	/// Can be copied and pasted into `update()`. 
 	#[profiling::function]
-	fn update_ui(
+	fn ui(
 		&mut self,
-		device: &wgpu::Device,
-		queue: &wgpu::Queue,
-		profiler: &mut GpuProfiler,
-		renderer: &mut Renderer,
+		graphics: &mut GraphicsHandle,
 		game: &mut Game,
-	) -> (wgpu::SurfaceTexture, wgpu::CommandBuffer) {
-		// info!("Begin UI frame");
-		self.context.begin_frame(self.state.take_egui_input(&self.window));
-
+	) {
 		let mut setting_props = WindowPropertiesAndSettings {
-			window: &mut self.window,
+			window: &mut self.window_surface.window,
 			settings: &mut self.settings,
 			properties: &self.properties
 		};
-		
-		if self.show_profiler {
-			self.show_profiler = puffin_egui::profiler_window(&self.context);
-		}
+
 		egui::SidePanel::left("left panel")
 			.resizable(false)
 			.default_width(220.0)
@@ -189,75 +179,6 @@ impl GameWindow {
 			.min_width(220.0)
 			.show(&self.context, |ui| {
 				ui.vertical(|ui| {
-					ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
-
-					// Tracked entity information
-					let contexts = game.world.borrow::<Res<ContextResource>>();
-					if let Some(entity) = self.game_widget.context(&*contexts).and_then(|c| c.entity) {
-						ui.label(format!("Entity: {entity:?}"));
-						
-						// Transform component information
-						let tcs = game.world.borrow::<Comp<TransformComponent>>();
-						if let Some((tc,)) = (&tcs,).storage_get(entity) {
-							// Position
-							let [px, py, pz] = tc.translation.to_array();
-							ui.label(format!("Position: [{:.1}, {:.1}, {:.1}]", px, py, pz));
-
-							// Rotation
-							let (ex, ey, ez) = tc.rotation.to_euler(glam::EulerRot::XYZ);
-							ui.label(format!("Rotation: [{:.1}, {:.1}, {:.1}]", ex, ey, ez));
-							
-							// Current chunk
-							let [cx, cy, cz] = chunk_of_point(tc.translation).to_array();
-							ui.label(format!("Chunk: [{}, {}, {}]", cx, cy, cz));
-						}
-
-						// Max speed adjustment
-						let mut movc = game.world.borrow::<CompMut<MovementComponent>>();
-						if let Some(m) = movc.get_mut(entity) {
-							ui.horizontal(|ui| {
-								ui.label("Max Speed:");
-								ui.add(DragValue::new(&mut m.max_speed).clamp_range(5.0..=50.0));
-							});
-						}
-
-						// Camera settings
-						let mut camc = game.world.borrow::<CompMut<CameraComponent>>();
-						if let Some(c) = camc.get_mut(entity) {
-							ui.horizontal(|ui| {
-								ui.label("Fovy: ");
-								let mut fovy_degrees = c.fovy.to_degrees();
-								ui.add(DragValue::new(&mut fovy_degrees)
-									.clamp_range(0.0..=90.0)
-									.speed(1.0));
-								c.fovy = fovy_degrees.to_radians();
-								
-							});
-							ui.horizontal(|ui| {
-								ui.label("Near: ");
-								ui.add(DragValue::new(&mut c.near)
-									.clamp_range(0.0..=1.0)
-									.speed(0.05));
-							});
-							ui.horizontal(|ui| {
-								ui.label("Far:  ");
-								ui.add(DragValue::new(&mut c.far)
-									.clamp_range(0.0..=1000.0));
-							});
-						}
-					} else {
-						ui.label("Tracked entity not set!");
-					}
-	
-					// Test texture
-					let texture: &egui::TextureHandle = self.egui_test_texture.get_or_insert_with(|| {
-						// Load the texture only once.
-						ui.ctx().load_texture("my-image", egui::ColorImage::example(), egui::TextureOptions::default())
-					});
-					ui.image(texture, texture.size_vec2());
-
-					// Toggle profiler
-					ui.checkbox(&mut self.show_profiler, "Profiler");
 
 					// Update rate for the UI
 					let ui_update_rate = self.update_times.iter()
@@ -265,119 +186,24 @@ impl GameWindow {
 						.reduce(|a, v| a + v)
 						.unwrap_or(f32::INFINITY) / (self.update_times.len() as f32);
 					ui.label(format!("UI: {:>4.1}ms, {:.0}Hz", ui_update_rate * 1000.0, (1.0 / ui_update_rate).round()));
-
-					// Update rate for the Game Widget
-					let gw_update_rate = self.game_widget.update_times.iter()
-						.map(|d| d.as_secs_f32())
-						.reduce(|a, v| a + v)
-						.unwrap_or(f32::INFINITY) / (self.game_widget.update_times.len() as f32);
-					ui.label(format!("GW: {:>4.1}ms, {:.0}Hz", gw_update_rate * 1000.0, (1.0 / gw_update_rate).round()));
-
-					// Update time (and more info) for the submitted gpu work
-					if let Some(profile_data) = profiler.process_finished_frame() {
-						self.profiling_widget.display(ui, &profile_data)
-					}
-
-					// Shows how much gpu memory is used by the octree chunks
-					let g = game.world.borrow::<Res<GPUChunksResource>>().used_bytes();
-					ui.label(format!("GPU chunks: {}kb", g as f32 / 1000.0));
-
-					// Shows what chunks are being loaded
-					let loading = game.world.borrow::<Res<TerrainLoadingResource>>();
-					MapLoadingWidget::display(ui, &loading);
 				});
 			});
 		egui::SidePanel::right("right panel")
-			// .resizable(false)
-			// .default_width(220.0)
-			// .max_width(220.0)
-			// .min_width(220.0)
 			.show(&self.context, |ui| {
 				ui.vertical(|ui| {
-					// Message widget
-					self.message_widget.display(ui);
-
-					// Toggle rendering types
-					ui.horizontal(|ui| {
-						ui.label("Rendering Mode: ");
-						ui.toggle_value(&mut game.render_polygons, "Polgyons");
-						ui.toggle_value(&mut game.render_rays, "Rays");
-					});
-
-					ui.checkbox(&mut game.render_sort, "render sort");
-				
-					// Shader refresh button
-					if ui.button("Refresh shaders").clicked() {
-						self.message_widget.add_message("Todo: re-add shader reloading", Instant::now() + Duration::from_secs_f32(5.0));
-					}
-
-					let contexts = game.world.borrow::<Res<ContextResource>>();
-					let mut ssaos = game.world.borrow::<CompMut<SSAOComponent>>();
-					if let Some(ssao) = self.game_widget.context(&*contexts).and_then(|c| c.entity).and_then(|entity| ssaos.get_mut(entity)) {
-						SSAOWidget::display(ui, ssao);
-					}
+					
 				});
 			});
 		egui::CentralPanel::default()
 			.show(&self.context, |ui| {
 				ui.vertical_centered_justified(|ui| {
-					// Game widget
-					self.game_widget.display(ui, &mut setting_props);
-				})
+					// self.game_widget.display(ui, &mut setting_props);
+				});
 			});
-		// egui::Window::new("Spline Editor")
-		// 	.show(&self.context, |ui| {
-		// 		self.spline_widget.display(ui);
-		// 	});
-		
-		let full_output = self.context.end_frame();
-		self.state.handle_platform_output(&self.window, &self.context, full_output.platform_output);
-		let textures_delta = full_output.textures_delta;
-		let paint_jobs = self.context.tessellate(full_output.shapes);
-
-		let screen_descriptor = ScreenDescriptor {
-			size_in_pixels: self.window.inner_size().into(),
-			pixels_per_point: self.state.pixels_per_point(),
-		};
-		self.surface.set_size(self.window.inner_size().into());
-
-		// trace!("Create encoder");
-		let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: Some("a window encoder"),
-		});
-		profiler.begin_scope(&*format!("window '{}' ({:?}) egui", self.window.title(), self.window.id()), &mut encoder, device);
-
-		// trace!("Update textures");
-		for (id, image_delta) in textures_delta.set {
-			renderer.update_texture(device, queue, id, &image_delta);
-		}
-
-		// trace!("Update buffers");
-		let user_buffers = renderer.update_buffers(device, queue, &mut encoder, paint_jobs.as_slice(), &screen_descriptor);
-		assert_eq!(0, user_buffers.len(), "there shouldn't have been any user-defined command buffers, yet there were user-defined command buffers!");
-		
-		// trace!("Get frame");
-		let (surface, frame) = self.surface.frame(device);
-		{
-			// trace!("Get render pass");
-			let mut egui_render_pass = frame.renderpass(&mut encoder);
-			// trace!("Render");
-			renderer.render(&mut egui_render_pass, paint_jobs.as_slice(), &screen_descriptor);
-		}
-
-		// trace!("Free textures_delta.free");
-		for id in textures_delta.free.iter() {
-			renderer.free_texture(id);
-		}
-
-		// trace!("Finish encoder");
-		profiler.end_scope(&mut encoder);
-
-		(surface, encoder.finish())
 	}
 
 	pub fn should_update(&self) -> bool {
-		self.last_update.is_none() || self.last_update.unwrap().elapsed() >= self.update_delay
+		self.last_update.is_none() || self.last_update.unwrap().elapsed() >= self.update_period
 	}
 
 	/// Encodes and executes an update to this window's display.
@@ -386,51 +212,98 @@ impl GameWindow {
 		&mut self,
 		graphics: &mut GraphicsHandle,
 		game: &mut Game,
-	) -> (wgpu::SurfaceTexture, wgpu::CommandBuffer, Option<wgpu::CommandBuffer>) {
+	) {
 		if let Some(t) = self.last_update {
 			self.update_times.insert(t.elapsed());
 		}
 		self.last_update = Some(Instant::now());
 
-		// Game widget
-		let render = self.game_widget.should_update().then(|| self.game_widget.update(graphics, game));
+		// Do egui frame
+		self.context.begin_frame(self.state.take_egui_input(&self.window_surface.window));
+		self.ui(graphics, game);
+		let full_output = self.context.end_frame();
 
-		// Ui
-		let (surface, ui) = self.update_ui(
-			&graphics.device,
-			&graphics.queue,
-			&mut graphics.profiler,
-			&mut graphics.egui_renderer,
-			game,
-		);
+		let device = &graphics.device;
+		let queue = &graphics.queue;
+		let renderer = &mut graphics.egui_renderer;
+
+		// Create command buffers for any viewports
+		// Todo: tick game here, potentially in parallel! 
+		let mut command_buffers = self.viewports.update_viewports(game);
+
+		// Collect egui output
+		self.state.handle_platform_output(&self.window_surface.window, full_output.platform_output);
+		let textures_delta = full_output.textures_delta;
+		let paint_jobs = self.context.tessellate(full_output.shapes, full_output.pixels_per_point);
+
+		let screen_descriptor = ScreenDescriptor {
+			size_in_pixels: self.window_surface.window.inner_size().into(),
+			pixels_per_point: full_output.pixels_per_point,
+		};
+		self.surface_config.set_size(self.window_surface.window.inner_size().into());
+
+		let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+			label: Some("a window encoder"),
+		});
+
+		// Render egui
+		let window_query = self.profiler.begin_query(&*format!("window '{}' ({:?}) egui", self.window_surface.window.title(), self.window_surface.window.id()), &mut encoder, device);
+
+		// Update textures and buffers
+		for (id, image_delta) in textures_delta.set {
+			renderer.update_texture(device, queue, id, &image_delta);
+		}
+		let user_buffers = renderer.update_buffers(device, queue, &mut encoder, paint_jobs.as_slice(), &screen_descriptor);
+		assert_eq!(0, user_buffers.len(), "there shouldn't have been any user-defined command buffers, yet there were user-defined command buffers!");
 		
-		(surface, ui, render)
+		// Render frame
+		let (surface, frame) = self.surface_config.frame(device, &self.window_surface);
+		{
+			let mut egui_render_pass = frame.renderpass(&mut encoder);
+			renderer.render(&mut egui_render_pass, paint_jobs.as_slice(), &screen_descriptor);
+		}
+
+		// Free textures
+		for id in textures_delta.free.iter() {
+			renderer.free_texture(id);
+		}
+
+		self.profiler.end_query(&mut encoder, window_query);
+
+		// Add egui command buffer to game command buffers
+		command_buffers.push(encoder.finish());
+
+		queue.submit(command_buffers);
+
+		self.profiler.end_frame();
+		// TODO: End frame for all contributing viewports please
+
+		surface.present();
+
+		profiling::finish_frame!();
 	}
 
 	pub fn handle_event(&mut self, event: &Event<WindowCommand>, when: Instant) {
 		match event {
 			Event::WindowEvent { event: window_event, ..} => {
 				// Check with Egui
-				let r = self.state.on_event(&self.context, window_event);
-				if r.repaint {
-					self.last_update.take();
-				}
-				if r.consumed {
-					return
-				}
+				let r = self.state.on_window_event(&self.window_surface.window, window_event);
+				if r.repaint { self.last_update.take(); }
+				if r.consumed { return }
+				// Event was not consumed by egui
 				match window_event {
-					&WindowEvent::KeyboardInput { input, .. } => {
-						if let Some(key) = input.virtual_keycode {
-							let state = input.state.into();
-							if !self.properties.cursor_inside && state != ActiveState::Inactive {
-								return
-							}
-							self.game_widget.input(
-								InputEvent::KeyEvent((key.into(), state)), 
-								when,
-							);
-						} else {
-							warn!("Key input with no virtual key code ({input:?})");
+					WindowEvent::KeyboardInput { event, .. } => {
+						// Keyborad events are recorded by the game widget 
+						// Maybe they should be sent to the server and client instead? No! (not directly)
+						// The game widget can hold channels to send information to the client and server
+						if self.properties.cursor_inside && !event.repeat {
+							todo!("Game key input")
+							
+							
+							// self.game_widget.input(
+							// 	event,
+							// 	when,
+							// );
 						}
 					},
 					&WindowEvent::MouseInput {
@@ -438,20 +311,24 @@ impl GameWindow {
 						button, 
 						..
 					} => {
-						self.game_widget.input(
-							InputEvent::KeyEvent((KeyKey::MouseKey(button), state.into())), 
-							when, 
-						);
+						// Make a "GameInput" enumer that accepts either mouse or keybord or scroll
+						// Have an into method for it 
+						todo!("Game mouse input");
+						// self.game_widget.input(
+						// 	InputEvent::KeyEvent((KeyKey::MouseKey(button), state.into())), 
+						// 	when, 
+						// );
 					},
 					WindowEvent::MouseWheel { delta, .. } => {
 						match delta {
 							&winit::event::MouseScrollDelta::LineDelta(x, y) => {
-								self.game_widget.input(
-									InputEvent::Scroll([x, y]),
-									when, 
-								);
+								todo!("Game scroll input");
+								// self.game_widget.input(
+								// 	InputEvent::Scroll([x, y]),
+								// 	when, 
+								// );
 							},
-							_ => warn!("detected strange scrolling hours"),
+							_ => warn!("only MouseScrollDelta::LineDelta is recognized by the application"),
 						}
 					},
 					WindowEvent::CursorEntered {..} => {
@@ -459,23 +336,24 @@ impl GameWindow {
 					},
 					WindowEvent::CursorLeft {..} => {
 						self.properties.cursor_inside = false;
-						// release all keys
+						// If we want to deduplicate events in the game widget, then we should release all keys here
 						warn!("Should release all keys");
 						// self.game_widget.release_keys();
 					},
 					&WindowEvent::CursorMoved { position, .. } => {
 						if self.settings.cursor_captured {
 							if let Some(last_position) = self.manual_cursor_lock_last_position {
-								self.window.set_cursor_position(last_position).unwrap();
+								self.window_surface.window.set_cursor_position(last_position).unwrap();
 							} else {
 								self.manual_cursor_lock_last_position = Some(position);
 							}
 						} else {
 							self.manual_cursor_lock_last_position.take();
-							self.game_widget.input(
-								InputEvent::CursorMoved([position.x, position.y]),
-								when,
-							);
+							todo!("More GameInput stuff");
+							// self.game_widget.input(
+							// 	InputEvent::CursorMoved([position.x, position.y]),
+							// 	when,
+							// );
 						}
 					},
 					WindowEvent::Resized (newsize) => {
@@ -493,10 +371,11 @@ impl GameWindow {
 				match device_event {
 					&DeviceEvent::MouseMotion { delta: (dx, dy) } => {
 						if self.properties.cursor_inside && self.settings.cursor_captured {
-							self.game_widget.input(
-								InputEvent::MouseMotion([dx, dy]),
-								when,
-							);
+							todo!("GameInput");
+							// self.game_widget.input(
+							// 	InputEvent::MouseMotion([dx, dy]),
+							// 	when,
+							// );
 						}
 					},
 					_ => {},
@@ -508,17 +387,20 @@ impl GameWindow {
 }
 
 
-// A custom event which can be injected into the event loop
+/// A custom event which is used to allow the game to shut down the window manager and spawn new windows. 
 #[derive(Debug)]
 pub enum WindowCommand {
 	Shutdown,
 	NewWindow, // Don't add WindowBuilder, it isn't send
 }
 
+
+/// Commands sent from the window to the game. 
 #[derive(Debug)]
 pub enum GameCommand {
 	Shutdown,
 }
+
 
 slotmap::new_key_type! {
 	pub struct WindowKey;
@@ -537,8 +419,14 @@ pub struct GraphicsHandle {
 	pub profiler: GpuProfiler,
 }
 impl GraphicsHandle {
-	// Use instance to make surface, then 
-	pub fn acquire(instance: wgpu::Instance, compatible_surface: &wgpu::Surface) -> Result<Self, wgpu::RequestDeviceError> {
+	pub fn new(instance: wgpu::Instance, compatible_surface: &wgpu::Surface) -> Result<Self, wgpu::RequestDeviceError> {
+
+		info!("Available adapters:");
+		for adapter in instance.enumerate_adapters(wgpu::Backends::all()) {
+			let info = adapter.get_info();
+			info!("{}: {} ({}, {:?})", info.device, info.name, info.backend.to_str(), info.device_type);
+		}
+
 		let adapter = pollster::block_on(instance.request_adapter(
 			&wgpu::RequestAdapterOptions {
 				power_preference: wgpu::PowerPreference::HighPerformance,
@@ -549,17 +437,17 @@ impl GraphicsHandle {
 		let info = adapter.get_info();
 		info!("Using adapter {} ({:?})", info.name, info.backend);
 
-		let mut features = adapter.features();
-		if features.contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS) {
+		let mut required_features = adapter.features();
+		if required_features.contains(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS) {
 			warn!("Adapter has feature {:?} and I don't like that so I am removing it from the feature set", wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
-			features = features.difference(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
+			required_features = required_features.difference(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
 		}
 
-		let limits = wgpu::Limits::downlevel_defaults();
+		let required_limits = wgpu::Limits::downlevel_defaults();
 
 		let (device, queue) = pollster::block_on(adapter.request_device(
 			&wgpu::DeviceDescriptor {
-				features, limits,
+				required_features, required_limits,
 				label: Some("kkraft device descriptor"),
 			},
 			None,
@@ -577,22 +465,24 @@ impl GraphicsHandle {
 			1,
 		);
 
-		let profiler = GpuProfiler::new(
-			5, 
-			queue.get_timestamp_period(), 
-			features,
-		);
+		let profiler = GpuProfiler::new(GpuProfilerSettings {
+			max_num_pending_frames: 5, 
+			..Default::default()
+		}).unwrap();
 
 		Ok(Self { instance, adapter, device, queue, egui_renderer, profiler })
 	}
-
-
 }
 
 
-struct WindowGameThing {
-	pub game: Game,
-	pub commands: Sender<GameCommand>,
+// Each must handle event, update ui
+// Must vary input values so use a match in WindowManager
+// These are really just egui apps! 
+enum WindowState {
+	Loading,
+	Game,
+	// Profiling
+	// Console // For server commands
 }
 
 
@@ -606,7 +496,14 @@ pub struct WindowManager {
 
 	graphics: Option<GraphicsHandle>,
 
-	game: Option<WindowGameThing>,
+	// Also in client and server 
+	// extensions: Arc<RwLock<ExtensionRegistry>>
+
+	// Arc mutex game? 
+	game: Option<Game>,
+	// Client game and server game? 
+	// Server game is just a game in another thread with automatic ticks
+	// Optional so we can connect to other games
 }
 impl WindowManager {
 	pub fn new(event_loop: &EventLoop::<WindowCommand>) -> Self {
@@ -622,71 +519,38 @@ impl WindowManager {
 		}
 	}
 
-	pub fn start_game(&mut self) {
-		let (commands, commands_receiver) = crossbeam_channel::unbounded();
-
-		let device = self.graphics.as_ref().unwrap().device.clone();
-		let queue = self.graphics.as_ref().unwrap().queue.clone();
-
-		let mut game = Game::new(device, queue, commands_receiver, self.event_loop_proxy.clone());
-		game.initialize();
-
-		self.game = Some(WindowGameThing { game, commands, })
-	}
-
 	pub fn run(mut self, event_loop: EventLoop<WindowCommand>) {
-		// let initial_window = WindowBuilder::new()
-		// 	.with_title("initial window")
-		// 	.with_window_icon(None)
-		// 	.with_inner_size(PhysicalSize::new(1280, 720))
-		// 	.build(&event_loop)
-		// 	.unwrap();
-		// let instance = wgpu::Instance::new(wgpu::Backends::all());
-		// let initial_surface = unsafe { instance.create_surface(&initial_window) };
+		trace!("Creating initial window");
+		let initial_window = WindowBuilder::new()
+			.with_title("initial window")
+			.with_window_icon(None)
+			.with_inner_size(PhysicalSize::new(1280, 720))
+			.build(&event_loop)
+			.unwrap();
+		
+		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
 
-		event_loop.run(move |event, event_loop, control_flow| {
+		let window_surface = WindowSurface::new(&instance, initial_window);
+
+		info!("Initializing graphics");
+		let graphics = self.graphics.get_or_insert(GraphicsHandle::new(instance, &window_surface.surface).unwrap());
+		
+		let gw = GameWindow::new_from_window_surface(&graphics.adapter, window_surface);
+		self.register_gamewindow(gw);
+
+		event_loop.run(move |event, event_loop| {
 			let when = Instant::now();
 			match event {
 				Event::Resumed => {
-					info!("Resume!");
-					// panic!("Resume!");
-					if self.graphics.is_none() {
-						trace!("Initial window");
-						let initial_window = WindowBuilder::new()
-							.with_title("initial window")
-							.with_window_icon(None)
-							.with_inner_size(PhysicalSize::new(1280, 720))
-							.build(event_loop)
-							.unwrap();
-						
-						trace!("Get instance");
-						let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-							backends: wgpu::Backends::all(),
-							dx12_shader_compiler: wgpu::Dx12Compiler::default(),
-						});
-
-						trace!("Make surface");
-						let initial_surface = unsafe { instance.create_surface(&initial_window) }.unwrap();
-
-						info!("Initializing graphics");
-						let graphics = self.graphics.get_or_insert(GraphicsHandle::acquire(instance, &initial_surface).unwrap());
-						
-						info!("Creating first window");
-						let gw = GameWindow::new_from_window_surface(&graphics.adapter, initial_window, initial_surface);
-						self.register_gamewindow(gw);
-
-						info!("Starting game!");
-						self.start_game();
-
-						// Put all of this in an initialize() function?
-					}
+					info!("Resume");
 				},
 				Event::UserEvent(event) => {
 					match event {
-						WindowCommand::Shutdown => control_flow.set_exit_with_code(0),
+						WindowCommand::Shutdown => event_loop.exit(),
 						WindowCommand::NewWindow => {
-							let window_builder = WindowBuilder::new();
-							self.register_gamewindow(GameWindow::new(&self.graphics.as_ref().unwrap().instance, &self.graphics.as_ref().unwrap().adapter, window_builder, event_loop));
+							todo!("Create new GameWindow");
+							// let window_builder = WindowBuilder::new();
+							// self.register_gamewindow(GameWindow::new(&self.graphics.as_ref().unwrap().instance, &self.graphics.as_ref().unwrap().adapter, window_builder, event_loop));
 						},
 					}
 				},
@@ -710,73 +574,7 @@ impl WindowManager {
 						_ => {},
 					}
 				},
-				Event::MainEventsCleared => {
-					// info!("Main events cleared");
-					// todo!("Query windows for redraw events")
-				},
-				Event::RedrawRequested(_window_id) => {
-					// info!("Redraw requested for id {window_id:?}");
-				},
-				Event::RedrawEventsCleared => {
-					// info!("Redraw events cleared");
-					// Can do other things if the game hasn't loaded
-					// Like a loading screen!
-					let to_update = self.windows.values_mut()
-						.filter(|w| w.should_update())
-						.collect::<Vec<_>>();
-
-					if to_update.is_empty() {
-						return;
-					}
-					let st = Instant::now();
-
-					if let Some(game_thing) = self.game.as_mut() {
-						match game_thing.game.tick() {
-							GameStatus::Exit(status) => todo!(),
-							GameStatus::Continue(next_tick) => {
-								// let to_next_tick = next_tick - Instant::now();
-								// info!("Next tick in {}ms", to_next_tick.as_millis());
-								// std::thread::sleep(to_next_tick);
-							},
-						}
-						
-						let mut textures = Vec::with_capacity(to_update.len());
-						let mut command_buffers = Vec::with_capacity(to_update.len() * 2 + 1);
-						for window in to_update {
-							let (t, ui, game) = window.update(
-								self.graphics.as_mut().unwrap(),
-								&mut game_thing.game,
-							);
-							textures.push(t);
-							if let Some(game) = game {
-								command_buffers.push(game);
-							}
-							command_buffers.push(ui);
-						}
-
-						let mut encoder = self.graphics.as_mut().unwrap().device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-							label: Some("Profiler resolve"),
-						});
-						self.graphics.as_mut().unwrap().profiler.resolve_queries(&mut encoder);
-						command_buffers.push(encoder.finish());
-
-
-						let _index = self.graphics.as_ref().unwrap().queue.submit(command_buffers);
-
-						self.graphics.as_mut().unwrap().profiler.end_frame().unwrap();
-
-						for surface in textures {
-							surface.present();
-						}
-						profiling::finish_frame!();
-					} else {
-						error!("Couldn't redraw becuase game is dispareau");
-						panic!()
-					}
-
-					info!("Encoded window update in {}ms", st.elapsed().as_millis());
-				},
-				Event::LoopDestroyed => {
+				Event::LoopExiting => {
 					info!("Loop destroy, shutting down");					
 					self.window_id_key.drain();
 					for (_, _window) in self.windows.drain() {
@@ -786,18 +584,18 @@ impl WindowManager {
 				},
 				_ => {},
 			}
-		});
+		}).unwrap();
 	}
 
-	pub fn register_gamewindow(&mut self, gamewindow: GameWindow) -> WindowKey {
-		let id = gamewindow.window.id();
+	fn register_gamewindow(&mut self, gamewindow: GameWindow) -> WindowKey {
+		let id = gamewindow.window_surface.window.id();
 		let key = self.windows.insert(gamewindow);
 		self.window_id_key.insert(id, key);
 		key
 	}
 
 	pub fn close_window(&mut self, key: WindowKey) {
-		let wid = self.windows.get(key).unwrap().window.id();
+		let wid = self.windows.get(key).unwrap().window_surface.window.id();
 		self.window_id_key.remove(&wid);
 		self.windows.remove(key);
 		// Dropping the value should cause the window to close
@@ -816,25 +614,23 @@ impl WindowManager {
 }
 
 
-struct WindowSurface {
-	surface: wgpu::Surface,
+struct SurfaceConfiguration {
 	surface_config: wgpu::SurfaceConfiguration,
 	dirty: bool, // flag to reconfigure the surface
 	msaa_levels: u32,
 	msaa: Option<(wgpu::Texture, wgpu::TextureView)>,
 	depth: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
-impl WindowSurface {
+impl SurfaceConfiguration {
 	pub fn new(
 		adapter: &wgpu::Adapter, 
-		window: &winit::window::Window, 
-		surface: wgpu::Surface,
+		window: &WindowSurface,
 		msaa_levels: u32,
 	) -> Self {
 
-		let surface_caps = surface.get_capabilities(adapter);
+		let surface_caps = window.surface.get_capabilities(adapter);
 		let format = preferred_framebuffer_format(&surface_caps.formats).unwrap();
-		let size = window.inner_size();
+		let size = window.window.inner_size();
 		let width = size.width;
 		let height = size.height;
 		let surface_config = wgpu::SurfaceConfiguration {
@@ -845,6 +641,7 @@ impl WindowSurface {
 			present_mode: wgpu::PresentMode::Fifo,
 			alpha_mode: wgpu::CompositeAlphaMode::Auto,
 			view_formats: vec![format],
+			desired_maximum_frame_latency: 2,
 		};
 
 		assert!(msaa_levels != 0, "msaa levels cannot be zero");
@@ -852,7 +649,6 @@ impl WindowSurface {
 		info!("Created new WindowSurface with format {format:?}");
 
 		Self {
-			surface,
 			surface_config,
 			dirty: true,
 			msaa_levels,
@@ -875,14 +671,15 @@ impl WindowSurface {
 	pub fn frame<'a>(
 		&'a mut self, 
 		device: &wgpu::Device, 
+		window: &WindowSurface,
 	) -> (wgpu::SurfaceTexture, SurfaceFrame<'a>) {
 		if self.dirty {
 			// Expensive (17ms expensive!), so we don't want to do it every time
-			self.surface.configure(device, &self.surface_config);
+			window.surface.configure(device, &self.surface_config);
 			self.dirty = false;
 		}
 		
-		let frame = match self.surface.get_current_texture() {
+		let frame = match window.surface.get_current_texture() {
 			Ok(tex) => tex,
 			// Apparently this happens when minimized on Windows
 			Err(wgpu::SurfaceError::Outdated) => panic!("Render to outdated texture for window!"),
@@ -946,6 +743,26 @@ impl WindowSurface {
 	}
 }
 
+
+/// A window and a surface for that window. 
+/// 
+/// Uses unsafe code, but is safe because the surface is always dropped before the window. 
+struct WindowSurface {
+	pub window: winit::window::Window,
+	pub surface: wgpu::Surface<'static>,
+}
+impl WindowSurface {
+	pub fn new(
+		instance: &wgpu::Instance,
+		window: winit::window::Window,
+	) -> Self {
+		let s = instance.create_surface(&window).unwrap();
+		let surface = unsafe { std::mem::transmute(s) };
+		Self { window, surface, }
+	}
+}
+
+
 struct SurfaceFrame<'s> {
 	frame_view: wgpu::TextureView,
 	msaa: Option<&'s wgpu::TextureView>,
@@ -965,17 +782,19 @@ impl<'s> SurfaceFrame<'s> {
 						b: 0.0,
 						a: 0.0,
 					}),
-					store: true,
+					store: wgpu::StoreOp::Store,
 				},
 			})],
 			depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
 				view: self.depth,
 				depth_ops: Some(wgpu::Operations {
 					load: wgpu::LoadOp::Clear(1.0),
-					store: true,
+					store: wgpu::StoreOp::Store,
 				}),
 				stencil_ops: None,
 			}),
+			timestamp_writes: None,
+			occlusion_query_set: None,
 		})
 	}
 }

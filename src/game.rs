@@ -7,24 +7,24 @@ use winit::event_loop::*;
 use std::ops::{Deref, DerefMut};
 use std::time::{Instant, Duration};
 use std::sync::Arc;
-use crate::ecs::{ControlMap, BlockResource, TransformComponent, ModelComponent, raw_control_system, movement_system, context_albedo_system, context_camera_system, ssao_system};
+use crate::ecs::{ControlMap, TransformComponent, ModelComponent, local_control_system, movement_system, context_albedo_system, context_camera_system, ssao_system};
 use crate::ecs::time::{time_buffer_system, TimeResource};
-use crate::ecs::chunks::{ChunksResource, chunk_loading_system};
-use crate::ecs::light::{TorchLightChunksResource, torchlight_chunk_init_system, torchlight_debug_place_system, torchlight_update_system};
-use crate::ecs::model::{map_modelling_system, map_model_rendering_system, MapModelResource};
-use crate::ecs::modification::{map_modification_system, map_placement_system};
-use crate::ecs::octree::{gpu_chunk_loading_system, chunk_rays_system, BigBufferResource, GPUChunksResource, block_colours_system};
-use crate::ecs::terrain::{TerrainResource, TerrainLoadingResource, terrain_loading_system};
+// use crate::ecs::chunks::{ChunksResource, chunk_loading_system};
+// use crate::ecs::light::{TorchLightChunksResource, torchlight_chunk_init_system, torchlight_debug_place_system, torchlight_update_system};
+// use crate::ecs::model::{map_modelling_system, map_model_rendering_system, MapModelResource};
+// use crate::ecs::modification::{map_modification_system, map_placement_system};
+// use crate::ecs::octree::{gpu_chunk_loading_system, chunk_rays_system, BigBufferResource, GPUChunksResource, block_colours_system};
+// use crate::ecs::terrain::{TerrainResource, TerrainLoadingResource, terrain_loading_system};
 use crate::rendering_integration::WorldWrapper;
 use crate::util::RingDataHolder;
 use crate::voxel::load_all_blocks_in_file;
 use crate::window::*;
-use eks::prelude::*;
+use ekstensions::prelude::*;
 use krender::prelude::*;
 
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 pub struct DeviceResource(Arc<wgpu::Device>);
 impl Deref for DeviceResource {
 	type Target = Arc<wgpu::Device>;
@@ -34,7 +34,7 @@ impl Deref for DeviceResource {
 }
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 pub struct QueueResource(Arc<wgpu::Queue>);
 impl Deref for QueueResource {
 	type Target = Arc<wgpu::Queue>;
@@ -44,7 +44,7 @@ impl Deref for QueueResource {
 }
 
 
-#[derive(Debug, ResourceIdent, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct MaterialResource { pub materials: MaterialManager }
 impl Deref for MaterialResource {
 	type Target = MaterialManager;
@@ -59,7 +59,7 @@ impl DerefMut for MaterialResource {
 }
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 pub struct BufferResource { pub buffers: BufferManager }
 impl Deref for BufferResource {
 	type Target = BufferManager;
@@ -74,7 +74,7 @@ impl DerefMut for BufferResource {
 }
 
 
-#[derive(Debug, ResourceIdent, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct TextureResource { pub textures: TextureManager }
 impl Deref for TextureResource {
 	type Target = TextureManager;
@@ -89,7 +89,7 @@ impl DerefMut for TextureResource {
 }
 
 
-#[derive(Debug, ResourceIdent, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct MeshResource { pub meshes: MeshManager }
 impl Deref for MeshResource {
 	type Target = MeshManager;
@@ -104,7 +104,7 @@ impl DerefMut for MeshResource {
 }
 
 
-#[derive(Debug, ResourceIdent, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct ContextResource { pub contexts: RenderContextManager<Entity> }
 impl Deref for ContextResource {
 	type Target = RenderContextManager<Entity>;
@@ -211,43 +211,43 @@ impl Game {
 	pub fn initialize(&mut self) {
 		self.world.insert_resource(ControlMap::new());
 		
-		self.world.insert_resource(ChunksResource::new());
-		self.world.insert_resource(TerrainResource::default());
-		self.world.insert_resource(TorchLightChunksResource::default());
+		// self.world.insert_resource(ChunksResource::new());
+		// self.world.insert_resource(TerrainResource::default());
+		// self.world.insert_resource(TorchLightChunksResource::default());
 
 		self.world.insert_resource(TimeResource::new());
 
-		self.world.insert_resource(MapModelResource::new(16));
+		// self.world.insert_resource(MapModelResource::new(16));
 
-		self.world.insert_resource({
-			let blocks = BlockResource::default();
-			let mut g = blocks.write();
-			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
-			load_all_blocks_in_file(&mut g, "resources/kblocks.ron", &mut materials).unwrap();
-			drop(g);
-			blocks
-		});
+		// self.world.insert_resource({
+		// 	let blocks = BlockResource::default();
+		// 	let mut g = blocks.write();
+		// 	let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+		// 	load_all_blocks_in_file(&mut g, "resources/kblocks.ron", &mut materials).unwrap();
+		// 	drop(g);
+		// 	blocks
+		// });
 
-		self.world.insert_resource(TerrainLoadingResource::new(42));
+		// self.world.insert_resource(TerrainLoadingResource::new(42));
 
-		{ // Octree thing
-			let r = GPUChunksResource::default();
-			self.world.insert_resource(r);
-		}
+		// { // Octree thing
+		// 	let r = GPUChunksResource::default();
+		// 	self.world.insert_resource(r);
+		// }
 		
-		{ // Big buffer
-			let mut buffers = self.world.borrow::<ResMut<BufferResource>>();
-			let big_buffer = BigBufferResource::new(&mut buffers);
-			drop(buffers);
-			self.world.insert_resource(big_buffer);
-		}
+		// { // Big buffer
+		// 	let mut buffers = self.world.borrow::<ResMut<BufferResource>>();
+		// 	let big_buffer = BigBufferResource::new(&mut buffers);
+		// 	drop(buffers);
+		// 	self.world.insert_resource(big_buffer);
+		// }
 
 		let material = {
-			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+			let mut materials = self.world.query::<ResMut<MaterialResource>>();
 			materials.read("resources/materials/grass.ron")
 		};
 		let mesh = {
-			let mut meshes = self.world.borrow::<ResMut<MeshResource>>();
+			let mut meshes = self.world.query::<ResMut<MeshResource>>();
 			meshes.read_or("resources/meshes/box.obj", || Mesh::read_obj("resources/meshes/box.obj"))
 		};
 		self.world.spawn()
@@ -289,22 +289,22 @@ impl Game {
 		let tick_start = Instant::now();
 		self.first_tick.get_or_insert(tick_start);
 		
-		self.world.run(raw_control_system);
+		self.world.run(local_control_system);
 		self.world.run(movement_system);
-		self.world.run(map_placement_system);
-
-		self.world.run(chunk_loading_system);
-		self.world.run(terrain_loading_system);
-		self.world.run(map_modification_system);
-
+		// self.world.run(map_placement_system);
+// 
+		// self.world.run(chunk_loading_system);
+		// self.world.run(terrain_loading_system);
+		// self.world.run(map_modification_system);
+// 
 		if self.render_rays {
-			self.world.run(gpu_chunk_loading_system); // Could be moved to render, but that'd give frame out of date issues
+			// self.world.run(gpu_chunk_loading_system); // Could be moved to render, but that'd give frame out of date issues
 		}
 		if self.render_polygons {
-			self.world.run(torchlight_chunk_init_system);
-			self.world.run(torchlight_debug_place_system);
-			self.world.run(torchlight_update_system);
-			self.world.run(map_modelling_system);
+			// self.world.run(torchlight_chunk_init_system);
+			// self.world.run(torchlight_debug_place_system);
+			// self.world.run(torchlight_update_system);
+			// self.world.run(map_modelling_system);
 		}
 
 		self.world.run(model_matrix_system);
@@ -332,133 +332,134 @@ impl Game {
 		context: RenderContextKey, 
 		profiler: &mut GpuProfiler,
 	) -> wgpu::CommandBuffer {
-		let render_st = Instant::now();
+		// let render_st = Instant::now();
 		
-		// Render resource systems
-		{
-			profiling::scope!("Render Resource systems");
-			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
-			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+		// // Render resource systems
+		// {
+		// 	profiling::scope!("Render Resource systems");
+		// 	let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
+		// 	let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
 
-			self.world.run_with_data((&mut *context_mut,), output_texture_system);
-			self.world.run_with_data((&mut *context_mut,), context_albedo_system);
-			self.world.run_with_data((&mut *context_mut,), context_camera_system);
+		// 	self.world.run_with_data((&mut *context_mut,), output_texture_system);
+		// 	self.world.run_with_data((&mut *context_mut,), context_albedo_system);
+		// 	self.world.run_with_data((&mut *context_mut,), context_camera_system);
 
-			self.world.run(block_colours_system);
-		}
+		// 	self.world.run(block_colours_system);
+		// }
 
-		self.world.run(time_buffer_system);
+		// self.world.run(time_buffer_system);
 
-		// Retain this?
-		let mut input = RenderInput::new();
+		// // Retain this?
+		// let mut input = RenderInput::new();
 
-		input.stage("skybox").clear_depth(RRID::context("depth"));
-		input.stage("skybox").clear_colour(RRID::context("albedo"));
+		// input.stage("skybox").clear_depth(RRID::context("depth"));
+		// input.stage("skybox").clear_colour(RRID::context("albedo"));
 		
-		{ // Render skybox
-			let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
-			let skybox_mtl = materials.read("resources/materials/skybox.ron");
-			input.stage("skybox")
-				.target(AbstractRenderTarget::new()
-					.with_colour(RRID::context("albedo"), None)
-					.with_depth(RRID::context("depth")))
-				.push((skybox_mtl, None, Entity::default()));
-		}
+		// { // Render skybox
+		// 	let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+		// 	let skybox_mtl = materials.read("resources/materials/skybox.ron");
+		// 	input.stage("skybox")
+		// 		.target(AbstractRenderTarget::new()
+		// 			.with_colour(RRID::context("albedo"), None)
+		// 			.with_depth(RRID::context("depth")))
+		// 		.push((skybox_mtl, None, Entity::default()));
+		// }
 
-		input.add_dependency("models", "skybox");
-		self.world.run_with_data((&mut input, context), model_render_system);
+		// input.add_dependency("models", "skybox");
+		// self.world.run_with_data((&mut input, context), model_render_system);
 		
-		// Render chunk meshes
-		if self.render_polygons {
-			self.world.run_with_data((&mut input, context), map_model_rendering_system);
-		}
+		// // Render chunk meshes
+		// if self.render_polygons {
+		// 	self.world.run_with_data((&mut input, context), map_model_rendering_system);
+		// }
 
-		// Render chunks with rays
-		if self.render_rays {
-			input.add_dependency("voxels", "skybox");
-			input.add_dependency("models", "voxels");
+		// // Render chunks with rays
+		// if self.render_rays {
+		// 	input.add_dependency("voxels", "skybox");
+		// 	input.add_dependency("models", "voxels");
 		
-			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
-			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
-			self.world.run_with_data((context_mut, &mut input), chunk_rays_system);
-		}
+		// 	let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
+		// 	let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+		// 	self.world.run_with_data((context_mut, &mut input), chunk_rays_system);
+		// }
 
-		input.add_dependency("ssao generate", "models");
-		input.add_dependency("ssao apply", "ssao generate");
-		{
-			let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
-			let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
-			self.world.run_with_data((context_mut, &mut input), ssao_system);
-		}
+		// input.add_dependency("ssao generate", "models");
+		// input.add_dependency("ssao apply", "ssao generate");
+		// {
+		// 	let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
+		// 	let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+		// 	self.world.run_with_data((context_mut, &mut input), ssao_system);
+		// }
 		
-		let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
-		let mut meshes = self.world.borrow::<ResMut<MeshResource>>();
-		let mut textures = self.world.borrow::<ResMut<TextureResource>>();
-		let mut buffers = self.world.borrow::<ResMut<BufferResource>>();
-		let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
-		{
-			profiling::scope!("Render prepare");
-			prepare_for_render(
-				&self.device, 
-				&self.queue, 
-				&mut self.shaders, 
-				&mut materials.materials, 
-				&mut meshes.meshes, 
-				&mut textures.textures, 
-				&mut buffers.buffers, 
-				&mut self.bind_groups, 
-				&mut contexts.contexts,
-			);
-		}
+		// let mut materials = self.world.borrow::<ResMut<MaterialResource>>();
+		// let mut meshes = self.world.borrow::<ResMut<MeshResource>>();
+		// let mut textures = self.world.borrow::<ResMut<TextureResource>>();
+		// let mut buffers = self.world.borrow::<ResMut<BufferResource>>();
+		// let mut contexts = self.world.borrow::<ResMut<ContextResource>>();
+		// {
+		// 	profiling::scope!("Render prepare");
+		// 	prepare_for_render(
+		// 		&self.device, 
+		// 		&self.queue, 
+		// 		&mut self.shaders, 
+		// 		&mut materials.materials, 
+		// 		&mut meshes.meshes, 
+		// 		&mut textures.textures, 
+		// 		&mut buffers.buffers, 
+		// 		&mut self.bind_groups, 
+		// 		&mut contexts.contexts,
+		// 	);
+		// }
 
-		let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
-		let storage_provider = WorldWrapper { world: &self.world, };
-		let bundle = {
-			profiling::scope!("Render bundle");
-			input.bundle(
-				&self.device,
-				&textures,
-				&mut meshes, 
-				&materials, 
-				&self.shaders, 
-				&storage_provider, 
-				&context_mut,
-				self.render_sort,
-			)
-		};
+		// let context_mut = contexts.contexts.render_contexts.get_mut(context).unwrap();
+		// let storage_provider = WorldWrapper { world: &self.world, };
+		// let bundle = {
+		// 	profiling::scope!("Render bundle");
+		// 	input.bundle(
+		// 		&self.device,
+		// 		&textures,
+		// 		&mut meshes, 
+		// 		&materials, 
+		// 		&self.shaders, 
+		// 		&storage_provider, 
+		// 		&context_mut,
+		// 		self.render_sort,
+		// 	)
+		// };
 
-		meshes.bind_unbound(&self.device);
+		// meshes.bind_unbound(&self.device);
 
-		info!("{} draw calls", bundle.draw_count());
+		// info!("{} draw calls", bundle.draw_count());
 
-		let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-			label: None,
-		});
+		// let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+		// 	label: None,
+		// });
 
-		{
-			profiling::scope!("Render execute");
-			bundle.execute(
-				&self.device,
-				&self.shaders, 
-				&self.bind_groups, 
-				&meshes.meshes, 
-				&textures.textures, 
-				&mut encoder, 
-				profiler,
-			);
-		}		
+		// {
+		// 	profiling::scope!("Render execute");
+		// 	bundle.execute(
+		// 		&self.device,
+		// 		&self.shaders, 
+		// 		&self.bind_groups, 
+		// 		&meshes.meshes, 
+		// 		&textures.textures, 
+		// 		&mut encoder, 
+		// 		profiler,
+		// 	);
+		// }		
 
-		let buf = encoder.finish();
+		// let buf = encoder.finish();
 
-		let render_dur = render_st.elapsed();
-		info!("Encoded render in {:.1}ms", render_dur.as_secs_f32() * 1000.0);
+		// let render_dur = render_st.elapsed();
+		// info!("Encoded render in {:.1}ms", render_dur.as_secs_f32() * 1000.0);
 
-		buf
+		// buf
+		todo!()
 	}
 }
 
 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct OutputResolutionComponent {
 	pub width: u32,
 	pub height: u32,
@@ -487,22 +488,22 @@ pub fn output_texture_system(
 				let d = textures.get_mut(k).unwrap();
 				d.set_size(resolution.width, resolution.height, 1);
 			} else {
-				let t = Texture::new(
-					"output_texture", 
-					wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
-					resolution.width, resolution.height, 
-					1, false, false, 
-				).with_usages(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT);
-				let key = textures.insert(t);
-				context.insert_texture("output_texture", key);
+				// let t = Texture::new(
+				// 	"output_texture", 
+				// 	wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
+				// 	resolution.width, resolution.height, 
+				// 	1, false, false, 
+				// ).with_usages(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT);
+				// let key = textures.insert(t);
+				// context.insert_texture("output_texture", key);
 
-				let d = textures.insert(Texture::new(
-					"depth", 
-					wgpu::TextureFormat::Depth32Float.into(), 
-					resolution.width, resolution.height, 
-					1, false, false, 
-				).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
-				context.insert_texture("depth", d);
+				// let d = textures.insert(Texture::new(
+				// 	"depth", 
+				// 	wgpu::TextureFormat::Depth32Float.into(), 
+				// 	resolution.width, resolution.height, 
+				// 	1, false, false, 
+				// ).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
+				// context.insert_texture("depth", d);
 			}
 		}
 	}
@@ -532,7 +533,7 @@ fn model_render_system(
 
 // Used to put transform into shader
 #[repr(C)]
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct ModelMatrixComponent {
 	pub model_matrix: Mat4,
 }

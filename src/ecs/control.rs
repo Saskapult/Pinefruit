@@ -4,9 +4,8 @@ use arrayvec::ArrayVec;
 use crossbeam_channel::{Receiver, Sender};
 use enumflags2::{bitflags, BitFlags};
 use slotmap::{new_key_type, SlotMap};
-use winit::event::VirtualKeyCode;
-// use shipyard::*;
-use eks::prelude::*;
+use ekstensions::prelude::*;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use crate::input::{KeyKey, InputEvent, ActiveState};
 
 
@@ -23,7 +22,7 @@ pub enum ControlEvent {
 }
 
 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct ControlComponent {
 	pub control_sequence: Vec<(ControlEvent, Instant)>,
 	start: Instant,
@@ -186,25 +185,6 @@ impl ControlComponent {
 }
 
 
-#[derive(Debug, ComponentIdent)]
-pub struct RawInputComponent {
-	receiver: Receiver<(InputEvent, Instant)>,
-}
-impl RawInputComponent {
-	pub fn new() -> (Self, Sender<(InputEvent, Instant)>) {
-		let (sender, receiver) = crossbeam_channel::unbounded();
-		(Self { receiver }, sender)
-	}
-}
-
-
-#[derive(Debug, ComponentIdent)]
-pub struct ManualInputComponent {
-	// Use for netowrk control stuff
-	// Map control name to key and feed to [ControlComponent]
-}
-
-
 #[bitflags]
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -223,12 +203,12 @@ impl KeyModifiers {
 		match key {
 			KeyKey::BoardKey(key) => {
 				match key {
-					VirtualKeyCode::LShift => Some(Self::LShift),
-					VirtualKeyCode::LControl => Some(Self::LCtrl),
-					VirtualKeyCode::LAlt => Some(Self::LAlt),
-					VirtualKeyCode::RShift => Some(Self::RShift),
-					VirtualKeyCode::RControl => Some(Self::RCtrl),
-					VirtualKeyCode::RAlt => Some(Self::RAlt),
+					PhysicalKey::Code(KeyCode::ShiftLeft) => Some(Self::LShift),
+					PhysicalKey::Code(KeyCode::ControlLeft) => Some(Self::LCtrl),
+					PhysicalKey::Code(KeyCode::AltLeft) => Some(Self::LAlt),
+					PhysicalKey::Code(KeyCode::ShiftRight) => Some(Self::RShift),
+					PhysicalKey::Code(KeyCode::ControlRight) => Some(Self::RCtrl),
+					PhysicalKey::Code(KeyCode::AltRight) => Some(Self::RAlt),
 					_ => None,
 				}
 			}
@@ -251,7 +231,7 @@ pub struct KeyCombo {
 new_key_type! { pub struct ControlKey; }
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 struct ControlMapEntry {
 	pub name: String,
 	pub description: String,
@@ -259,7 +239,7 @@ struct ControlMapEntry {
 }
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 pub struct ControlMap {
 	name_cid_map: HashMap<String, ControlKey>,
 
@@ -297,9 +277,21 @@ impl ControlMap {
 }
 
 
+#[derive(Debug, Component)]
+pub struct LocalInputComponent {
+	receiver: Receiver<(InputEvent, Instant)>,
+}
+impl LocalInputComponent {
+	pub fn new() -> (Self, Sender<(InputEvent, Instant)>) {
+		let (sender, receiver) = crossbeam_channel::unbounded();
+		(Self { receiver }, sender)
+	}
+}
+
+
 #[profiling::function]
-pub fn raw_control_system(
-	mut inputs: CompMut<RawInputComponent>,
+pub fn local_control_system(
+	mut inputs: CompMut<LocalInputComponent>,
 	mut controls: CompMut<ControlComponent>,
 	map: Res<ControlMap>,
 ) {

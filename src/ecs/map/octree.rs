@@ -10,7 +10,7 @@ use super::{BlockResource, terrain::{TerrainResource, TerrainEntry}, chunks::Chu
 
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 pub struct BigBufferResource {
 	// The buffer need not be only for chunk data, so we could store
 	// these in another shared resource
@@ -95,7 +95,7 @@ impl std::ops::DerefMut for BigBufferResource {
 }
 
 
-#[derive(Debug, ResourceIdent, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct GPUChunksResource {
 	pub chunks: HashMap<IVec3, Option<(KGeneration, SlabAllocationKey)>>,
 
@@ -115,7 +115,7 @@ impl GPUChunksResource {
 
 
 /// The chunks around this entity will be loaded into GPU memory as octrees
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct GPUChunkLoadingComponent {
 	pub radius: i32,
 	pub tolerence: i32,
@@ -255,7 +255,7 @@ fn chunk_to_octree(chunk: &Chunk<BlockKey>, chunk_extent: u32) -> Octree {
 
 
 /// Stick this on a context entity, get chunk acceleration structure info buffer. 
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct GPUChunkViewer {
 	pub radius: u32, // This is assumed to be constant (determines buffer size)
 	pub info_buffer: Option<BufferKey>,	
@@ -367,7 +367,7 @@ pub fn chunk_rays_system(
 }
 
 
-#[derive(Debug, ResourceIdent)]
+#[derive(Debug, Resource)]
 pub struct BlockColoursResource {
 	pub colours: BufferKey,
 }

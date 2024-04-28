@@ -17,7 +17,7 @@ pub mod terrain;
 
 
 // This should not be here I think
-#[derive(Debug, ResourceIdent, Default)]
+#[derive(Debug, Resource, Default)]
 pub struct BlockResource {
 	pub blocks: Arc<RwLock<BlockManager>>,
 }

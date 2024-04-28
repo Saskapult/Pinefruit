@@ -6,7 +6,7 @@ use super::{terrain::TerrainResource, chunks::ChunksResource};
 
 
 
-#[derive(Debug, ComponentIdent, Default, Clone, Copy)]
+#[derive(Debug, Component, Default, Clone, Copy)]
 pub struct VoxelLookingComponent {
 	pub result: Option<(BlockKey, FVTIteratorItem)>
 }
@@ -28,7 +28,7 @@ pub fn voxel_looking_system(
 }
 
 
-#[derive(Debug, ComponentIdent, Default)]
+#[derive(Debug, Component, Default)]
 pub struct VoxelLookingMarkerComponent {
 	pub entity: Entity,
 }

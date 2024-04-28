@@ -1,20 +1,11 @@
 use arrayvec::ArrayVec;
-use winit::event::VirtualKeyCode;
+use winit::keyboard::KeyCode;
 use crate::{ecs::*, input::KeyKey};
 use glam::*;
-use eks::prelude::*;
+use ekstensions::prelude::*;
 
 
-
-const KEY_FORWARD: KeyKey = KeyKey::BoardKey(VirtualKeyCode::W);
-const KEY_BACKWARD: KeyKey = KeyKey::BoardKey(VirtualKeyCode::S);
-const KEY_RIGHT: KeyKey = KeyKey::BoardKey(VirtualKeyCode::D);
-const KEY_LEFT: KeyKey = KeyKey::BoardKey(VirtualKeyCode::A);
-const KEY_UP: KeyKey = KeyKey::BoardKey(VirtualKeyCode::Space);
-const KEY_DOWN: KeyKey = KeyKey::BoardKey(VirtualKeyCode::LShift);
-
-
-#[derive(Debug, ComponentIdent)]
+#[derive(Debug, Component)]
 pub struct MovementComponent {
 	pub cid_right: ControlKey,
 	pub cid_left: ControlKey,
@@ -30,6 +21,13 @@ pub struct MovementComponent {
 }
 impl MovementComponent {
 	pub fn new(control_map: &mut ControlMap) -> Self {
+		let KEY_FORWARD: KeyKey = KeyKey::BoardKey(KeyCode::KeyW.into());
+		let KEY_BACKWARD: KeyKey = KeyKey::BoardKey(KeyCode::KeyS.into());
+		let KEY_RIGHT: KeyKey = KeyKey::BoardKey(KeyCode::KeyD.into());
+		let KEY_LEFT: KeyKey = KeyKey::BoardKey(KeyCode::KeyA.into());
+		let KEY_UP: KeyKey = KeyKey::BoardKey(KeyCode::Space.into());
+		let KEY_DOWN: KeyKey = KeyKey::BoardKey(KeyCode::ShiftLeft.into());
+
 		let cid_right = control_map.new_control(
 			"Move Right", 
 			"Moves the entity rightward.",

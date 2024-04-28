@@ -1,7 +1,7 @@
 /target
 /resources/not_for_git
 .vscode
-/map_saved
+/saved
 *.spv
 *.xcf
 /resources/sounds/*

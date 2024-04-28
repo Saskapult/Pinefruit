@@ -1,8 +1,7 @@
-use eks::prelude::{World, Entity};
+use ekstensions::prelude::*;
 use krender::vertex::{InstanceAttributeSource, FetchedInstanceAttributeSource};
 use krender::prelude::{InstanceComponentProvider, InstanceDataProvider};
-use eks::sparseset::UntypedSparseSet;
-
+use ekstensions::eks::sparseset::UntypedSparseSet;
 
 
 pub struct WorldWrapper<'world> {
@@ -14,12 +13,12 @@ impl<'world> InstanceDataProvider<'world, Entity> for WorldWrapper<'world> {
 	) -> Option<impl InstanceComponentProvider<'world, Entity>> {
 		let component_id = component_id.as_ref().to_string();
 		Some(StorageWrapper {
-			storage: unsafe { self.world.get_storage_ref(component_id) },
+			storage: unsafe { self.world.component_hack(component_id) },
 		})
 	}
 
 	fn get_resource(&self, resource_id: impl Into<String>) -> Option<&'world [u8]> {
-		Some(self.world.borrow_resource_bytes(resource_id).as_ref())
+		Some(unsafe { self.world.resource_hack(resource_id.into()).as_ref() })
 	}
 
 	fn fetch_source(
@@ -29,7 +28,7 @@ impl<'world> InstanceDataProvider<'world, Entity> for WorldWrapper<'world> {
 			InstanceAttributeSource::Component(component_id) => {
 				// I don't know why it mut be this way, but it must be this way
 				let s = StorageWrapper {
-					storage: unsafe { self.world.get_storage_ref(component_id) },
+					storage: unsafe { self.world.component_hack(component_id) },
 				};
 				FetchedInstanceAttributeSource::<'world, _>::Component(Box::new(s))
 			},
@@ -46,8 +45,8 @@ impl<'world> InstanceDataProvider<'world, Entity> for WorldWrapper<'world> {
 struct StorageWrapper<'borrow> {
 	storage: &'borrow UntypedSparseSet,
 }
-impl<'borrow> InstanceComponentProvider<'borrow, eks::prelude::Entity> for StorageWrapper<'borrow> {
-	fn get_component(&self, entity: eks::prelude::Entity) -> Option<&'borrow [u8]> {
-		self.storage.get_untyped(entity)
+impl<'borrow> InstanceComponentProvider<'borrow, Entity> for StorageWrapper<'borrow> {
+	fn get_component(&self, entity: Entity) -> Option<&'borrow [u8]> {
+		self.storage.get(entity)
 	}
 }
