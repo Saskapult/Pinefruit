@@ -23,7 +23,7 @@ pub fn load(p: &mut ekstensions::ExtensionLoader) {
 	p.component::<ComponentA>();
 
 	// Needs unique name tho
-	p.system("init", "init_system", init);
+	p.system("client_init", "example0_init_system", init);
 }
 
 

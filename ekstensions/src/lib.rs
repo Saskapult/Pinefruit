@@ -4,6 +4,7 @@ use eks::{prelude::*, system::SystemFunction};
 pub use eks;
 pub mod prelude {
 	pub use eks::prelude::*;
+	pub use crate::ExtensionRegistry;
 }
 
 #[macro_use]
@@ -86,12 +87,15 @@ impl ExtensionSystem {
 impl std::fmt::Debug for ExtensionSystem {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		f.debug_struct("ExtensionSystem")
+			.field("group", &self.group)
 			.field("id", &self.id)
 			.field("run_after", &self.run_after)
 			// .field("run_before", &self.run_before)
 			.finish()			
 	}
 }
+unsafe impl Send for ExtensionSystem {}
+unsafe impl Sync for ExtensionSystem {}
 
 
 #[derive(Debug, PartialEq, Eq)]
@@ -309,6 +313,8 @@ impl ExtensionEntry {
 			let f = self.library.get::<unsafe extern fn(&mut ExtensionLoader) -> ()>(b"load")?;
 			f(&mut loader);
 		}
+
+		debug!("Groups are {:?}", loader.provisions.systems.iter().map(|s| &s.group));
 		
 		let _ = self.provides.insert(loader.provisions);
 		
@@ -458,6 +464,22 @@ impl ExtensionRegistry {
 
 		Ok(())
 	}
+
+	/// Registers all folders in a path as extensions. 
+	/// Should registration fail, the path is skipped. 
+	pub fn register_all_in(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+		let dirs = std::fs::read_dir(path)?
+			.filter_map(|d| d.ok())
+			.map(|d| d.path())
+			.filter(|d| d.is_dir());
+		for d in dirs {
+			if let Err(e) = self.register(&d) {
+				error!("Failed to register {:?} - {:?}", d, e);
+			}
+		}
+
+		Ok(())
+	}
  
 	pub fn remove(&mut self, path: impl AsRef<Path>, world: &mut World) -> anyhow::Result<()> {
 		if let Some(i) = self.extensions.iter().position(|e| e.path.eq(path.as_ref())) {
@@ -472,6 +494,7 @@ impl ExtensionRegistry {
 	}
 
 	pub fn run(&self, world: &mut World, group: impl AsRef<str>) {
+		info!("Running '{}'", group.as_ref());
 		let stages = self.systems.get(&group.as_ref().to_string()).unwrap();
 
 		for stage in stages {
@@ -495,6 +518,8 @@ impl ExtensionRegistry {
 				a.entry(&v.2.group).or_insert(Vec::new()).push(v);
 				a
 			});
+
+		debug!("{} groups", groups.len());
 
 		let mut orders = HashMap::new();
 		for (group, mut queue) in groups {

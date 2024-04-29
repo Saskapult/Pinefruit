@@ -2,9 +2,8 @@ pub mod viewport;
 
 use std::time::Instant;
 use crossbeam_channel::Sender;
-use glam::Vec3;
 use ekstensions::prelude::*;
-use crate::{game::{ContextResource, Game}, input::{InputEvent, KeyDeduplicator}, window::WindowPropertiesAndSettings};
+use crate::{game::ContextResource, input::{InputEvent, KeyDeduplicator}, window::WindowPropertiesAndSettings};
 use crate::ecs::*;
 use self::viewport::{ViewportManager, ViewportWidget};
 
@@ -18,7 +17,7 @@ pub struct GameWidget {
 }
 impl GameWidget {
 	pub fn new(
-		game: &mut Game, 
+		world: &mut World, 
 		viewports: &mut ViewportManager,
 		entity: Entity,
 	) -> Self {
@@ -27,7 +26,7 @@ impl GameWidget {
 		// Also ControlComponent but I don't remember what that is
 		let (input_component, client_input) = LocalInputComponent::new();
 		{
-			if game.world.query::<CompMut<LocalInputComponent>>().insert(entity, input_component).is_some() {
+			if world.query::<CompMut<LocalInputComponent>>().insert(entity, input_component).is_some() {
 				warn!("Overwrote a LocalInputComponent for entity {:?}", entity);
 			}
 		}
@@ -36,19 +35,19 @@ impl GameWidget {
 		// Insert required components for that
 		// Not sure what should be here and what should be in the spawn function
 		{ // Camera
-			game.world.query::<CompMut<CameraComponent>>()
+			world.query::<CompMut<CameraComponent>>()
 				.insert(entity, CameraComponent::new());
 		}
 		{ // SSAO
-			game.world.query::<CompMut<SSAOComponent>>()
+			world.query::<CompMut<SSAOComponent>>()
 				.insert(entity, SSAOComponent::default());
 		}
 		{ // Control
-			game.world.query::<CompMut<ControlComponent>>()
+			world.query::<CompMut<ControlComponent>>()
 				.insert(entity, ControlComponent::new());
 		}
 		let context = {
-			let mut contexts = game.world.query::<ResMut<ContextResource>>();
+			let mut contexts = world.query::<ResMut<ContextResource>>();
 			
 			let (key, context) = contexts.contexts.new_context("default context");
 			context.entity = Some(entity);
@@ -65,11 +64,9 @@ impl GameWidget {
 		}
 	}
 
-	pub fn input(&mut self, event: winit::event::KeyEvent, when: Instant) {
-		// Send to server immediately
-		// Server will lock and collect when ticking
-		// Collect for client
-		todo!()
+	pub fn input(&mut self, event: impl Into<InputEvent>, when: Instant) {
+		// Send to client
+		self.client_input.send((event.into(), when)).unwrap();
 	}
 
 	pub fn release_keys(&mut self) {

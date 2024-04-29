@@ -3,6 +3,7 @@ use egui::{Context, DragValue, ViewportId};
 use egui_wgpu::{preferred_framebuffer_format, Renderer, ScreenDescriptor};
 use ekstensions::prelude::*;
 use krender::RenderContextKey;
+use parking_lot::{Mutex, RwLock};
 use slotmap::{new_key_type, SlotMap};
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
 use winit::dpi::{PhysicalSize, PhysicalPosition};
@@ -14,11 +15,14 @@ use winit::{
 use wgpu;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
+use crate::client::Client;
 use crate::ecs::{TransformComponent, SSAOComponent, MovementComponent, CameraComponent};
 use crate::game::{Game, ContextResource, GameStatus};
 use crate::gui::viewport::ViewportManager;
 use crate::gui::GameWidget;
+use crate::input::{InputEvent, KeyKey};
 use crate::util::RingDataHolder;
 
 
@@ -93,9 +97,11 @@ struct GameWindow {
 	update_period: Duration, // Can have another for unfocused delay
 	update_times: RingDataHolder<Duration>,
 
+	client: Arc<Mutex<Client>>,
+
 	viewports: ViewportManager,
 
-	// game_widget: GameWidget,
+	game_widget: GameWidget,
 	// message_widget: MessageWidget,
 	// profiling_widget: RenderProfilingWidget,
 	// show_profiler: bool,
@@ -106,16 +112,18 @@ impl GameWindow {
 		adapter: &wgpu::Adapter, 
 		window_builder: WindowBuilder,
 		event_loop: &EventLoopWindowTarget::<WindowCommand>,
+		client: Arc<Mutex<Client>>,
 	) -> Self {
 		let window = window_builder.build(event_loop).unwrap();
 		let window_surface = WindowSurface::new(instance, window);
-		Self::new_from_window_surface(adapter, window_surface)
+		Self::new_from_window_surface(adapter, window_surface, client)
 	}
 
 	// Used when creating the first window because the GraphicsHandle needs to know the compatible surface 
 	pub fn new_from_window_surface(
 		adapter: &wgpu::Adapter, 
 		window_surface: WindowSurface, 
+		client: Arc<Mutex<Client>>,
 	) -> Self {
 		let surface = SurfaceConfiguration::new(adapter, &window_surface, 1);
 		let egui_context = Context::default();
@@ -129,6 +137,12 @@ impl GameWindow {
 			None,
 			None,
 		);
+
+		let mut viewports = ViewportManager::default();
+
+		// TODO: actual entity
+		let game_widget = GameWidget::new(&mut client.lock().world, &mut viewports, Entity::default());
+
 		Self {
 			window_surface,
 			surface_config: surface,
@@ -144,9 +158,11 @@ impl GameWindow {
 			update_period: Duration::from_secs_f32(1.0 / 60.0),
 			update_times: RingDataHolder::new(30),
 
-			viewports: ViewportManager::default(),
+			client,
 
-			// game_widget: GameWidget::new(),
+			viewports,
+
+			game_widget,
 			// message_widget: MessageWidget::new(),
 			// profiling_widget: RenderProfilingWidget::new(),
 			// show_profiler: false,
@@ -293,17 +309,11 @@ impl GameWindow {
 				// Event was not consumed by egui
 				match window_event {
 					WindowEvent::KeyboardInput { event, .. } => {
-						// Keyborad events are recorded by the game widget 
-						// Maybe they should be sent to the server and client instead? No! (not directly)
-						// The game widget can hold channels to send information to the client and server
 						if self.properties.cursor_inside && !event.repeat {
-							todo!("Game key input")
-							
-							
-							// self.game_widget.input(
-							// 	event,
-							// 	when,
-							// );
+							self.game_widget.input(
+								(event.physical_key, event.state),
+								when,
+							);
 						}
 					},
 					&WindowEvent::MouseInput {
@@ -311,22 +321,18 @@ impl GameWindow {
 						button, 
 						..
 					} => {
-						// Make a "GameInput" enumer that accepts either mouse or keybord or scroll
-						// Have an into method for it 
-						todo!("Game mouse input");
-						// self.game_widget.input(
-						// 	InputEvent::KeyEvent((KeyKey::MouseKey(button), state.into())), 
-						// 	when, 
-						// );
+						self.game_widget.input(
+							InputEvent::KeyEvent((KeyKey::MouseKey(button), state.into())), 
+							when, 
+						);
 					},
 					WindowEvent::MouseWheel { delta, .. } => {
 						match delta {
 							&winit::event::MouseScrollDelta::LineDelta(x, y) => {
-								todo!("Game scroll input");
-								// self.game_widget.input(
-								// 	InputEvent::Scroll([x, y]),
-								// 	when, 
-								// );
+								self.game_widget.input(
+									InputEvent::Scroll([x, y]),
+									when, 
+								);
 							},
 							_ => warn!("only MouseScrollDelta::LineDelta is recognized by the application"),
 						}
@@ -349,11 +355,10 @@ impl GameWindow {
 							}
 						} else {
 							self.manual_cursor_lock_last_position.take();
-							todo!("More GameInput stuff");
-							// self.game_widget.input(
-							// 	InputEvent::CursorMoved([position.x, position.y]),
-							// 	when,
-							// );
+							self.game_widget.input(
+								InputEvent::CursorMoved([position.x, position.y]),
+								when,
+							);
 						}
 					},
 					WindowEvent::Resized (newsize) => {
@@ -371,11 +376,10 @@ impl GameWindow {
 				match device_event {
 					&DeviceEvent::MouseMotion { delta: (dx, dy) } => {
 						if self.properties.cursor_inside && self.settings.cursor_captured {
-							todo!("GameInput");
-							// self.game_widget.input(
-							// 	InputEvent::MouseMotion([dx, dy]),
-							// 	when,
-							// );
+							self.game_widget.input(
+								InputEvent::MouseMotion([dx, dy]),
+								when,
+							);
 						}
 					},
 					_ => {},
@@ -499,8 +503,9 @@ pub struct WindowManager {
 	// Also in client and server 
 	// extensions: Arc<RwLock<ExtensionRegistry>>
 
-	// Arc mutex game? 
-	game: Option<Game>,
+	// extensions: Arc<RwLock<ExtensionRegistry>>,
+	client: Option<Arc<Mutex<Client>>>,
+	server: Option<(Arc<Mutex<World>>, JoinHandle<anyhow::Result<()>>)>,
 	// Client game and server game? 
 	// Server game is just a game in another thread with automatic ticks
 	// Optional so we can connect to other games
@@ -515,7 +520,8 @@ impl WindowManager {
 			window_id_key: HashMap::new(),
 			close_when_no_windows: true,
 			graphics: None,
-			game: None,
+			client: None,
+			server: None,
 		}
 	}
 
@@ -534,8 +540,22 @@ impl WindowManager {
 
 		info!("Initializing graphics");
 		let graphics = self.graphics.get_or_insert(GraphicsHandle::new(instance, &window_surface.surface).unwrap());
+
+		info!("Initializing extensions");
+		let extensions = Arc::new(RwLock::new({
+			let mut e = ExtensionRegistry::new();
+			e.register_all_in("extensions").unwrap();
+			e
+		}));
+
+		info!("Creating client");
+		let client = Arc::new(Mutex::new(Client::new(extensions)));
+		self.client = Some(client.clone());
+
+		// info!("Creating internal server");
+		// info!("Attaching client to internal server");
 		
-		let gw = GameWindow::new_from_window_surface(&graphics.adapter, window_surface);
+		let gw = GameWindow::new_from_window_surface(&graphics.adapter, window_surface, client);
 		self.register_gamewindow(gw);
 
 		event_loop.run(move |event, event_loop| {
