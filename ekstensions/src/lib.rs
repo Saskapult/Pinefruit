@@ -4,51 +4,70 @@ use eks::{prelude::*, system::SystemFunction};
 pub use eks;
 pub mod prelude {
 	pub use eks::prelude::*;
-	pub use crate::ExtensionRegistry;
+	pub use crate::{ExtensionRegistry, ExtensionSystemsLoader};
 }
 
 #[macro_use]
 extern crate log;
 
 
-/// Used by load functions to register and describe provisions. 
-pub struct ExtensionLoader<'a> {
+/// Used by load functions to register and describe storages. 
+pub struct ExtensionStorageLoader<'a> {
 	world: &'a mut World, 
-	provisions: ExtensionProvisions,
+	storages: ExtensionStorages,
 }
-impl<'a> ExtensionLoader<'a> {
+impl<'a> ExtensionStorageLoader<'a> {
+	pub fn component<C: Component>(&mut self) -> &mut Self {
+		self.world.register_component::<C>();
+		self.storages.components.push(C::STORAGE_ID.to_string());
+		self
+	}
+
+	pub fn resource<R: Resource>(&mut self, r: R) -> &mut Self {
+		self.world.insert_resource(r);
+		self.storages.resources.push(R::STORAGE_ID.to_string());
+		self
+	}
+
+	// Should have functions to access world
+	// Some resources might need info from other resources 
+	// But that's outside of our current scope 
+}
+
+
+/// Passed to the systems function to collect system data. 
+pub struct ExtensionSystemsLoader<'a> {
+	// The IDs of all loaded extensions
+	// Used to conditionally enable systems
+	// Although now that I think aobut it, this would require us to have a loads_after condition *if* some other extension is present
+	// I'll leave this here and future me can deal with implementing that 
+	// extensions: Vec<String>, 
+	// All systems provided by this extension
+	// In the future we can pass the entire set of extensions so that overwrites can happen
+	// Oh but wait, that's a bad idea! 
+	// We'd need to track what was added for each world so that it can be unloaded for each world
+	systems: &'a mut Vec<ExtensionSystem>,
+}
+impl<'a> ExtensionSystemsLoader<'a> {
 	pub fn system<S: SystemFunction<'static, (), Q, R> + Copy + 'static, R, Q: Queriable<'static>>(
 		&mut self, 
 		group: impl AsRef<str>,
 		name: impl AsRef<str>, 
 		function: S,
 	) -> &mut ExtensionSystem {
-		let i = self.provisions.systems.len();
-		self.provisions.systems.push(ExtensionSystem::new::<S, R, Q>(group, name, function));
-		self.provisions.systems.get_mut(i).unwrap()
-	}
-
-	pub fn component<C: Component>(&mut self) -> &mut Self {
-		self.world.register_component::<C>();
-		self.provisions.components.push(C::STORAGE_ID.to_string());
-		self
-	}
-
-	pub fn resource<R: Resource>(&mut self, r: R) -> &mut Self {
-		self.world.insert_resource(r);
-		self.provisions.resources.push(R::STORAGE_ID.to_string());
-		self
+		let i = self.systems.len();
+		self.systems.push(ExtensionSystem::new::<S, R, Q>(group, name, function));
+		self.systems.get_mut(i).unwrap()
 	}
 }
 
 
-/// Used by load functions to describe systems. 
 pub struct ExtensionSystem {
 	group: String,
 	id: String,
 	pointer: Box<dyn Fn(*const World)>,
 	run_after: Vec<String>,
-	// run_before: Vec<String>, 
+	run_before: Vec<String>, 
 }
 impl ExtensionSystem {
 	// This is just temporary
@@ -70,7 +89,7 @@ impl ExtensionSystem {
 			id: id.as_ref().to_string(),
 			pointer: Box::new(closure),
 			run_after: Vec::new(),
-			// run_before: Vec::new(),
+			run_before: Vec::new(),
 		}
 	}
 
@@ -79,10 +98,10 @@ impl ExtensionSystem {
 		self
 	}
 
-	// pub fn run_before(&mut self, id: impl AsRef<str>) -> &mut Self {
-	// 	self.run_before.push(id.as_ref().to_string());
-	// 	self
-	// }
+	pub fn run_before(&mut self, id: impl AsRef<str>) -> &mut Self {
+		self.run_before.push(id.as_ref().to_string());
+		self
+	}
 }
 impl std::fmt::Debug for ExtensionSystem {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -107,11 +126,7 @@ pub enum DirtyLevel {
 
 
 #[derive(Debug, Default)]
-pub struct ExtensionProvisions {
-	// (tick, fn, run_after, run_before)
-	pub systems: Vec<ExtensionSystem>,
-	// Just component ID, which is a string
-	// What about resources? Should be here too
+pub struct ExtensionStorages {
 	pub components: Vec<String>,
 	pub resources: Vec<String>,
 }
@@ -127,8 +142,8 @@ pub struct ExtensionEntry {
 	pub library: libloading::Library,
 	pub read_at: SystemTime, 
 	pub load_dependencies: Vec<String>,
-
-	pub provides: Option<ExtensionProvisions>,
+	pub systems: Vec<ExtensionSystem>,
+	pub provides: Option<ExtensionStorages>,
 }
 impl ExtensionEntry {
 	// Reads extension from disk and compiles 
@@ -210,12 +225,24 @@ impl ExtensionEntry {
 		};
 		trace!("Depends on {:?}", load_dependencies);
 
+		// Fetch systems
+		let mut systems = Vec::new();
+		let mut systems_loader = ExtensionSystemsLoader {
+			systems: &mut systems,
+		};
+		unsafe {
+			let f = library.get::<unsafe extern fn(&mut ExtensionSystemsLoader)>(b"systems")?;
+			f(&mut systems_loader);
+		}
+		trace!("Provides {} systems", systems.len());
+
 		Ok(Self {
 			name: name.to_string(), 
 			path: path.as_ref().into(), 
 			library, 
 			read_at: library_ts, 
 			load_dependencies,
+			systems,
 			provides: None,
 		})
 	}
@@ -304,19 +331,17 @@ impl ExtensionEntry {
 	pub fn load(&mut self, world: &mut World) -> anyhow::Result<()> {
 		assert!(!self.loaded(), "Extension already loaded!");
 
-		let mut loader = ExtensionLoader {
+		let mut loader = ExtensionStorageLoader {
 			world,
-			provisions: ExtensionProvisions::default(),
+			storages: ExtensionStorages::default(),
 		};
 
 		unsafe {
-			let f = self.library.get::<unsafe extern fn(&mut ExtensionLoader) -> ()>(b"load")?;
+			let f = self.library.get::<unsafe extern fn(&mut ExtensionStorageLoader) -> ()>(b"load")?;
 			f(&mut loader);
 		}
-
-		debug!("Groups are {:?}", loader.provisions.systems.iter().map(|s| &s.group));
 		
-		let _ = self.provides.insert(loader.provisions);
+		let _ = self.provides.insert(loader.storages);
 		
 		Ok(())
 	}
@@ -348,29 +373,68 @@ impl ExtensionEntry {
 }
 impl Drop for ExtensionEntry {
 	fn drop(&mut self) {
+		if self.provides.is_some() {
+			warn!("Dropping extension with active provisions");
+		}
 		// Any references to the data in a library must be dropped before the library itself 
-		self.provides = None;
+		self.systems.clear();
+	}
+}
+
+
+#[derive(Default)]
+pub struct NativeSystems {
+	systems: Vec<ExtensionSystem>,
+}
+impl NativeSystems {
+	pub fn system<S: SystemFunction<'static, (), Q, R> + Copy + 'static, R, Q: Queriable<'static>>(
+		&mut self, 
+		group: impl AsRef<str>,
+		name: impl AsRef<str>, 
+		function: S,
+	) -> &mut ExtensionSystem {
+		let i = self.systems.len();
+		self.systems.push(ExtensionSystem::new::<S, R, Q>(group, name, function));
+		self.systems.get_mut(i).unwrap()
+	}
+}
+
+
+#[derive(Debug, Clone, Copy)]
+enum SystemIndex {
+	External((usize, usize)),
+	Native(usize),
+}
+impl From<(usize, usize)> for SystemIndex {
+	fn from(value: (usize, usize)) -> Self {
+		Self::External(value)
 	}
 }
 
 
 pub struct ExtensionRegistry {
 	extensions: Vec<ExtensionEntry>,
+
+	native_systems: NativeSystems,
+
 	// Rebuilt when anything changes
-	systems: HashMap<String, Vec<Vec<(usize, usize)>>>,
+	systems: HashMap<String, Vec<Vec<SystemIndex>>>,
 }
 impl ExtensionRegistry {
 	pub fn new() -> Self {
 		Self {
 			extensions: Vec::new(),
-			// load_order: Vec::new(),
+			native_systems: NativeSystems::default(),
 			systems: HashMap::new(),
 		}
 	}
 
+	pub fn native_systems(&mut self) -> &mut NativeSystems {
+		&mut self.native_systems
+	}
+
 	pub fn reload(&mut self, world: &mut World) -> anyhow::Result<()> {
 		let mut reload_queue = Vec::new();
-		let mut did_anything = false;
 
 		trace!("Look for rebuilds");
 
@@ -387,11 +451,9 @@ impl ExtensionRegistry {
 							reload_queue.push(j);
 						}
 					}
-					did_anything = true;
 				},
 				DirtyLevel::Reload => {
 					reload_queue.push(i);
-					did_anything = true;
 				},
 				DirtyLevel::Clean => {},
 			}
@@ -412,6 +474,8 @@ impl ExtensionRegistry {
 				}
 			}
 		}
+
+		let did_anything = self.extensions.iter().any(|e| !e.loaded());
 
 		// Load everything not loaded
 		self.load(world)?;
@@ -498,54 +562,92 @@ impl ExtensionRegistry {
 		let stages = self.systems.get(&group.as_ref().to_string()).unwrap();
 
 		for stage in stages {
-			for &(ei, si) in stage {
-				let e = &self.extensions[ei];
-				let s = &e.provides.as_ref().unwrap().systems[si];
-				debug!("Extension '{}' system '{}'", e.name, s.id);
-				let w = world as *const World;
-				(s.pointer)(w);
+			for &i in stage {
+				match i {
+					SystemIndex::External((ei, si)) => {
+						let e = &self.extensions[ei];
+						let s = &e.systems[si];
+						debug!("Extension '{}' system '{}'", e.name, s.id);
+						let w = world as *const World;
+						(s.pointer)(w);
+					},
+					SystemIndex::Native(i) => {
+						let s = &self.native_systems.systems[i];
+						debug!("Native system '{}'", s.id);
+						let w = world as *const World;
+						(s.pointer)(w);
+					}
+				}
+				
 			}
 		} 
-
 	}
 
-	fn rebuild_systems(&mut self) -> anyhow::Result<()> {		
-		let groups = self.extensions.iter()
-			.enumerate()
-			.filter_map(|(i, e)| e.provides.as_ref().and_then(|p| Some((i, p))))
-			.flat_map(|(i, p)| p.systems.iter().enumerate().map(move |(j, s)| (i, j, s)))
-			.fold(HashMap::new(), |mut a, v| {
-				a.entry(&v.2.group).or_insert(Vec::new()).push(v);
-				a
-			});
-
+	fn rebuild_systems(&mut self) -> anyhow::Result<()> {
+		trace!("Collect into groups");
+		let mut groups = HashMap::new();
+		for (i, e) in self.extensions.iter().enumerate() {
+			if !e.loaded() {
+				warn!("Skipping systems for unloaded extension '{}'", e.name);
+				continue
+			}
+			for (j, s) in e.systems.iter().enumerate() {
+				let group = groups.entry(&s.group).or_insert(Vec::new());
+				group.push(((i, j).into(), s));
+			}
+		}
+		for (i, s) in self.native_systems.systems.iter().enumerate() {
+			let group = groups.entry(&s.group).or_insert(Vec::new());
+			group.push((SystemIndex::Native(i), s));
+		}
 		debug!("{} groups", groups.len());
 
+		trace!("Collect queue dependencies");
+		let groups = groups.into_iter().map(|(name, queue)| {
+			let q2 = queue.clone();
+			(name, queue.into_iter().enumerate().map(|(i, (index, s))| {
+			let mut depends_on = s.run_after.clone();
+			// If another system wants to be run before this one, then this system depends on it
+			for (j, (_, o)) in q2.iter().enumerate() {
+				if i == j { continue }
+				if o.run_before.contains(&s.id) {
+					trace!("'{}' depends on '{}'", o.id, s.id);
+					depends_on.push(o.id.clone());
+				}
+			}
+			// map to ((i, j), name, depends_on)
+			(index, &s.id, depends_on)
+		}).collect::<Vec<_>>())}).collect::<HashMap<_, _>>();
+
+		trace!("Create group orders");
 		let mut orders = HashMap::new();
 		for (group, mut queue) in groups {
 			debug!("Group '{}'", group);
 			let mut stages = vec![vec![]];
 
 			// Satisfied if in any of the PREVIOUS stages (but NOT the current stage) 
-			fn satisfied(stages: &Vec<Vec<(usize, usize, &ExtensionSystem)>>, id: &String) -> bool {
+			fn satisfied(stages: &Vec<Vec<(SystemIndex, &String)>>, id: &String) -> bool {
 				(&stages[0..stages.len()-1]).iter()
 				.any(|stage| stage.iter()
-					.map(|v| v.2)
-					.map(|s: &ExtensionSystem| &s.id)
+					.map(|v| v.1)
 					.fold(false, |a, v| a || v.eq(id)))
 			}
 
 			while !queue.is_empty() {
-				let next = queue.iter().position(|s| 
-					s.2.run_after.iter().all(|id| satisfied(&stages, id)));
+				let next = queue.iter().position(|(_, _, d)| 
+					d.iter().all(|id| satisfied(&stages, id)));
 				
 				if let Some(i) = next {
-					let (i, j, s) = queue.remove(i);
-					debug!("Run '{}'", s.id);
-					stages.last_mut().unwrap().push((i, j, s));
+					let (p, name, _) = queue.remove(i);
+					debug!("Run '{}'", name);
+					stages.last_mut().unwrap().push((p, name));
 				} else {
 					if stages.last().and_then(|s| Some(s.is_empty())).unwrap_or(false) {
 						error!("Failing to meet some dependency!");
+						error!("Remaining items are:");
+						for (_, n, d) in queue {
+							error!("'{}' - {:?}", n, d);
+						}
 						panic!();
 					}
 					debug!("New stage");
@@ -554,7 +656,7 @@ impl ExtensionRegistry {
 			}
 
 			let stages = stages.iter().map(|stage| 
-				stage.iter().map(|&(i, j, _)| (i, j)).collect::<Vec<_>>()
+				stage.iter().map(|&(p, _)| p).collect::<Vec<_>>()
 			).collect::<Vec<_>>();
 			orders.insert(group.clone(), stages);
 		}

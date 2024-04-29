@@ -1,10 +1,8 @@
-use crossbeam_channel::Sender;
-use egui::{Context, DragValue, ViewportId};
+use egui::{Context, ViewportId};
 use egui_wgpu::{preferred_framebuffer_format, Renderer, ScreenDescriptor};
 use ekstensions::prelude::*;
-use krender::RenderContextKey;
 use parking_lot::{Mutex, RwLock};
-use slotmap::{new_key_type, SlotMap};
+use slotmap::SlotMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
 use winit::dpi::{PhysicalSize, PhysicalPosition};
 use winit::{
@@ -18,11 +16,11 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 use crate::client::Client;
-use crate::ecs::{TransformComponent, SSAOComponent, MovementComponent, CameraComponent};
-use crate::game::{Game, ContextResource, GameStatus};
+use crate::game::Game;
 use crate::gui::viewport::ViewportManager;
 use crate::gui::GameWidget;
 use crate::input::{InputEvent, KeyKey};
+use crate::server::ServerCommand;
 use crate::util::RingDataHolder;
 
 
@@ -481,17 +479,6 @@ impl GraphicsHandle {
 }
 
 
-// Each must handle event, update ui
-// Must vary input values so use a match in WindowManager
-// These are really just egui apps! 
-enum WindowState {
-	Loading,
-	Game,
-	// Profiling
-	// Console // For server commands
-}
-
-
 pub struct WindowManager {
 	event_loop_proxy: EventLoopProxy<WindowCommand>,
 
@@ -503,14 +490,13 @@ pub struct WindowManager {
 	graphics: GraphicsHandle,
 
 	// Also in client and server 
-	// extensions: Arc<RwLock<ExtensionRegistry>>
-
 	// extensions: Arc<RwLock<ExtensionRegistry>>,
 	client: Arc<Mutex<Client>>,
-	server: Option<(Arc<Mutex<World>>, JoinHandle<anyhow::Result<()>>)>,
-	// Client game and server game? 
-	// Server game is just a game in another thread with automatic ticks
-	// Optional so we can connect to other games
+	// Server should have its own extensions beucase of the way I set up ekstensions
+	// Just sync changes between client and server extensions
+	// Also this should be an Arc<Option<...>>
+	// That way we can pass it to the windows
+	server: Arc<Option<(Arc<Mutex<World>>, crossbeam_channel::Sender<ServerCommand>, JoinHandle<anyhow::Result<()>>)>>,
 }
 impl WindowManager {
 	pub fn run() {
@@ -552,7 +538,7 @@ impl WindowManager {
 			close_when_no_windows: true,
 			graphics,
 			client,
-			server: None,
+			server: Arc::new(None),
 		};
 		
 		let gw = GameWindow::new_from_window_surface(&s.graphics.adapter, window_surface, &s.client);

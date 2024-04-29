@@ -1,12 +1,10 @@
-use ekstensions::eks::prelude::*;
+use ekstensions::prelude::*;
 
 
 #[derive(Debug, Component, PartialEq, Eq, Clone, Copy)]
 pub struct ComponentA(u32);
 
 
-// Replace with general "info" function? 
-// I don't see why we'd need to do that actually 
 #[no_mangle]
 pub fn dependencies() -> Vec<String> {
 	println!("Example0 deps");
@@ -17,42 +15,30 @@ pub fn dependencies() -> Vec<String> {
 
 
 #[no_mangle]
-pub fn load(p: &mut ekstensions::ExtensionLoader) {
-	println!("Example0 load");
-
-	p.component::<ComponentA>();
-
-	// Needs unique name tho
-	p.system("client_init", "example0_init_system", init);
+pub fn systems(loader: &mut ExtensionSystemsLoader) {
+	println!("Example0 systems");
+	
+	loader.system("client_init", "example0_client_init", init);
+		// .run_before("example0_client_init_after")
+		// .run_after("example0_client_init_before");
 }
 
 
 #[no_mangle]
-pub fn unload() -> bool {
-	true
+pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
+	println!("Example0 load");
+
+	p.component::<ComponentA>();
 }
+
+
+// #[no_mangle]
+// pub fn unload() {}
+
 
 #[no_mangle]
 pub fn init(
 	_a: Comp<ComponentA>,
 ) {
-	println!("Init system");
-}
-
-
-#[no_mangle]
-pub fn add(left: usize, right: usize) -> usize {
-	left + right
-}
-
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn it_works() {
-		let result = add(2, 2);
-		assert_eq!(result, 4);
-	}
+	println!("Example0 init system");
 }

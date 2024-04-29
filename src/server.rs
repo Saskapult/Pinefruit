@@ -25,7 +25,9 @@ impl TickThing {
 		self.offset = self.tick;
 		self.tick = 0;
 		self.tick_period = tick_period;
-		self.start = self.last.unwrap();
+		if let Some(last) = self.last {
+			self.start = last;
+		}
 	}
 
 	pub fn tick_to_time(&mut self, now: Instant, mut f: impl FnMut()) {

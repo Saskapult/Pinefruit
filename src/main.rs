@@ -15,7 +15,6 @@ mod client;
 mod server;
 
 use window::*;
-use winit::event_loop::EventLoopBuilder;
 use profiling::puffin;
 
 #[macro_use]
