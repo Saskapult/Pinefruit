@@ -559,7 +559,8 @@ impl ExtensionRegistry {
 
 	pub fn run(&self, world: &mut World, group: impl AsRef<str>) {
 		info!("Running '{}'", group.as_ref());
-		let stages = self.systems.get(&group.as_ref().to_string()).unwrap();
+		let stages = self.systems.get(&group.as_ref().to_string())
+			.expect("Failed to locate group");
 
 		for stage in stages {
 			for &i in stage {
