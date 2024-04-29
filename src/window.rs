@@ -112,7 +112,7 @@ impl GameWindow {
 		adapter: &wgpu::Adapter, 
 		window_builder: WindowBuilder,
 		event_loop: &EventLoopWindowTarget::<WindowCommand>,
-		client: Arc<Mutex<Client>>,
+		client: &Arc<Mutex<Client>>,
 	) -> Self {
 		let window = window_builder.build(event_loop).unwrap();
 		let window_surface = WindowSurface::new(instance, window);
@@ -123,8 +123,10 @@ impl GameWindow {
 	pub fn new_from_window_surface(
 		adapter: &wgpu::Adapter, 
 		window_surface: WindowSurface, 
-		client: Arc<Mutex<Client>>,
+		client: &Arc<Mutex<Client>>,
 	) -> Self {
+		let client = client.clone();
+
 		let surface = SurfaceConfiguration::new(adapter, &window_surface, 1);
 		let egui_context = Context::default();
 		egui_context.style_mut(|style| {
@@ -498,34 +500,23 @@ pub struct WindowManager {
 
 	close_when_no_windows: bool,
 
-	graphics: Option<GraphicsHandle>,
+	graphics: GraphicsHandle,
 
 	// Also in client and server 
 	// extensions: Arc<RwLock<ExtensionRegistry>>
 
 	// extensions: Arc<RwLock<ExtensionRegistry>>,
-	client: Option<Arc<Mutex<Client>>>,
+	client: Arc<Mutex<Client>>,
 	server: Option<(Arc<Mutex<World>>, JoinHandle<anyhow::Result<()>>)>,
 	// Client game and server game? 
 	// Server game is just a game in another thread with automatic ticks
 	// Optional so we can connect to other games
 }
 impl WindowManager {
-	pub fn new(event_loop: &EventLoop::<WindowCommand>) -> Self {
+	pub fn run() {
+		let event_loop = EventLoopBuilder::<WindowCommand>::with_user_event().build().unwrap();
 		let event_loop_proxy = event_loop.create_proxy();
 
-		Self {
-			event_loop_proxy,
-			windows: SlotMap::with_key(),
-			window_id_key: HashMap::new(),
-			close_when_no_windows: true,
-			graphics: None,
-			client: None,
-			server: None,
-		}
-	}
-
-	pub fn run(mut self, event_loop: EventLoop<WindowCommand>) {
 		trace!("Creating initial window");
 		let initial_window = WindowBuilder::new()
 			.with_title("initial window")
@@ -539,7 +530,7 @@ impl WindowManager {
 		let window_surface = WindowSurface::new(&instance, initial_window);
 
 		info!("Initializing graphics");
-		let graphics = self.graphics.get_or_insert(GraphicsHandle::new(instance, &window_surface.surface).unwrap());
+		let graphics = GraphicsHandle::new(instance, &window_surface.surface).unwrap();
 
 		info!("Initializing extensions");
 		let extensions = Arc::new(RwLock::new({
@@ -550,13 +541,22 @@ impl WindowManager {
 
 		info!("Creating client");
 		let client = Arc::new(Mutex::new(Client::new(extensions)));
-		self.client = Some(client.clone());
 
 		// info!("Creating internal server");
 		// info!("Attaching client to internal server");
+
+		let mut s = Self {
+			event_loop_proxy,
+			windows: SlotMap::with_key(),
+			window_id_key: HashMap::new(),
+			close_when_no_windows: true,
+			graphics,
+			client,
+			server: None,
+		};
 		
-		let gw = GameWindow::new_from_window_surface(&graphics.adapter, window_surface, client);
-		self.register_gamewindow(gw);
+		let gw = GameWindow::new_from_window_surface(&s.graphics.adapter, window_surface, &s.client);
+		s.register_gamewindow(gw);
 
 		event_loop.run(move |event, event_loop| {
 			let when = Instant::now();
@@ -575,19 +575,19 @@ impl WindowManager {
 					}
 				},
 				Event::WindowEvent {event: ref window_event, window_id} => {
-					if let Some(window_idx) = self.window_id_key.get(&window_id) {
-						let window = self.windows.get_mut(*window_idx).unwrap();
+					if let Some(window_idx) = s.window_id_key.get(&window_id) {
+						let window = s.windows.get_mut(*window_idx).unwrap();
 						window.handle_event(&event, when);
 						
 						if window_event == &WindowEvent::CloseRequested {
-							self.close_window(*window_idx);
+							s.close_window(*window_idx);
 						}
 					}					
 				},
 				Event::DeviceEvent {event: ref device_event, ..} => {
 					match device_event {
 						DeviceEvent::MouseMotion { .. } => {
-							for (_, window) in self.windows.iter_mut() {
+							for (_, window) in s.windows.iter_mut() {
 								window.handle_event(&event, when);
 							}
 						},
@@ -596,8 +596,8 @@ impl WindowManager {
 				},
 				Event::LoopExiting => {
 					info!("Loop destroy, shutting down");					
-					self.window_id_key.drain();
-					for (_, _window) in self.windows.drain() {
+					s.window_id_key.drain();
+					for (_, _window) in s.windows.drain() {
 						// It may be wise to do per-window shutdown code here
 						info!("Closing a window");
 					}

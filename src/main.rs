@@ -30,7 +30,5 @@ fn main() {
 	puffin::set_scopes_on(true);
 	info!("Enabled profiling");
 
-	let event_loop = EventLoopBuilder::<WindowCommand>::with_user_event().build().unwrap();
-	let window_manager = WindowManager::new(&event_loop);
-	window_manager.run(event_loop);
+	WindowManager::run();
 }
