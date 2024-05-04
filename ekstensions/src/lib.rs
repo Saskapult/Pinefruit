@@ -228,6 +228,8 @@ impl ExtensionEntry {
 			trace!("Either build does not exist or is outdated, rebuilding");
 			let status = std::process::Command::new("cargo")
 				.arg("build")
+				.arg("--target-dir")
+				.arg("target_test")
 				.current_dir(path.as_ref())
 				.status()
 				.with_context(|| "cargo build failed")?;
@@ -341,7 +343,10 @@ impl ExtensionEntry {
 		let dylib_path = Self::dylib_path(&self.path, &self.name).unwrap();
 		if let Ok(p) = dylib_path.canonicalize() {
 			// If modified after we last loaded
-			if p.metadata().unwrap().modified().unwrap().gt(&self.read_at) {
+			let mod_time = p.metadata().unwrap().modified().unwrap();
+			if mod_time > self.read_at {
+				let d = mod_time.duration_since(self.read_at).unwrap();
+				trace!("Build files are new, reload ({:?}, {:.2}s)", p, d.as_secs_f32());
 				return DirtyLevel::Reload;
 			} else {
 				return DirtyLevel::Clean;
@@ -481,6 +486,7 @@ impl ExtensionRegistry {
 					}
 				},
 				DirtyLevel::Reload => {
+					debug!("Reload extension {}", self.extensions[i].name);
 					reload_queue.push(i);
 				},
 				DirtyLevel::Clean => {},
@@ -492,6 +498,7 @@ impl ExtensionRegistry {
 		// Reload propagation
 		reload_queue.sort();
 		reload_queue.dedup();
+		trace!("Need to unload extensions {:?}", reload_queue.iter().map(|&i| &self.extensions[i].name).collect::<Vec<_>>());
 		while let Some(i) = reload_queue.pop() {
 			debug!("Unload extension {}", self.extensions[i].name);
 			

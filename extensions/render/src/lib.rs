@@ -91,6 +91,7 @@ impl DerefMut for MeshResource {
 }
 
 
+/// Contexts are stored as a resource (viewport->context->entity) rather than a component (viewport->entity->context) becuase we might want to have multiple contexts for one entity (example: rendering to two different resolutions). 
 #[derive(Debug, Resource, Default)]
 pub struct ContextResource { pub contexts: RenderContextManager<Entity> }
 impl Deref for ContextResource {
@@ -102,6 +103,27 @@ impl Deref for ContextResource {
 impl DerefMut for ContextResource {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.contexts
+	}
+}
+
+
+/// Becuase we cannot pass arguments directly into extension systems, we store the active context in a resource. 
+#[derive(Debug, Resource)]
+pub struct ActiveContextResource { pub key: RenderContextKey }
+
+
+/// This exists fro the same resaons descibed in [ActiveContextResource]. 
+#[derive(Debug, Resource)]
+pub struct RenderInputResource { pub input: RenderInput<Entity> }
+impl Deref for RenderInputResource {
+	type Target = RenderInput<Entity>;
+	fn deref(&self) -> &Self::Target {
+		&self.input
+	}
+}
+impl DerefMut for RenderInputResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.input
 	}
 }
 
@@ -147,13 +169,17 @@ impl CameraComponent {
 }
 
 
+/// Writes camera buffer for the active context. 
 pub fn context_camera_system(
-	(context,): (&mut RenderContext<Entity>,), 
+	context: Res<ActiveContextResource>,
+	mut contexts: ResMut<ContextResource>,
 	transforms: Comp<TransformComponent>,
 	mut cameras: CompMut<CameraComponent>,
 	mut buffers: ResMut<BufferResource>,
 	textures: Res<TextureResource>,
 ) {
+	let context = contexts.get_mut(context.key).unwrap();
+
 	#[repr(C)]
 	#[derive(Debug, Pod, Zeroable, Clone, Copy)]
 	struct CameraUniformData {
@@ -269,10 +295,13 @@ pub struct OutputResolutionComponent {
 
 
 pub fn output_texture_system(
-	(context,): (&mut RenderContext<Entity>,), 
+	context: Res<ActiveContextResource>,
+	mut contexts: ResMut<ContextResource>,
 	mut textures: ResMut<TextureResource>,
 	output_resolutions: Comp<OutputResolutionComponent>,
 ) {
+	let context = contexts.get_mut(context.key).unwrap();
+	
 	if let Some(entity) = context.entity {
 		if let Some(resolution) = output_resolutions.get(entity) {
 			if let Some(key) = context.texture("output_texture") {
@@ -407,18 +436,16 @@ impl Default for SSAOOutputTextureSettings {
 
 // Todo: write new data to settings instread of making new buffer
 pub fn ssao_system(
-	(
-		context,
-		input,
-	): (
-		&mut RenderContext<Entity>,
-		&mut RenderInput<Entity>,
-	),
+	context: Res<ActiveContextResource>,
+	mut contexts: ResMut<ContextResource>,
+	mut input: ResMut<RenderInputResource>,
 	mut buffers: ResMut<BufferResource>,
 	mut textures: ResMut<TextureResource>,
 	mut ssaos: CompMut<SSAOComponent>,
 	mut materials: ResMut<MaterialResource>,
 ) {
+	let context = contexts.get_mut(context.key).unwrap();
+
 	info!("SSAO system");
 	if let Some(ssao) = context.entity.and_then(|entity| ssaos.get_mut(entity)) {
 		let kernel_dirty = ssao.kernel.is_none();
@@ -667,10 +694,9 @@ pub fn dependencies() -> Vec<String> {
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	println!("Example0 systems");
 
-	panic!("Group systems cannot take data, please help");
-	// loader.system("client_tick", "context_camera_system", context_camera_system);
-	// loader.system("render", "ssao_system", ssao_system);
-	// loader.system("render", "output_texture", output_texture_system);
+	loader.system("render", "context_camera_system", context_camera_system);
+	loader.system("render", "ssao_system", ssao_system);
+	loader.system("render", "output_texture", output_texture_system);
 }
 
 
