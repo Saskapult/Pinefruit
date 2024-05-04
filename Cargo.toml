@@ -16,19 +16,20 @@ opt-level = 2
 codegen-backend = "cranelift" # Cranelift back-end
 debug = 1
 
-# Rust analyzer does not like it when I remove this
 [workspace]
 members = [
 	"krender", 
 	"oktree",
 	"ekstensions",
-	"extensions/example0",
+	"extensions/*",
 ]
 
 [dependencies]
 krender = { path = "krender" }
 oktree = { path = "oktree" }
 ekstensions = { path = "ekstensions" }
+render = { path = "extensions/render", features = ["no_export"]}
+controls = { path = "extensions/controls", features = ["no_export"] }
 
 env_logger = "0.11.3"
 log = "0.4"

@@ -1,18 +1,19 @@
 pub mod viewport;
 
 use std::time::Instant;
+use controls::{ControlComponent, InputEvent, LocalInputComponent};
 use crossbeam_channel::Sender;
 use ekstensions::prelude::*;
-use crate::{game::ContextResource, input::{InputEvent, KeyDeduplicator}, window::WindowPropertiesAndSettings};
-use crate::ecs::*;
+use render::{CameraComponent, ContextResource, SSAOComponent};
+use crate::window::WindowPropertiesAndSettings;
 use self::viewport::{ViewportManager, ViewportWidget};
+
 
 
 #[derive(Debug)]
 pub struct GameWidget {
 	viewport: ViewportWidget,
 
-	deduplicator: KeyDeduplicator,
 	client_input: Sender<(InputEvent, Instant)>,
 }
 impl GameWidget {
@@ -59,7 +60,6 @@ impl GameWidget {
 
 		Self {
 			viewport,
-			deduplicator: KeyDeduplicator::new(),
 			client_input,
 		}
 	}

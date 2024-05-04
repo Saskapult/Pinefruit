@@ -70,6 +70,9 @@ fn storage_derive_macro2(input: proc_macro2::TokenStream, component: bool) -> de
 }
 
 
+/// - `id` (String) overrides storage ID
+/// - `snap` (bool) flags component for snapping 
+/// - `render_transform` (fn(&Self, &mut Vec<u8>) -> bincode::Result<()>) transforms component to shader data
 #[proc_macro_derive(Component, attributes(storage_options))]
 pub fn component_derive_macro(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 	storage_derive_macro2(input.into(), true).unwrap().into()

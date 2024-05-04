@@ -1,13 +1,64 @@
+use ekstensions::prelude::*;
 use std::{time::{Instant, Duration}, collections::{HashMap, HashSet}};
-
 use arrayvec::ArrayVec;
 use crossbeam_channel::{Receiver, Sender};
 use enumflags2::{bitflags, BitFlags};
 use slotmap::{new_key_type, SlotMap};
-use ekstensions::prelude::*;
-use winit::keyboard::{KeyCode, PhysicalKey};
-use crate::input::{KeyKey, InputEvent, ActiveState};
 
+#[macro_use]
+extern crate log;
+
+pub use winit::keyboard::PhysicalKey;
+pub use winit::keyboard::KeyCode;
+pub use winit::event::MouseButton;
+
+
+/// The game should take a sequence of these along with when they happened. 
+#[derive(Debug, Clone, Copy)]
+pub enum InputEvent {
+	KeyEvent((KeyKey, ActiveState)),
+	CursorMoved([f64; 2]),
+	MouseMotion([f64; 2]),
+	Scroll([f32; 2]),
+}
+impl<K: Into<KeyKey>, S: Into<ActiveState>> From<(K, S)> for InputEvent {
+	fn from((k, s): (K, S)) -> Self {
+		Self::KeyEvent((k.into(), s.into()))
+	}
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveState {
+	Active,
+	Inactive,
+}
+impl From<winit::event::ElementState> for ActiveState {
+	fn from(state: winit::event::ElementState) -> Self {
+		match state {
+			winit::event::ElementState::Pressed => Self::Active,
+			winit::event::ElementState::Released => Self::Inactive,
+		}
+	}
+}
+
+
+/// Board or mouse key. 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum KeyKey {
+	BoardKey(PhysicalKey),
+	MouseKey(MouseButton),
+}
+impl Into<KeyKey> for PhysicalKey {
+	fn into(self) -> KeyKey {
+		KeyKey::BoardKey(self)
+	}
+}
+impl Into<KeyKey> for MouseButton {
+	fn into(self) -> KeyKey {
+		KeyKey::MouseKey(self)
+	}
+}
 
 
 /// An upgraded* [InputEvent]. 
@@ -15,7 +66,7 @@ use crate::input::{KeyKey, InputEvent, ActiveState};
 /// *key event => control event
 #[derive(Debug, Clone, Copy)]
 pub enum ControlEvent {
-	KeyEvent((ControlKey, ActiveState)),
+	ControlEvent((ControlKey, ActiveState)),
 	CursorMoved([f64; 2]),
 	MouseMotion([f64; 2]),
 	Scroll([f32; 2]),
@@ -57,7 +108,7 @@ impl ControlComponent {
 		let mut d = None;
 		let mut st = self.active.contains_key(&control).then(|| self.start);
 		for &(event, when) in self.control_sequence.iter() {
-			if let ControlEvent::KeyEvent((next_control, state)) = event {
+			if let ControlEvent::ControlEvent((next_control, state)) = event {
 				if next_control == control {
 					match state {
 						ActiveState::Active => if st.is_none() {
@@ -94,7 +145,7 @@ impl ControlComponent {
 	pub fn last_tick_presses(&self, control: ControlKey) -> u32 {
 		let mut n = 0;
 		for &(event, _) in self.control_sequence.iter() {
-			if let ControlEvent::KeyEvent((next_control, state)) = event {
+			if let ControlEvent::ControlEvent((next_control, state)) = event {
 				if next_control == control {
 					if state == ActiveState::Active {
 						n += 1;
@@ -111,7 +162,7 @@ impl ControlComponent {
 			return true;
 		}
 		for &(event, _) in self.control_sequence.iter() {
-			if let ControlEvent::KeyEvent((next_control, _)) = event {
+			if let ControlEvent::ControlEvent((next_control, _)) = event {
 				if next_control == control {
 					return true
 				}
@@ -142,13 +193,13 @@ impl ControlComponent {
 				trace!("End control '{}' ({control:?})", entry.name);
 				// This control is no longer active
 				self.active.remove(&control);
-				self.control_sequence.push((ControlEvent::KeyEvent((control, ActiveState::Inactive)), when));
+				self.control_sequence.push((ControlEvent::ControlEvent((control, ActiveState::Inactive)), when));
 				
 			} else if active && !self.active.contains_key(&control) {
 				trace!("Activate control '{}' ({control:?})", entry.name);
 				// This control should be active
 				self.active.insert(control, when);
-				self.control_sequence.push((ControlEvent::KeyEvent((control, ActiveState::Active)), when));
+				self.control_sequence.push((ControlEvent::ControlEvent((control, ActiveState::Active)), when));
 			}
 		}
 	}
@@ -226,6 +277,17 @@ pub struct KeyCombo {
 	pub keys: ArrayVec<KeyKey, 2>, // 
 	pub modifiers: BitFlags<KeyModifiers>,
 }
+impl KeyCombo {
+	pub fn new(
+		keys: impl AsRef<[KeyKey]>,
+		modifiers: BitFlags<KeyModifiers>,
+	) -> Self {
+		Self {
+			keys: ArrayVec::try_from(keys.as_ref()).unwrap(),
+			modifiers,
+		}
+	}
+}
 
 
 new_key_type! { pub struct ControlKey; }
@@ -289,7 +351,6 @@ impl LocalInputComponent {
 }
 
 
-#[profiling::function]
 pub fn local_control_system(
 	mut inputs: CompMut<LocalInputComponent>,
 	mut controls: CompMut<ControlComponent>,
@@ -300,4 +361,25 @@ pub fn local_control_system(
 		control.next_tick(Instant::now());
 		events.iter().for_each(|&(event, when)| control.input(event, when, &map));
 	}
+}
+
+
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn dependencies() -> Vec<String> {
+	vec![]
+}
+
+
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn systems(loader: &mut ExtensionSystemsLoader) {	
+	loader.system("client_tick", "local_control_system", local_control_system);
+}
+
+
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
+	p.component::<ControlComponent>();
+	p.component::<LocalInputComponent>();
+
+	p.resource::<ControlMap>(ControlMap::new());
 }

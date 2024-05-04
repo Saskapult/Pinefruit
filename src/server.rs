@@ -1,6 +1,6 @@
 use std::{sync::Arc, thread::JoinHandle, time::{Duration, Instant}};
 use parking_lot::RwLock;
-use crate::client::Client;
+use crate::client::GameInstance;
 
 
 struct TickThing {
@@ -63,7 +63,7 @@ pub enum ServerCommand {
 
 
 pub fn run_server(
-	server: Arc<RwLock<Client>>, // TODO: replace with server?
+	server: Arc<RwLock<GameInstance>>, // TODO: replace with server?
 ) -> (crossbeam_channel::Sender<ServerCommand>, JoinHandle<anyhow::Result<()>>) {
 	let (s, r) = crossbeam_channel::unbounded();
 

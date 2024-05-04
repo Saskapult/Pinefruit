@@ -194,7 +194,35 @@ impl ExtensionEntry {
 		// Check if recompilation is needed
 		let needs_recompilation = dylib_path.canonicalize()
 			.and_then(|p| p.metadata().unwrap().modified())
-			.and_then(|t| Ok(t < Self::build_files_last_modified(path.as_ref())))
+			.and_then(|t| {
+				let last_mod = Self::build_files_last_modified(path.as_ref());
+
+				let root_cargo_toml_table = std::fs::read_to_string("./Cargo.toml")
+					.with_context(|| "failed to read cargo.toml").unwrap()
+					.parse::<toml::Table>()
+					.with_context(|| "failed to parse cargo.toml").unwrap();
+
+				// If the main program depends on this package, then this package would have already been built with exports disabled 
+				// In this case it must be built again with exports enabled
+				let rebuilt_override = if root_cargo_toml_table.get("dependencies").unwrap().as_table().unwrap().contains_key(name) {
+					let main_name = root_cargo_toml_table
+						.get("package").unwrap().as_table().unwrap()
+						.get("name").unwrap().as_str().unwrap();
+					let game_build = PathBuf::from("target/debug").join(main_name);
+					let game_mod = game_build.metadata().unwrap().modified().unwrap();
+
+					let g = game_mod > last_mod;
+					if g {
+						warn!("Rebuild game dep");
+					}
+
+					g
+				} else {
+					false
+				};
+
+				Ok(t < last_mod || rebuilt_override)
+			})
 			.unwrap_or(true);
 		if needs_recompilation {
 			trace!("Either build does not exist or is outdated, rebuilding");
@@ -266,7 +294,7 @@ impl ExtensionEntry {
 		
 		// Output path differs if in workspace or not
 		let ws_name = extension_path.as_ref().file_name().unwrap().to_str().unwrap();
-		let dylib_output_dir = if root_workspace.contains(&&*format!("extensions/{}", ws_name)) {
+		let dylib_output_dir = if root_workspace.contains(&"extensions/*") || root_workspace.contains(&&*format!("extensions/{}", ws_name)) {
 			Path::new("./target/debug").into()
 		} else {
 			extension_path.as_ref().join("target/debug")
@@ -579,7 +607,6 @@ impl ExtensionRegistry {
 						(s.pointer)(w);
 					}
 				}
-				
 			}
 		} 
 	}

@@ -1,10 +1,11 @@
 use std::time::{Duration, Instant};
-
 use krender::RenderContextKey;
+use render::{ContextResource, OutputResolutionComponent, TextureResource};
 use slotmap::SecondaryMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
-use crate::{game::{ContextResource, Game, OutputResolutionComponent, TextureResource}, util::RingDataHolder, GraphicsHandle};
 use ekstensions::prelude::*;
+
+use crate::GraphicsHandle;
 
 
 #[derive(Debug)]
@@ -25,7 +26,7 @@ impl ViewportWidget {
 			update_delay: None,
 			last_update: None,
 			profiler: GpuProfiler::new(GpuProfilerSettings::default()).unwrap(),
-			update_times: RingDataHolder::new(30),
+			// update_times: RingDataHolder::new(30),
 			last_size: [400.0, 300.0],
 			aspect: None,
 		});
@@ -72,7 +73,7 @@ struct ViewportEntry {
 	last_update: Option<Instant>,
 
 	profiler: wgpu_profiler::GpuProfiler,
-	update_times: RingDataHolder<Duration>,
+	// update_times: RingDataHolder<Duration>,
 
 	last_size: [f32; 2],
 	aspect: Option<f32>, 
@@ -85,34 +86,34 @@ impl ViewportEntry {
 	pub fn update<'a>(
 		&'a mut self, 
 		graphics: &mut GraphicsHandle,
-		game: &mut Game, // Replace with (render)world? 
+		world: &mut World, // Replace with (render)world? 
 	) -> (wgpu::CommandBuffer, &'a mut wgpu_profiler::GpuProfiler) {
 		// Record update
 		if let Some(t) = self.last_update {
-			self.update_times.insert(t.elapsed());
+			// self.update_times.insert(t.elapsed());
 		}
 		self.last_update = Some(Instant::now());
 
 		// Update size of display texture
 		let entity: Entity = {
-			let mut contexts = game.world.query::<ResMut<ContextResource>>();
+			let mut contexts = world.query::<ResMut<ContextResource>>();
 			let context = contexts.contexts.get_mut(self.context).unwrap();
 			context.entity.unwrap()
 		};
 		let width = self.last_size[0].round() as u32;
 		let height = self.last_size[1].round() as u32;
-		game.world.add_component(entity, OutputResolutionComponent {
+		world.add_component(entity, OutputResolutionComponent {
 			width, height, 
 		});
 
 		// Render game
-		let b = game.render(self.context, &mut self.profiler);
+		// let b = game.render(self.context, &mut self.profiler);
 
 		// (Re)Register texture
-		let contexts = game.world.query::<Res<ContextResource>>();
+		let contexts = world.query::<Res<ContextResource>>();
 		let context = contexts.get(self.context).unwrap();
 		let texture_key = context.texture("output_texture").unwrap();
-		let textures = game.world.query::<Res<TextureResource>>();
+		let textures = world.query::<Res<TextureResource>>();
 		let texture = textures.get(texture_key).unwrap();
 
 		if let Some(id) = self.display_texture {
@@ -130,7 +131,7 @@ impl ViewportEntry {
 			);
 			self.display_texture = Some(id);
 		}
-		
+		let b = todo!();
 		// Queries must be resolved after work has been submitted
 		(b, &mut self.profiler)
 	}
@@ -144,10 +145,10 @@ pub struct ViewportManager {
 impl ViewportManager {
 
 	/// Output command buffers for each viewport to be redrawn. 
-	pub fn update_viewports(&mut self, graphics: &mut GraphicsHandle, game: &mut Game) -> Vec<(wgpu::CommandBuffer, &mut wgpu_profiler::GpuProfiler)> {
+	pub fn update_viewports(&mut self, graphics: &mut GraphicsHandle, world: &mut World) -> Vec<(wgpu::CommandBuffer, &mut wgpu_profiler::GpuProfiler)> {
 		self.contexts.iter_mut()
 			.filter(|(_, v)| v.should_update())
-			.map(|(_, v)| v.update(graphics, game))
+			.map(|(_, v)| v.update(graphics, world))
 			.collect()
 	}
 

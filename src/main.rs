@@ -9,7 +9,6 @@ mod ecs;
 mod noise;
 mod gui;
 mod rays;
-mod input;
 mod rendering_integration;
 mod client;
 mod server;

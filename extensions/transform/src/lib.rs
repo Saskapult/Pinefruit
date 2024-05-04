@@ -1,8 +1,61 @@
-use arrayvec::ArrayVec;
-use winit::keyboard::KeyCode;
-use crate::{ecs::*, input::KeyKey};
-use glam::*;
 use ekstensions::prelude::*;
+use glam::*;
+use controls::*;
+
+
+#[repr(C)]
+#[derive(Component, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[storage_options(render_transform = "TransformComponent::render_transform")]
+pub struct TransformComponent {
+	pub translation: Vec3,
+	pub rotation: Quat,
+	pub scale: Vec3,
+}
+impl TransformComponent {
+	pub fn new() -> Self {
+		Self {
+			translation: Vec3::ZERO,
+			rotation: Quat::IDENTITY,
+			scale: Vec3::ONE,
+		}
+	}
+	pub fn with_position(self, position: Vec3) -> Self {
+		Self {
+			translation: position,
+			rotation: self.rotation,
+			scale: self.scale,
+		}
+	}
+	pub fn with_rotation(self, rotation: Quat) -> Self {
+		Self {
+			translation: self.translation,
+			rotation,
+			scale: self.scale,
+		}
+	}
+	pub fn with_scale(self, scale: Vec3) -> Self {
+		Self {
+			translation: self.translation,
+			rotation: self.rotation,
+			scale,
+		}
+	}
+	pub fn matrix(&self) -> Mat4 {
+		Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
+	}
+	pub fn render_transform(this: &Self, buffer: &mut Vec<u8>) -> bincode::Result<()> {
+		bincode::serialize_into(buffer, this)
+	}
+}
+impl Default for TransformComponent {
+	fn default() -> Self {
+		Self {
+			translation: Vec3::ZERO,
+			rotation: Quat::IDENTITY,
+			scale: Vec3::ONE,
+		}
+	}
+}
 
 
 #[derive(Debug, Component)]
@@ -32,50 +85,50 @@ impl MovementComponent {
 			"Move Right", 
 			"Moves the entity rightward.",
 		);
-		control_map.add_control_binding(cid_right, KeyCombo {
-			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([key_right].as_slice()).unwrap(),
-		});
+		control_map.add_control_binding(cid_right, KeyCombo::new(
+			[key_right],
+			KeyModifiers::EMPTY,
+		));
 		let cid_left = control_map.new_control(
 			"Move Left", 
 			"Moves the entity leftward.",
 		);
-		control_map.add_control_binding(cid_left, KeyCombo {
-			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([key_left].as_slice()).unwrap(),
-		});
+		control_map.add_control_binding(cid_left, KeyCombo::new(
+			[key_left],
+			KeyModifiers::EMPTY,
+		));
 		let cid_up = control_map.new_control(
 			"Move Up", 
 			"Moves the entity upward.",
 		);
-		control_map.add_control_binding(cid_up, KeyCombo {
-			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([key_up].as_slice()).unwrap(),
-		});
+		control_map.add_control_binding(cid_up, KeyCombo::new(
+			[key_up],
+			KeyModifiers::EMPTY,
+		));
 		let cid_down = control_map.new_control(
 			"Move Down", 
 			"Moves the entity downward.",
 		);
-		control_map.add_control_binding(cid_down, KeyCombo {
-			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([key_down].as_slice()).unwrap(),
-		});
+		control_map.add_control_binding(cid_down, KeyCombo::new(
+			[key_down],
+			KeyModifiers::EMPTY,
+		));
 		let cid_forward = control_map.new_control(
 			"Move Forward", 
 			"Moves the entity forward.",
 		);
-		control_map.add_control_binding(cid_forward, KeyCombo {
-			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([key_forward].as_slice()).unwrap(),
-		});
+		control_map.add_control_binding(cid_forward, KeyCombo::new(
+			[key_forward],
+			KeyModifiers::EMPTY,
+		));
 		let cid_backward = control_map.new_control(
 			"Move Back", 
 			"Moves the entity backward.",
 		);
-		control_map.add_control_binding(cid_backward, KeyCombo {
-			modifiers: KeyModifiers::EMPTY,
-			keys: ArrayVec::try_from([key_backward].as_slice()).unwrap(),
-		});
+		control_map.add_control_binding(cid_backward, KeyCombo::new(
+			[key_backward],
+			KeyModifiers::EMPTY,
+		));
 
 		MovementComponent {
 			cid_right, cid_left, cid_up, cid_down, cid_forward, cid_backward, 
@@ -107,7 +160,6 @@ impl MovementComponent {
 }
 
 
-#[profiling::function]
 pub fn movement_system(
 	controls: Comp<ControlComponent>, 
 	mut transforms: CompMut<TransformComponent>,
@@ -147,4 +199,28 @@ pub fn movement_system(
 
 		transform.translation += transform.rotation * kpdv * movement.max_speed;
 	}
+}
+
+
+
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn dependencies() -> Vec<String> {
+	println!("Example0 deps");
+	vec![]
+}
+
+
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn systems(loader: &mut ExtensionSystemsLoader) {
+	println!("Example0 systems");
+	
+	loader.system("client_init", "movement", movement_system)
+		.run_after("controls");
+}
+
+#[cfg(feature = "no_export")]
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
+	p.component::<TransformComponent>();
+	p.component::<MovementComponent>();
 }

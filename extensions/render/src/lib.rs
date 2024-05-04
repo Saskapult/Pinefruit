@@ -1,12 +1,109 @@
-use std::time::Instant;
+use ekstensions::prelude::*;
+use std::{ops::{Deref, DerefMut}, sync::Arc, time::Instant};
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec3, Mat4, Vec4, Vec2};
-use krender::{prelude::*, MeshKey, MaterialKey, TextureKey, BufferKey};
-use ekstensions::prelude::*;
+use krender::{prelude::*, BufferKey, MaterialKey, MeshKey, RenderContextKey, TextureKey};
 use rand::Rng;
-use crate::game::{BufferResource, TextureResource, MaterialResource, OutputResolutionComponent};
-use super::TransformComponent;
+use transform::*;
 
+#[macro_use]
+extern crate log;
+
+
+
+#[derive(Debug, Resource)]
+pub struct DeviceResource(Arc<wgpu::Device>);
+impl Deref for DeviceResource {
+	type Target = Arc<wgpu::Device>;
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
+
+#[derive(Debug, Resource)]
+pub struct QueueResource(Arc<wgpu::Queue>);
+impl Deref for QueueResource {
+	type Target = Arc<wgpu::Queue>;
+	fn deref(&self) -> &Self::Target {
+		&self.0
+	}
+}
+
+
+#[derive(Debug, Resource, Default)]
+pub struct MaterialResource { pub materials: MaterialManager }
+impl Deref for MaterialResource {
+	type Target = MaterialManager;
+	fn deref(&self) -> &Self::Target {
+		&self.materials
+	}
+}
+impl DerefMut for MaterialResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.materials
+	}
+}
+
+
+#[derive(Debug, Resource)]
+pub struct BufferResource { pub buffers: BufferManager }
+impl Deref for BufferResource {
+	type Target = BufferManager;
+	fn deref(&self) -> &Self::Target {
+		&self.buffers
+	}
+}
+impl DerefMut for BufferResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.buffers
+	}
+}
+
+
+#[derive(Debug, Resource, Default)]
+pub struct TextureResource { pub textures: TextureManager }
+impl Deref for TextureResource {
+	type Target = TextureManager;
+	fn deref(&self) -> &Self::Target {
+		&self.textures
+	}
+}
+impl DerefMut for TextureResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.textures
+	}
+}
+
+
+#[derive(Debug, Resource, Default)]
+pub struct MeshResource { pub meshes: MeshManager }
+impl Deref for MeshResource {
+	type Target = MeshManager;
+	fn deref(&self) -> &Self::Target {
+		&self.meshes
+	}
+}
+impl DerefMut for MeshResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.meshes
+	}
+}
+
+
+#[derive(Debug, Resource, Default)]
+pub struct ContextResource { pub contexts: RenderContextManager<Entity> }
+impl Deref for ContextResource {
+	type Target = RenderContextManager<Entity>;
+	fn deref(&self) -> &Self::Target {
+		&self.contexts
+	}
+}
+impl DerefMut for ContextResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.contexts
+	}
+}
 
 
 #[derive(Debug, Component)]
@@ -144,30 +241,6 @@ pub struct ModelComponent {
 }
 
 
-#[derive(Component, Debug)]
-pub struct SkeletalAttachmentComponent {
-	pub entity: Entity,
-	pub bone: usize,
-}
-
-
-#[derive(Component, Debug)]
-/// A straight line between two points.
-/// Usually accompanied by a RenderMarkerComponent.
-/// Might be accompanied by a LifetimeComponent.
-pub struct SimpleLineComponent {
-	pub start: Vec3,
-	pub end: Vec3,
-}
-
-
-#[derive(Component, Debug)]
-/// A marker to remove this entity after a point in time.
-pub struct LifetimeComponent {
-	pub expiry: Instant,
-}
-
-
 // #[derive(Unique, Debug)]
 // pub struct RenderContextResource {
 // 	pub contexts: RenderContextManager<EntityId>,
@@ -186,6 +259,77 @@ pub struct RenderTargetSizeComponent {
 	pub size: [u32; 2],
 } 
 // And then have a system that resizes the context's result texture?
+
+
+#[derive(Debug, Component)]
+pub struct OutputResolutionComponent {
+	pub width: u32,
+	pub height: u32,
+}
+
+
+pub fn output_texture_system(
+	(context,): (&mut RenderContext<Entity>,), 
+	mut textures: ResMut<TextureResource>,
+	output_resolutions: Comp<OutputResolutionComponent>,
+) {
+	if let Some(entity) = context.entity {
+		if let Some(resolution) = output_resolutions.get(entity) {
+			if let Some(key) = context.texture("output_texture") {
+				// If resolution matches then terminate
+				let t = textures.get_mut(key).unwrap();
+				if resolution.width == t.size.width && resolution.height == t.size.height {
+					return
+				}
+
+				info!("Rebuild output texure to size {}x{}", resolution.width, resolution.height);
+				t.set_size(resolution.width, resolution.height, 1);
+
+				// This is bad
+				let k = textures.key_by_name(&"depth".to_string()).unwrap();
+				let d = textures.get_mut(k).unwrap();
+				d.set_size(resolution.width, resolution.height, 1);
+			} else {
+				// let t = Texture::new(
+				// 	"output_texture", 
+				// 	wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
+				// 	resolution.width, resolution.height, 
+				// 	1, false, false, 
+				// ).with_usages(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT);
+				// let key = textures.insert(t);
+				// context.insert_texture("output_texture", key);
+
+				// let d = textures.insert(Texture::new(
+				// 	"depth", 
+				// 	wgpu::TextureFormat::Depth32Float.into(), 
+				// 	resolution.width, resolution.height, 
+				// 	1, false, false, 
+				// ).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
+				// context.insert_texture("depth", d);
+			}
+		}
+	}
+}
+
+
+fn model_render_system(
+	(
+		input,
+		context,
+	): (
+		&mut RenderInput<Entity>,
+		RenderContextKey,
+	), 
+	models: Comp<ModelComponent>,
+) {
+	let items = input.stage("models")
+		.target(AbstractRenderTarget::new()
+			.with_colour(RRID::context("albedo"), None)
+			.with_depth(RRID::context("depth")));
+	for (entity, (model,)) in (&models,).iter().with_entities() {
+		items.push((model.material, Some(model.mesh), entity));
+	}
+}
 
 
 #[derive(Debug, Component, Default)]
@@ -509,4 +653,35 @@ pub fn context_albedo_system(
 			}
 		}
 	}
+}
+
+
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn dependencies() -> Vec<String> {
+	println!("Example0 deps");
+	vec![]
+}
+
+
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn systems(loader: &mut ExtensionSystemsLoader) {
+	println!("Example0 systems");
+
+	panic!("Group systems cannot take data, please help");
+	// loader.system("client_tick", "context_camera_system", context_camera_system);
+	// loader.system("render", "ssao_system", ssao_system);
+	// loader.system("render", "output_texture", output_texture_system);
+}
+
+
+#[cfg_attr(not(feature = "no_export"), no_mangle)]
+pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
+	warn!("Note that wrapped wgpu things must be inserted by the main code");
+
+	p.component::<CameraComponent>();
+	p.component::<ModelComponent>();
+	p.component::<RenderTargetSizeComponent>();
+	p.component::<OutputResolutionComponent>();
+	p.component::<SSAOComponent>();
+	p.component::<AlbedoOutputComponent>();
 }

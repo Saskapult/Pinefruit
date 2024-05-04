@@ -1,5 +1,5 @@
 [package]
-name = "example0"
+name = "render"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,7 +10,13 @@ crate-type = ["rlib", "dylib"]
 rustc-wrapper = "/usr/bin/sccache"
 
 [dependencies]
+bytemuck = "1.15.0"
 ekstensions = { path = "../../ekstensions" }
+glam = { version = "0.27.0", features = ["bytemuck"] }
+rand = "0.8.5"
+transform = { path = "../transform", features = ["no_export"] }
+wgpu = "0.19.0"
+krender = { path = "../../krender" }
 log = "0.4.21"
 
 [features]

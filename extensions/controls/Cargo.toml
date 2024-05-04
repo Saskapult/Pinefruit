@@ -1,5 +1,5 @@
 [package]
-name = "example0"
+name = "controls"
 version = "0.1.0"
 edition = "2021"
 
@@ -10,8 +10,13 @@ crate-type = ["rlib", "dylib"]
 rustc-wrapper = "/usr/bin/sccache"
 
 [dependencies]
+arrayvec = "0.7.4"
+crossbeam-channel = "0.5.12"
 ekstensions = { path = "../../ekstensions" }
+enumflags2 = "0.7.9"
 log = "0.4.21"
+slotmap = "1.0.7"
+winit = "0.29.15"
 
 [features]
 no_export = []

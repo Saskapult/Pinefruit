@@ -7,8 +7,6 @@ use winit::event_loop::*;
 use std::ops::{Deref, DerefMut};
 use std::time::{Instant, Duration};
 use std::sync::Arc;
-use crate::ecs::{ControlMap, TransformComponent, ModelComponent, local_control_system, movement_system, context_albedo_system, context_camera_system, ssao_system};
-use crate::ecs::time::{time_buffer_system, TimeResource};
 // use crate::ecs::chunks::{ChunksResource, chunk_loading_system};
 // use crate::ecs::light::{TorchLightChunksResource, torchlight_chunk_init_system, torchlight_debug_place_system, torchlight_update_system};
 // use crate::ecs::model::{map_modelling_system, map_model_rendering_system, MapModelResource};
@@ -24,99 +22,6 @@ use krender::prelude::*;
 
 
 
-#[derive(Debug, Resource)]
-pub struct DeviceResource(Arc<wgpu::Device>);
-impl Deref for DeviceResource {
-	type Target = Arc<wgpu::Device>;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-
-#[derive(Debug, Resource)]
-pub struct QueueResource(Arc<wgpu::Queue>);
-impl Deref for QueueResource {
-	type Target = Arc<wgpu::Queue>;
-	fn deref(&self) -> &Self::Target {
-		&self.0
-	}
-}
-
-
-#[derive(Debug, Resource, Default)]
-pub struct MaterialResource { pub materials: MaterialManager }
-impl Deref for MaterialResource {
-	type Target = MaterialManager;
-	fn deref(&self) -> &Self::Target {
-		&self.materials
-	}
-}
-impl DerefMut for MaterialResource {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.materials
-	}
-}
-
-
-#[derive(Debug, Resource)]
-pub struct BufferResource { pub buffers: BufferManager }
-impl Deref for BufferResource {
-	type Target = BufferManager;
-	fn deref(&self) -> &Self::Target {
-		&self.buffers
-	}
-}
-impl DerefMut for BufferResource {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.buffers
-	}
-}
-
-
-#[derive(Debug, Resource, Default)]
-pub struct TextureResource { pub textures: TextureManager }
-impl Deref for TextureResource {
-	type Target = TextureManager;
-	fn deref(&self) -> &Self::Target {
-		&self.textures
-	}
-}
-impl DerefMut for TextureResource {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.textures
-	}
-}
-
-
-#[derive(Debug, Resource, Default)]
-pub struct MeshResource { pub meshes: MeshManager }
-impl Deref for MeshResource {
-	type Target = MeshManager;
-	fn deref(&self) -> &Self::Target {
-		&self.meshes
-	}
-}
-impl DerefMut for MeshResource {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.meshes
-	}
-}
-
-
-#[derive(Debug, Resource, Default)]
-pub struct ContextResource { pub contexts: RenderContextManager<Entity> }
-impl Deref for ContextResource {
-	type Target = RenderContextManager<Entity>;
-	fn deref(&self) -> &Self::Target {
-		&self.contexts
-	}
-}
-impl DerefMut for ContextResource {
-	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.contexts
-	}
-}
 
 
 /// Sent to the window manager to track game status
@@ -180,17 +85,17 @@ impl Game {
 		let textures = TextureManager::new();
 		let buffers = BufferManager::new();
 		let meshes = MeshManager::new();
-		let contexts = RenderContextManager::new();
+		// let contexts = RenderContextManager::new();
 
 		let mut world = World::new();
 
-		world.insert_resource(MaterialResource { materials });
-		world.insert_resource(TextureResource { textures });
-		world.insert_resource(BufferResource { buffers });
-		world.insert_resource(MeshResource { meshes });
-		world.insert_resource(ContextResource { contexts });
-		world.insert_resource(DeviceResource(device.clone()));
-		world.insert_resource(QueueResource(queue.clone()));
+		// world.insert_resource(MaterialResource { materials });
+		// world.insert_resource(TextureResource { textures });
+		// world.insert_resource(BufferResource { buffers });
+		// world.insert_resource(MeshResource { meshes });
+		// world.insert_resource(ContextResource { contexts });
+		// world.insert_resource(DeviceResource(device.clone()));
+		// world.insert_resource(QueueResource(queue.clone()));
 
 		Self {
 			world,
@@ -209,13 +114,13 @@ impl Game {
 
 	/// Every setup thing that is computationally expensive should go here. 
 	pub fn initialize(&mut self) {
-		self.world.insert_resource(ControlMap::new());
+		// self.world.insert_resource(ControlMap::new());
 		
 		// self.world.insert_resource(ChunksResource::new());
 		// self.world.insert_resource(TerrainResource::default());
 		// self.world.insert_resource(TorchLightChunksResource::default());
 
-		self.world.insert_resource(TimeResource::new());
+		// self.world.insert_resource(TimeResource::new());
 
 		// self.world.insert_resource(MapModelResource::new(16));
 
@@ -242,23 +147,23 @@ impl Game {
 		// 	self.world.insert_resource(big_buffer);
 		// }
 
-		let material = {
-			let mut materials = self.world.query::<ResMut<MaterialResource>>();
-			materials.read("resources/materials/grass.ron")
-		};
-		let mesh = {
-			let mut meshes = self.world.query::<ResMut<MeshResource>>();
-			meshes.read_or("resources/meshes/box.obj", || Mesh::read_obj("resources/meshes/box.obj"))
-		};
-		self.world.spawn()
-			.with(TransformComponent::new()
-				.with_position(Vec3::new(0.0, 0.0, 5.0)))
-			.with(ModelComponent {
-				material,
-				mesh,
-			})
-			.with(ModelMatrixComponent::new())
-			.finish();
+		// let material = {
+		// 	let mut materials = self.world.query::<ResMut<MaterialResource>>();
+		// 	materials.read("resources/materials/grass.ron")
+		// };
+		// let mesh = {
+		// 	let mut meshes = self.world.query::<ResMut<MeshResource>>();
+		// 	meshes.read_or("resources/meshes/box.obj", || Mesh::read_obj("resources/meshes/box.obj"))
+		// };
+		// self.world.spawn()
+		// 	.with(TransformComponent::new()
+		// 		.with_position(Vec3::new(0.0, 0.0, 5.0)))
+		// 	.with(ModelComponent {
+		// 		material,
+		// 		mesh,
+		// 	})
+		// 	.with(ModelMatrixComponent::new())
+		// 	.finish();
 
 	}
 	
@@ -289,8 +194,8 @@ impl Game {
 		let tick_start = Instant::now();
 		self.first_tick.get_or_insert(tick_start);
 		
-		self.world.run(local_control_system);
-		self.world.run(movement_system);
+		// self.world.run(local_control_system);
+		// self.world.run(movement_system);
 		// self.world.run(map_placement_system);
 // 
 		// self.world.run(chunk_loading_system);
@@ -307,7 +212,7 @@ impl Game {
 			// self.world.run(map_modelling_system);
 		}
 
-		self.world.run(model_matrix_system);
+		// self.world.run(model_matrix_system);
 
 		let tick_end = Instant::now();
 		info!("Ticked in {}ms", tick_end.duration_since(tick_start).as_millis());
@@ -455,103 +360,5 @@ impl Game {
 
 		// buf
 		todo!()
-	}
-}
-
-
-#[derive(Debug, Component)]
-pub struct OutputResolutionComponent {
-	pub width: u32,
-	pub height: u32,
-}
-
-
-pub fn output_texture_system(
-	(context,): (&mut RenderContext<Entity>,), 
-	mut textures: ResMut<TextureResource>,
-	output_resolutions: Comp<OutputResolutionComponent>,
-) {
-	if let Some(entity) = context.entity {
-		if let Some(resolution) = output_resolutions.get(entity) {
-			if let Some(key) = context.texture("output_texture") {
-				// If resolution matches then terminate
-				let t = textures.get_mut(key).unwrap();
-				if resolution.width == t.size.width && resolution.height == t.size.height {
-					return
-				}
-
-				info!("Rebuild output texure to size {}x{}", resolution.width, resolution.height);
-				t.set_size(resolution.width, resolution.height, 1);
-
-				// This is bad
-				let k = textures.key_by_name(&"depth".to_string()).unwrap();
-				let d = textures.get_mut(k).unwrap();
-				d.set_size(resolution.width, resolution.height, 1);
-			} else {
-				// let t = Texture::new(
-				// 	"output_texture", 
-				// 	wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
-				// 	resolution.width, resolution.height, 
-				// 	1, false, false, 
-				// ).with_usages(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT);
-				// let key = textures.insert(t);
-				// context.insert_texture("output_texture", key);
-
-				// let d = textures.insert(Texture::new(
-				// 	"depth", 
-				// 	wgpu::TextureFormat::Depth32Float.into(), 
-				// 	resolution.width, resolution.height, 
-				// 	1, false, false, 
-				// ).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
-				// context.insert_texture("depth", d);
-			}
-		}
-	}
-}
-
-
-#[profiling::function]
-fn model_render_system(
-	(
-		input,
-		context,
-	): (
-		&mut RenderInput<Entity>,
-		RenderContextKey,
-	), 
-	models: Comp<ModelComponent>,
-) {
-	let items = input.stage("models")
-		.target(AbstractRenderTarget::new()
-			.with_colour(RRID::context("albedo"), None)
-			.with_depth(RRID::context("depth")));
-	for (entity, (model,)) in (&models,).iter().with_entities() {
-		items.push((model.material, Some(model.mesh), entity));
-	}
-}
-
-
-// Used to put transform into shader
-#[repr(C)]
-#[derive(Debug, Component)]
-pub struct ModelMatrixComponent {
-	pub model_matrix: Mat4,
-}
-impl ModelMatrixComponent {
-	pub fn new() -> Self {
-		Self {
-			model_matrix: Mat4::IDENTITY,
-		}
-	}
-}
-
-
-#[profiling::function]
-fn model_matrix_system(
-	transforms: Comp<TransformComponent>,
-	mut model_matrices: CompMut<ModelMatrixComponent>,
-) {
-	for (transform, model_matrix) in (&transforms, &mut model_matrices).iter() {
-		model_matrix.model_matrix = Mat4::from_rotation_translation(transform.rotation, transform.translation);
 	}
 }

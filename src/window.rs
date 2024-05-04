@@ -1,3 +1,4 @@
+use controls::{InputEvent, KeyKey};
 use egui::{Context, ViewportId};
 use egui_wgpu::{preferred_framebuffer_format, Renderer, ScreenDescriptor};
 use ekstensions::prelude::*;
@@ -15,11 +16,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-use crate::client::Client;
+use crate::client::GameInstance;
 use crate::game::Game;
 use crate::gui::viewport::ViewportManager;
 use crate::gui::GameWidget;
-use crate::input::{InputEvent, KeyKey};
 use crate::server::ServerCommand;
 use crate::util::RingDataHolder;
 
@@ -95,7 +95,7 @@ struct GameWindow {
 	update_period: Duration, // Can have another for unfocused delay
 	update_times: RingDataHolder<Duration>,
 
-	client: Arc<Mutex<Client>>,
+	client: Arc<Mutex<GameInstance>>,
 
 	viewports: ViewportManager,
 
@@ -110,7 +110,7 @@ impl GameWindow {
 		adapter: &wgpu::Adapter, 
 		window_builder: WindowBuilder,
 		event_loop: &EventLoopWindowTarget::<WindowCommand>,
-		client: &Arc<Mutex<Client>>,
+		client: &Arc<Mutex<GameInstance>>,
 	) -> Self {
 		let window = window_builder.build(event_loop).unwrap();
 		let window_surface = WindowSurface::new(instance, window);
@@ -121,7 +121,7 @@ impl GameWindow {
 	pub fn new_from_window_surface(
 		adapter: &wgpu::Adapter, 
 		window_surface: WindowSurface, 
-		client: &Arc<Mutex<Client>>,
+		client: &Arc<Mutex<GameInstance>>,
 	) -> Self {
 		let client = client.clone();
 
@@ -180,7 +180,7 @@ impl GameWindow {
 	fn ui(
 		&mut self,
 		graphics: &mut GraphicsHandle,
-		game: &mut Game,
+		world: &mut World,
 	) {
 		let mut setting_props = WindowPropertiesAndSettings {
 			window: &mut self.window_surface.window,
@@ -227,7 +227,7 @@ impl GameWindow {
 	pub fn update(
 		&mut self,
 		graphics: &mut GraphicsHandle,
-		game: &mut Game,
+		world: &mut World,
 	) {
 		if let Some(t) = self.last_update {
 			self.update_times.insert(t.elapsed());
@@ -236,12 +236,12 @@ impl GameWindow {
 
 		// Do egui frame
 		self.context.begin_frame(self.state.take_egui_input(&self.window_surface.window));
-		self.ui(graphics, game);
+		self.ui(graphics, world);
 		let full_output = self.context.end_frame();
 
 		// Create command buffers for any viewports
 		// Todo: tick game here, potentially in parallel! 
-		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = self.viewports.update_viewports(graphics, game).into_iter().unzip();
+		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = self.viewports.update_viewports(graphics, world).into_iter().unzip();
 
 		let device = &graphics.device;
 		let queue = &graphics.queue;
@@ -491,7 +491,7 @@ pub struct WindowManager {
 
 	// Also in client and server 
 	// extensions: Arc<RwLock<ExtensionRegistry>>,
-	client: Arc<Mutex<Client>>,
+	client: Arc<Mutex<GameInstance>>,
 	// Server should have its own extensions beucase of the way I set up ekstensions
 	// Just sync changes between client and server extensions
 	// Also this should be an Arc<Option<...>>
@@ -518,15 +518,8 @@ impl WindowManager {
 		info!("Initializing graphics");
 		let graphics = GraphicsHandle::new(instance, &window_surface.surface).unwrap();
 
-		info!("Initializing extensions");
-		let extensions = Arc::new(RwLock::new({
-			let mut e = ExtensionRegistry::new();
-			e.register_all_in("extensions").unwrap();
-			e
-		}));
-
 		info!("Creating client");
-		let client = Arc::new(Mutex::new(Client::new(extensions)));
+		let client = Arc::new(Mutex::new(GameInstance::new()));
 
 		// info!("Creating internal server");
 		// info!("Attaching client to internal server");
@@ -745,7 +738,6 @@ impl SurfaceConfiguration {
 				depth: &self.depth.as_ref().unwrap().1,
 			},
 		)
-		
 	}
 }
 
