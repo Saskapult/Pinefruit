@@ -2,7 +2,7 @@ use controls::{InputEvent, KeyKey};
 use egui::{Context, ViewportId};
 use egui_wgpu::{preferred_framebuffer_format, Renderer, ScreenDescriptor};
 use ekstensions::prelude::*;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use slotmap::SlotMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
 use winit::dpi::{PhysicalSize, PhysicalPosition};
@@ -17,7 +17,6 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 use crate::client::GameInstance;
-use crate::game::Game;
 use crate::gui::viewport::ViewportManager;
 use crate::gui::GameWidget;
 use crate::server::ServerCommand;
@@ -180,8 +179,10 @@ impl GameWindow {
 	fn ui(
 		&mut self,
 		graphics: &mut GraphicsHandle,
-		world: &mut World,
 	) {
+		let mut client = self.client.lock();
+		let world = &mut client.world;
+
 		let mut setting_props = WindowPropertiesAndSettings {
 			window: &mut self.window_surface.window,
 			settings: &mut self.settings,
@@ -195,7 +196,6 @@ impl GameWindow {
 			.min_width(220.0)
 			.show(&self.context, |ui| {
 				ui.vertical(|ui| {
-
 					// Update rate for the UI
 					let ui_update_rate = self.update_times.iter()
 						.map(|d| d.as_secs_f32())
@@ -213,7 +213,7 @@ impl GameWindow {
 		egui::CentralPanel::default()
 			.show(&self.context, |ui| {
 				ui.vertical_centered_justified(|ui| {
-					// self.game_widget.display(ui, &mut setting_props);
+					self.game_widget.show(ui, &mut setting_props, &mut self.viewports);
 				});
 			});
 	}
@@ -227,7 +227,6 @@ impl GameWindow {
 	pub fn update(
 		&mut self,
 		graphics: &mut GraphicsHandle,
-		world: &mut World,
 	) {
 		if let Some(t) = self.last_update {
 			self.update_times.insert(t.elapsed());
@@ -236,12 +235,14 @@ impl GameWindow {
 
 		// Do egui frame
 		self.context.begin_frame(self.state.take_egui_input(&self.window_surface.window));
-		self.ui(graphics, world);
+		self.ui(graphics);
 		let full_output = self.context.end_frame();
 
 		// Create command buffers for any viewports
 		// Todo: tick game here, potentially in parallel! 
-		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = self.viewports.update_viewports(graphics, world).into_iter().unzip();
+		let mut client = self.client.lock();
+		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = self.viewports.update_viewports(graphics, &mut client).into_iter().unzip();
+		drop(client);
 
 		let device = &graphics.device;
 		let queue = &graphics.queue;
@@ -286,6 +287,8 @@ impl GameWindow {
 
 		self.profiler.end_query(&mut encoder, window_query);
 
+		self.profiler.resolve_queries(&mut encoder);
+
 		// Add egui command buffer to game command buffers
 		command_buffers.push(encoder.finish());
 
@@ -299,12 +302,20 @@ impl GameWindow {
 		profiling::finish_frame!();
 	}
 
-	pub fn handle_event(&mut self, event: &Event<WindowCommand>, when: Instant) {
+	pub fn handle_event(
+		&mut self, 
+		event: &Event<WindowCommand>, 
+		when: Instant,
+		graphics: &mut GraphicsHandle,
+	) {
 		match event {
 			Event::WindowEvent { event: window_event, ..} => {
 				// Check with Egui
 				let r = self.state.on_window_event(&self.window_surface.window, window_event);
-				if r.repaint { self.last_update.take(); }
+				if r.repaint { 
+					// self.last_update.take();
+					self.window_surface.window.request_redraw();
+				}
 				if r.consumed { return }
 				// Event was not consumed by egui
 				match window_event {
@@ -369,6 +380,9 @@ impl GameWindow {
 					&WindowEvent::Focused(focused) => {
 						self.properties.focused = focused;
 					},
+					WindowEvent::RedrawRequested => {
+						self.update(graphics);
+					}
 					_ => {},
 				}
 			},
@@ -519,7 +533,7 @@ impl WindowManager {
 		let graphics = GraphicsHandle::new(instance, &window_surface.surface).unwrap();
 
 		info!("Creating client");
-		let client = Arc::new(Mutex::new(GameInstance::new()));
+		let client = Arc::new(Mutex::new(GameInstance::new(&graphics.device, &graphics.queue)));
 
 		// info!("Creating internal server");
 		// info!("Attaching client to internal server");
@@ -556,18 +570,20 @@ impl WindowManager {
 				Event::WindowEvent {event: ref window_event, window_id} => {
 					if let Some(window_idx) = s.window_id_key.get(&window_id) {
 						let window = s.windows.get_mut(*window_idx).unwrap();
-						window.handle_event(&event, when);
+						window.handle_event(&event, when, &mut s.graphics);
 						
 						if window_event == &WindowEvent::CloseRequested {
 							s.close_window(*window_idx);
 						}
-					}					
+					} else {
+						warn!("Received window event for unknown window");
+					}				
 				},
 				Event::DeviceEvent {event: ref device_event, ..} => {
 					match device_event {
 						DeviceEvent::MouseMotion { .. } => {
 							for (_, window) in s.windows.iter_mut() {
-								window.handle_event(&event, when);
+								window.handle_event(&event, when, &mut s.graphics);
 							}
 						},
 						_ => {},

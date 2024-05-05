@@ -25,7 +25,9 @@ fn main() {
 			},
 			"run" => {
 				// registry.test_run(&mut world);
-				registry.run(&mut world, parts[1])
+				if let Err(e) = registry.run(&mut world, parts[1]) {
+					error!("{}", e);
+				}
 			},
 			"exit" => {
 				break;

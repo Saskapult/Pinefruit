@@ -50,7 +50,7 @@ impl GameWidget {
 		let context = {
 			let mut contexts = world.query::<ResMut<ContextResource>>();
 			
-			let (key, context) = contexts.contexts.new_context("default context");
+			let (key, context) = contexts.new_context("default context");
 			context.entity = Some(entity);
 
 			key

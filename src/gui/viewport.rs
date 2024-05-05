@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant};
-use krender::RenderContextKey;
-use render::{ContextResource, OutputResolutionComponent, TextureResource};
+use krender::{prelude::RenderInput, prepare_for_render, RenderContextKey};
+use render::{ActiveContextResource, BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, OutputResolutionComponent, QueueResource, RenderInputResource, TextureResource};
 use slotmap::SecondaryMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
 use ekstensions::prelude::*;
 
-use crate::GraphicsHandle;
+use crate::{client::GameInstance, rendering_integration::WorldWrapper, GraphicsHandle};
 
 
 #[derive(Debug)]
@@ -86,7 +86,7 @@ impl ViewportEntry {
 	pub fn update<'a>(
 		&'a mut self, 
 		graphics: &mut GraphicsHandle,
-		world: &mut World, // Replace with (render)world? 
+		instance: &mut GameInstance, // Replace with (render)world? 
 	) -> (wgpu::CommandBuffer, &'a mut wgpu_profiler::GpuProfiler) {
 		// Record update
 		if let Some(t) = self.last_update {
@@ -96,24 +96,86 @@ impl ViewportEntry {
 
 		// Update size of display texture
 		let entity: Entity = {
-			let mut contexts = world.query::<ResMut<ContextResource>>();
-			let context = contexts.contexts.get_mut(self.context).unwrap();
+			let mut contexts = instance.world.query::<ResMut<ContextResource>>();
+			let context = contexts.get_mut(self.context).unwrap();
 			context.entity.unwrap()
 		};
 		let width = self.last_size[0].round() as u32;
 		let height = self.last_size[1].round() as u32;
-		world.add_component(entity, OutputResolutionComponent {
+		instance.world.add_component(entity, OutputResolutionComponent {
 			width, height, 
 		});
 
 		// Render game
-		// let b = game.render(self.context, &mut self.profiler);
+		instance.world.insert_resource(ActiveContextResource { key: self.context });
+		instance.world.insert_resource(RenderInputResource(RenderInput::new()));
+
+		trace!("Begin game render");
+		instance.extensions.run(&mut instance.world, "render").unwrap();
+		trace!("End game render");
+
+		let input = instance.world.remove_resource_typed::<RenderInputResource>().unwrap().0;
+		
+		let b = {
+			let device = instance.world.query::<Res<DeviceResource>>();
+			let queue = instance.world.query::<Res<QueueResource>>();
+			let mut materials = instance.world.query::<ResMut<MaterialResource>>();
+			let mut meshes = instance.world.query::<ResMut<MeshResource>>();
+			let mut textures = instance.world.query::<ResMut<TextureResource>>();
+			let mut buffers = instance.world.query::<ResMut<BufferResource>>();
+			let mut contexts = instance.world.query::<ResMut<ContextResource>>();
+
+			prepare_for_render(
+				&device, 
+				&queue, 
+				&mut instance.shaders, 
+				&mut materials, 
+				&mut meshes, 
+				&mut textures, 
+				&mut buffers, 
+				&mut instance.bind_groups, 
+				&mut contexts,
+			);
+			
+			let context = contexts.get(self.context).unwrap();
+			let storage_provider = WorldWrapper { world: &instance.world, };
+			let bundle = input.bundle(
+				&device, 
+				&textures, 
+				&mut meshes, 
+				&materials, 
+				&instance.shaders, 
+				&storage_provider, 
+				&context, 
+				false,
+			);
+
+			meshes.bind_unbound(&device);
+
+			let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+				label: None,
+			});
+
+			bundle.execute(
+				&device, 
+				&mut instance.shaders, 
+				&mut instance.bind_groups, 
+				&meshes, 
+				&textures, 
+				&mut encoder, 
+				&mut self.profiler,
+			);
+
+			self.profiler.resolve_queries(&mut encoder);
+
+			encoder.finish()
+		};
 
 		// (Re)Register texture
-		let contexts = world.query::<Res<ContextResource>>();
+		let contexts = instance.world.query::<Res<ContextResource>>();
 		let context = contexts.get(self.context).unwrap();
 		let texture_key = context.texture("output_texture").unwrap();
-		let textures = world.query::<Res<TextureResource>>();
+		let textures = instance.world.query::<Res<TextureResource>>();
 		let texture = textures.get(texture_key).unwrap();
 
 		if let Some(id) = self.display_texture {
@@ -131,8 +193,8 @@ impl ViewportEntry {
 			);
 			self.display_texture = Some(id);
 		}
-		let b = todo!();
-		// Queries must be resolved after work has been submitted
+
+		// `end_frame` must be called only after work has been submitted
 		(b, &mut self.profiler)
 	}
 }
@@ -145,10 +207,14 @@ pub struct ViewportManager {
 impl ViewportManager {
 
 	/// Output command buffers for each viewport to be redrawn. 
-	pub fn update_viewports(&mut self, graphics: &mut GraphicsHandle, world: &mut World) -> Vec<(wgpu::CommandBuffer, &mut wgpu_profiler::GpuProfiler)> {
+	pub fn update_viewports(
+		&mut self, 
+		graphics: &mut GraphicsHandle, 
+		instance: &mut GameInstance,
+	) -> Vec<(wgpu::CommandBuffer, &mut wgpu_profiler::GpuProfiler)> {
 		self.contexts.iter_mut()
 			.filter(|(_, v)| v.should_update())
-			.map(|(_, v)| v.update(graphics, world))
+			.map(|(_, v)| v.update(graphics, instance))
 			.collect()
 	}
 

@@ -123,6 +123,18 @@ impl<S> WorldStorage<S> {
 			Some(c.into_inner())
 		})
 	}
+
+	pub fn clear(&mut self) {
+		for (_, v) in self.storages.write().drain() {
+			assert!(unsafe {
+				(*v).try_borrow_mut().is_ok()
+			}, "Cannot remove borrowed storage!");
+			unsafe { 
+				let c = Box::from_raw(v);
+				drop(c.into_inner());
+			}
+		}
+	}
 }
 impl<S> Drop for WorldStorage<S> {
 	fn drop(&mut self) {
@@ -160,6 +172,13 @@ impl World {
 		}
 	}
 
+	/// Clears all storages. 
+	/// Useful in drop code. 
+	pub fn clear(&mut self) {
+		self.components.clear();
+		self.resources.clear();
+	}
+
 	pub fn register_component<C: Component>(&mut self) {
 		let name = C::STORAGE_ID.to_string();
 		self.components.insert(name, SparseSet::<C>::new().into());
@@ -172,6 +191,10 @@ impl World {
 	pub fn insert_resource<R: Resource>(&mut self, resource: R) {
 		let name = R::STORAGE_ID.to_string();
 		self.resources.insert(name, resource.into());
+	}
+
+	pub fn remove_resource_typed<R: Resource>(&mut self) -> Option<R> {
+		self.remove_resource(R::STORAGE_ID).and_then(|r| Some(r.into_inner()))
 	}
 
 	pub fn remove_resource(&mut self, id: impl AsRef<str>) -> Option<UntypedResource> {

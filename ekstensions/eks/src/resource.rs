@@ -18,6 +18,15 @@ impl UntypedResource {
 		assert_eq!(self.name, R::STORAGE_ID, "Component name differs!");
 	}
 
+	pub fn into_inner<R: Resource>(self) -> R {
+		self.check_guards::<R>();
+		let b = unsafe { Box::from_raw(self.data as *mut R) };
+		// We need to use forget here beucase otherwise the drop code will run and we will free the data memory 
+		// It will not leak memory becuase `data` is the only heap-allocated field  
+		std::mem::forget(self);
+		*b
+	}
+
 	pub fn inner_ref<R: Resource>(&self) -> &R {
 		self.check_guards::<R>();
 		unsafe { &*(self.data as *mut R) }
@@ -34,14 +43,13 @@ impl UntypedResource {
 
 	// Should only ever be called from drop code
 	fn drop_as<R: Resource>(&mut self) {
-		println!("Dropping untype resource as resource of {}", R::STORAGE_ID);
+		info!("Dropping untype resource as resource of {}", R::STORAGE_ID);
 		let resource = unsafe { Box::from_raw(self.data as *mut R) };
 		drop(resource);
 	}
 }
 impl Drop for UntypedResource {
 	fn drop(&mut self) {
-		info!("Dropping UntypedResource '{}'", self.name);
 		(self.fn_drop)(self); 
 	}
 }

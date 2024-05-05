@@ -205,20 +205,17 @@ pub fn movement_system(
 
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn dependencies() -> Vec<String> {
-	println!("Example0 deps");
 	vec![]
 }
 
 
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
-	println!("Example0 systems");
-	
-	loader.system("client_init", "movement", movement_system)
-		.run_after("controls");
+	loader.system("client_tick", "movement", movement_system)
+		.run_after("local_control_system");
 }
 
-#[cfg(feature = "no_export")]
+
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
 	p.component::<TransformComponent>();

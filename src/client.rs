@@ -1,4 +1,8 @@
+use std::sync::Arc;
+
 use ekstensions::prelude::*;
+use krender::prelude::{BindGroupManager, BufferManager, MaterialManager, MeshManager, ShaderManager, TextureManager};
+use render::{BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, QueueResource, TextureResource};
 
 
 // Called GameInstance, but used as Client
@@ -7,26 +11,43 @@ use ekstensions::prelude::*;
 pub struct GameInstance {
 	pub extensions: ExtensionRegistry,
 	pub world: World,
+
+	pub shaders: ShaderManager,
+	pub bind_groups: BindGroupManager,
 }
 impl GameInstance {
-	pub fn new() -> Self {
+	// I'm thinking that this should be agnostic to whether the instance will be a client or a server
+	// Please make note if that changes
+	pub fn new(
+		device: &Arc<wgpu::Device>,
+		queue: &Arc<wgpu::Queue>,
+	) -> Self {
 		let mut world = World::new();
+
+		// Intialize render storages
+		world.insert_resource(DeviceResource(device.clone()));
+		world.insert_resource(QueueResource(queue.clone()));
+
+		// Could (should?) be in render extension
+		world.insert_resource(ContextResource::default());
+		world.insert_resource(MaterialResource(MaterialManager::new()));
+		world.insert_resource(TextureResource(TextureManager::new()));
+		world.insert_resource(BufferResource(BufferManager::new()));
+		world.insert_resource(MeshResource(MeshManager::new()));
+
+		// Not directly affected by ECS, but is indirectly affected, so lives here
+		let shaders = ShaderManager::new();
+		let bind_groups = BindGroupManager::new();
+
 		let mut extensions = ExtensionRegistry::new();
-
 		extensions.register_all_in("extensions").unwrap();
-
-		let s = extensions.native_systems();
-
-
-		// Register native systems
-		
-		// s.system("client_tick", name, function)
-
 		extensions.reload(&mut world).unwrap();
 
-		extensions.run(&mut world, "client_init");
+		if let Err(e) = extensions.run(&mut world, "client_init") {
+			warn!("Error running 'client_init': {}", e);
+		}
 
-		Self { extensions, world, }
+		Self { extensions, world, shaders, bind_groups, }
 	}
 
 	pub fn tick(&mut self) {
@@ -34,7 +55,7 @@ impl GameInstance {
 		// Maybe we can have a tick count, but it can skip values if too much time has passed
 		// idk idk
 
-		self.extensions.run(&mut self.world, "client_tick");
+		self.extensions.run(&mut self.world, "client_tick").unwrap();
 	}
 
 	pub fn connect_server(&mut self) {
@@ -42,6 +63,13 @@ impl GameInstance {
 		// Connect to external server by adding some other storages
 		// Maybe have different methods for each
 		todo!()
+	}
+}
+impl Drop for GameInstance {
+	fn drop(&mut self) {
+		// Storage drop functions reference external library code
+		// Maybe we coudl fix this using an Arc, but that mgiht not help if the extension code file itself is overwritten 
+		self.world.clear();
 	}
 }
 

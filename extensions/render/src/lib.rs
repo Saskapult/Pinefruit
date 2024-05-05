@@ -1,5 +1,5 @@
 use ekstensions::prelude::*;
-use std::{ops::{Deref, DerefMut}, sync::Arc, time::Instant};
+use std::{ops::{Deref, DerefMut}, sync::Arc};
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec3, Mat4, Vec4, Vec2};
 use krender::{prelude::*, BufferKey, MaterialKey, MeshKey, RenderContextKey, TextureKey};
@@ -12,7 +12,7 @@ extern crate log;
 
 
 #[derive(Debug, Resource)]
-pub struct DeviceResource(Arc<wgpu::Device>);
+pub struct DeviceResource(pub Arc<wgpu::Device>);
 impl Deref for DeviceResource {
 	type Target = Arc<wgpu::Device>;
 	fn deref(&self) -> &Self::Target {
@@ -22,7 +22,7 @@ impl Deref for DeviceResource {
 
 
 #[derive(Debug, Resource)]
-pub struct QueueResource(Arc<wgpu::Queue>);
+pub struct QueueResource(pub Arc<wgpu::Queue>);
 impl Deref for QueueResource {
 	type Target = Arc<wgpu::Queue>;
 	fn deref(&self) -> &Self::Target {
@@ -32,77 +32,77 @@ impl Deref for QueueResource {
 
 
 #[derive(Debug, Resource, Default)]
-pub struct MaterialResource { pub materials: MaterialManager }
+pub struct MaterialResource (pub MaterialManager);
 impl Deref for MaterialResource {
 	type Target = MaterialManager;
 	fn deref(&self) -> &Self::Target {
-		&self.materials
+		&self.0
 	}
 }
 impl DerefMut for MaterialResource {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.materials
+		&mut self.0
 	}
 }
 
 
 #[derive(Debug, Resource)]
-pub struct BufferResource { pub buffers: BufferManager }
+pub struct BufferResource (pub BufferManager);
 impl Deref for BufferResource {
 	type Target = BufferManager;
 	fn deref(&self) -> &Self::Target {
-		&self.buffers
+		&self.0
 	}
 }
 impl DerefMut for BufferResource {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.buffers
+		&mut self.0
 	}
 }
 
 
 #[derive(Debug, Resource, Default)]
-pub struct TextureResource { pub textures: TextureManager }
+pub struct TextureResource (pub TextureManager);
 impl Deref for TextureResource {
 	type Target = TextureManager;
 	fn deref(&self) -> &Self::Target {
-		&self.textures
+		&self.0
 	}
 }
 impl DerefMut for TextureResource {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.textures
+		&mut self.0
 	}
 }
 
 
 #[derive(Debug, Resource, Default)]
-pub struct MeshResource { pub meshes: MeshManager }
+pub struct MeshResource (pub MeshManager);
 impl Deref for MeshResource {
 	type Target = MeshManager;
 	fn deref(&self) -> &Self::Target {
-		&self.meshes
+		&self.0
 	}
 }
 impl DerefMut for MeshResource {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.meshes
+		&mut self.0
 	}
 }
 
 
 /// Contexts are stored as a resource (viewport->context->entity) rather than a component (viewport->entity->context) becuase we might want to have multiple contexts for one entity (example: rendering to two different resolutions). 
 #[derive(Debug, Resource, Default)]
-pub struct ContextResource { pub contexts: RenderContextManager<Entity> }
+pub struct ContextResource (pub RenderContextManager<Entity>);
 impl Deref for ContextResource {
 	type Target = RenderContextManager<Entity>;
 	fn deref(&self) -> &Self::Target {
-		&self.contexts
+		&self.0
 	}
 }
 impl DerefMut for ContextResource {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.contexts
+		&mut self.0
 	}
 }
 
@@ -114,16 +114,16 @@ pub struct ActiveContextResource { pub key: RenderContextKey }
 
 /// This exists fro the same resaons descibed in [ActiveContextResource]. 
 #[derive(Debug, Resource)]
-pub struct RenderInputResource { pub input: RenderInput<Entity> }
+pub struct RenderInputResource (pub RenderInput<Entity>);
 impl Deref for RenderInputResource {
 	type Target = RenderInput<Entity>;
 	fn deref(&self) -> &Self::Target {
-		&self.input
+		&self.0
 	}
 }
 impl DerefMut for RenderInputResource {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.input
+		&mut self.0
 	}
 }
 
@@ -214,7 +214,7 @@ pub fn context_camera_system(
 		let aspect_ratio = {
 			let size = context.textures.get("output_texture")
 				.cloned()
-				.and_then(|k| textures.textures.get(k))
+				.and_then(|k| textures.get(k))
 				.and_then(|t| Some(t.size))
 				.unwrap();
 			size.width as f32 / size.height as f32
@@ -240,7 +240,7 @@ pub fn context_camera_system(
 
 		if let Some(&key) = context.buffers.get(&"camera".to_string()) {
 			// Write to buffer
-			let buffer = buffers.buffers.get_mut(key).unwrap();
+			let buffer = buffers.get_mut(key).unwrap();
 			buffer.write_queued(0, data);
 		} else {
 			let name = format!("RenderContext '{}' camera buffer", context.name);
@@ -253,7 +253,7 @@ pub fn context_camera_system(
 				true,
 				false,
 			);
-			let key = buffers.buffers.insert(buffer);
+			let key = buffers.insert(buffer);
 			context.buffers.insert("camera".to_string(), key);
 		}
 	}
@@ -319,22 +319,22 @@ pub fn output_texture_system(
 				let d = textures.get_mut(k).unwrap();
 				d.set_size(resolution.width, resolution.height, 1);
 			} else {
-				// let t = Texture::new(
-				// 	"output_texture", 
-				// 	wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
-				// 	resolution.width, resolution.height, 
-				// 	1, false, false, 
-				// ).with_usages(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT);
-				// let key = textures.insert(t);
-				// context.insert_texture("output_texture", key);
+				let t = Texture::new(
+					"output_texture", 
+					wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
+					resolution.width, resolution.height, 
+					1, false, false, 
+				).with_usages(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT);
+				let key = textures.insert(t);
+				context.insert_texture("output_texture", key);
 
-				// let d = textures.insert(Texture::new(
-				// 	"depth", 
-				// 	wgpu::TextureFormat::Depth32Float.into(), 
-				// 	resolution.width, resolution.height, 
-				// 	1, false, false, 
-				// ).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
-				// context.insert_texture("depth", d);
+				let d = textures.insert(Texture::new(
+					"depth", 
+					wgpu::TextureFormat::Depth32Float.into(), 
+					resolution.width, resolution.height, 
+					1, false, false, 
+				).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
+				context.insert_texture("depth", d);
 			}
 		}
 	}
@@ -635,11 +635,14 @@ pub struct AlbedoOutputComponent {
 
 // The albedo output should have a resolution equal to the output texture. 
 pub fn context_albedo_system(
-	(context,): (&mut RenderContext<Entity>,), 
+	context: Res<ActiveContextResource>,
+	mut contexts: ResMut<ContextResource>,
 	mut textures: ResMut<TextureResource>,
 	mut albedos: CompMut<AlbedoOutputComponent>,
 	ouput_textures: Comp<OutputResolutionComponent>,
 ) {
+	let context = contexts.get_mut(context.key).unwrap();
+
 	if let Some(entity) = context.entity {
 		if let Some(output_texture) = ouput_textures.get(entity) {
 			// Should probably do this elsewhere
@@ -694,8 +697,11 @@ pub fn dependencies() -> Vec<String> {
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	println!("Example0 systems");
 
-	loader.system("render", "context_camera_system", context_camera_system);
-	loader.system("render", "ssao_system", ssao_system);
+	loader.system("render", "context_albedo_system", context_albedo_system);
+	loader.system("render", "context_camera_system", context_camera_system)
+		.run_after("output_texture");
+	loader.system("render", "ssao_system", ssao_system)
+		.run_after("output_texture");
 	loader.system("render", "output_texture", output_texture_system);
 }
 
@@ -710,4 +716,6 @@ pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
 	p.component::<OutputResolutionComponent>();
 	p.component::<SSAOComponent>();
 	p.component::<AlbedoOutputComponent>();
+
+	// Resources are inserted and managed by the main program, as it is the one to acquire the graphics handle 
 }

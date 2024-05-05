@@ -148,6 +148,8 @@ pub struct ExtensionEntry {
 impl ExtensionEntry {
 	// Reads extension from disk and compiles 
 	pub fn new(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+		trace!("Loading {:?}", path.as_ref());
+
 		let cargo_toml_path = path.as_ref().join("Cargo.toml");
 		let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
 			.with_context(|| "failed to read cargo.toml")?;
@@ -188,60 +190,33 @@ impl ExtensionEntry {
 			.get("name").unwrap()
 			.as_str().unwrap();
 		
-		let dylib_path = Self::dylib_path(path.as_ref(), name)?;
+		let dylib_path = Self::stored_output_path(name);
 		trace!("Build files should be in {:?}", dylib_path);
 
 		// Check if recompilation is needed
+		// stored files exist and are not older than build files
 		let needs_recompilation = dylib_path.canonicalize()
 			.and_then(|p| p.metadata().unwrap().modified())
-			.and_then(|t| {
-				let last_mod = Self::build_files_last_modified(path.as_ref());
-
-				let root_cargo_toml_table = std::fs::read_to_string("./Cargo.toml")
-					.with_context(|| "failed to read cargo.toml").unwrap()
-					.parse::<toml::Table>()
-					.with_context(|| "failed to parse cargo.toml").unwrap();
-
-				// If the main program depends on this package, then this package would have already been built with exports disabled 
-				// In this case it must be built again with exports enabled
-				let rebuilt_override = if root_cargo_toml_table.get("dependencies").unwrap().as_table().unwrap().contains_key(name) {
-					let main_name = root_cargo_toml_table
-						.get("package").unwrap().as_table().unwrap()
-						.get("name").unwrap().as_str().unwrap();
-					let game_build = PathBuf::from("target/debug").join(main_name);
-					let game_mod = game_build.metadata().unwrap().modified().unwrap();
-
-					let g = game_mod > last_mod;
-					if g {
-						warn!("Rebuild game dep");
-					}
-
-					g
-				} else {
-					false
-				};
-
-				Ok(t < last_mod || rebuilt_override)
-			})
+			.and_then(|t| Ok(t < Self::build_files_last_modified(path.as_ref())))
 			.unwrap_or(true);
 		if needs_recompilation {
 			trace!("Either build does not exist or is outdated, rebuilding");
 			let status = std::process::Command::new("cargo")
 				.arg("build")
-				.arg("--target-dir")
-				.arg("target_test")
 				.current_dir(path.as_ref())
 				.status()
 				.with_context(|| "cargo build failed")?;
 			if !status.success() {
 				error!("Failed to compile extension");
-				// use std::io::Write;
-				// std::io::stdout().write_all(&output.stdout).unwrap();
-				// std::io::stderr().write_all(&output.stderr).unwrap();
-				// println!("{}", String::from_utf8(output.stdout).unwrap());
-				// println!("{}", String::from_utf8(output.stderr).unwrap());
 				panic!();
 			}
+			trace!("Copying new extension build to storage");
+			let new_files = Self::build_output_path(path.as_ref(), &name)?;
+			let storage = Self::stored_output_path(&name);
+
+			trace!("{:?} -> {:?}", new_files, storage);
+			std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
+			std::fs::copy(new_files, storage).unwrap();
 		}
 
 		assert!(std::fs::canonicalize(&dylib_path).is_ok(), "output path is bad");
@@ -277,11 +252,30 @@ impl ExtensionEntry {
 		})
 	}
 
+	/// After being built, extension files are copied here for storage. 
+	/// This is becuase building one extension that depends on other extensions will rebuild its dependents becuase of the change in `no_export` flag. 
+	fn stored_output_path(extension_name: impl AsRef<str>) -> PathBuf {
+		let extension_name = extension_name.as_ref();
+		let dylib_output_dir = PathBuf::from("target/extensions");
+
+		// File name varies by platform 
+		#[cfg(target_os = "linux")]
+		let dylib_path = dylib_output_dir.join(format!("lib{}", extension_name)).with_extension("so");
+		#[cfg(target_os = "macos")]
+		let dylib_path = dylib_output_dir.join(format!("lib{}", extension_name)).with_extension("dylib");
+		#[cfg(target_os = "windows")]
+		let dylib_path = dylib_output_dir.join(format!("{}", extension_name)).with_extension("dll");
+
+		dylib_path
+	}
+
+	/// Where an extension will be after running `cargo build`. 
+	///
 	/// Retuns an error if: 
 	/// - the root Cargo.toml file cannot be read 
 	/// - the root Cargo.toml file cannot be parsed 
 	/// - the root Cargo.toml file does not contain an array of strings in workspace.members 
-	fn dylib_path(extension_path: impl AsRef<Path>, name: &str) -> anyhow::Result<PathBuf> {
+	fn build_output_path(extension_path: impl AsRef<Path>, name: &str) -> anyhow::Result<PathBuf> {
 		let root_cargo_toml_table = std::fs::read_to_string("./Cargo.toml")
 			.with_context(|| "failed to read cargo.toml")?
 			.parse::<toml::Table>()
@@ -340,7 +334,7 @@ impl ExtensionEntry {
 
 		// If newer build file exists on disk 
 		// This path is old and not good and only works on linux
-		let dylib_path = Self::dylib_path(&self.path, &self.name).unwrap();
+		let dylib_path = Self::stored_output_path(&self.name);
 		if let Ok(p) = dylib_path.canonicalize() {
 			// If modified after we last loaded
 			let mod_time = p.metadata().unwrap().modified().unwrap();
@@ -407,7 +401,7 @@ impl ExtensionEntry {
 impl Drop for ExtensionEntry {
 	fn drop(&mut self) {
 		if self.provides.is_some() {
-			warn!("Dropping extension with active provisions");
+			warn!("Dropping extension '{}' with active provisions", self.name);
 		}
 		// Any references to the data in a library must be dropped before the library itself 
 		self.systems.clear();
@@ -592,10 +586,10 @@ impl ExtensionRegistry {
 		Ok(())
 	}
 
-	pub fn run(&self, world: &mut World, group: impl AsRef<str>) {
+	pub fn run(&self, world: &mut World, group: impl AsRef<str>) -> anyhow::Result<()> {
 		info!("Running '{}'", group.as_ref());
 		let stages = self.systems.get(&group.as_ref().to_string())
-			.expect("Failed to locate group");
+			.with_context(|| "Failed to locate workload")?;
 
 		for stage in stages {
 			for &i in stage {
@@ -616,6 +610,8 @@ impl ExtensionRegistry {
 				}
 			}
 		} 
+
+		Ok(())
 	}
 
 	fn rebuild_systems(&mut self) -> anyhow::Result<()> {
@@ -679,6 +675,13 @@ impl ExtensionRegistry {
 				} else {
 					if stages.last().and_then(|s| Some(s.is_empty())).unwrap_or(false) {
 						error!("Failing to meet some dependency!");
+						error!("Stages are:");
+						for (i, stage) in stages.into_iter().enumerate() {
+							error!("{}", i);
+							for (_, name) in stage {
+								error!("\t'{}'", name);
+							}
+						}
 						error!("Remaining items are:");
 						for (_, n, d) in queue {
 							error!("'{}' - {:?}", n, d);
