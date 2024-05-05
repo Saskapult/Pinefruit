@@ -179,43 +179,9 @@ impl GameWindow {
 	fn ui(
 		&mut self,
 		graphics: &mut GraphicsHandle,
+		instance: &mut GameInstance,
 	) {
-		let mut client = self.client.lock();
-		let world = &mut client.world;
-
-		let mut setting_props = WindowPropertiesAndSettings {
-			window: &mut self.window_surface.window,
-			settings: &mut self.settings,
-			properties: &self.properties
-		};
-
-		egui::SidePanel::left("left panel")
-			.resizable(false)
-			.default_width(220.0)
-			.max_width(220.0)
-			.min_width(220.0)
-			.show(&self.context, |ui| {
-				ui.vertical(|ui| {
-					// Update rate for the UI
-					let ui_update_rate = self.update_times.iter()
-						.map(|d| d.as_secs_f32())
-						.reduce(|a, v| a + v)
-						.unwrap_or(f32::INFINITY) / (self.update_times.len() as f32);
-					ui.label(format!("UI: {:>4.1}ms, {:.0}Hz", ui_update_rate * 1000.0, (1.0 / ui_update_rate).round()));
-				});
-			});
-		egui::SidePanel::right("right panel")
-			.show(&self.context, |ui| {
-				ui.vertical(|ui| {
-					
-				});
-			});
-		egui::CentralPanel::default()
-			.show(&self.context, |ui| {
-				ui.vertical_centered_justified(|ui| {
-					self.game_widget.show(ui, &mut setting_props, &mut self.viewports);
-				});
-			});
+		
 	}
 
 	pub fn should_update(&self) -> bool {
@@ -233,16 +199,60 @@ impl GameWindow {
 		}
 		self.last_update = Some(Instant::now());
 
-		// Do egui frame
 		self.context.begin_frame(self.state.take_egui_input(&self.window_surface.window));
-		self.ui(graphics);
-		let full_output = self.context.end_frame();
 
-		// Create command buffers for any viewports
-		// Todo: tick game here, potentially in parallel! 
-		let mut client = self.client.lock();
-		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = self.viewports.update_viewports(graphics, &mut client).into_iter().unzip();
-		drop(client);
+		// If we can lock the instance, then there is no reload happening in another thread
+		// This never occurs due to gamewidget creation requiring a lock immediately after spawning the setup thread
+		// I've left it this way so that you can find a way to make it work later
+		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = if let Some(mut instance) = self.client.try_lock() {
+			// Do egui frame
+			// I can't put this in its own function beucase of the borrow checker 
+			let mut setting_props = WindowPropertiesAndSettings {
+				window: &mut self.window_surface.window,
+				settings: &mut self.settings,
+				properties: &self.properties
+			};
+			egui::SidePanel::left("left panel")
+				.resizable(false)
+				.default_width(220.0)
+				.max_width(220.0)
+				.min_width(220.0)
+				.show(&self.context, |ui| {
+					ui.vertical(|ui| {
+						// Update rate for the UI
+						let ui_update_rate = self.update_times.iter()
+							.map(|d| d.as_secs_f32())
+							.reduce(|a, v| a + v)
+							.unwrap_or(f32::INFINITY) / (self.update_times.len() as f32);
+						ui.label(format!("UI: {:>4.1}ms, {:.0}Hz", ui_update_rate * 1000.0, (1.0 / ui_update_rate).round()));
+					});
+				});
+			egui::SidePanel::right("right panel")
+				.show(&self.context, |ui| {
+					ui.vertical(|ui| {
+						
+					});
+				});
+			egui::CentralPanel::default()
+				.show(&self.context, |ui| {
+					ui.vertical_centered_justified(|ui| {
+						self.game_widget.show(ui, &mut setting_props, &mut self.viewports);
+					});
+				});
+			
+			// Create command buffers for any viewports
+			self.viewports.update_viewports(graphics, &mut instance).into_iter().unzip()
+		} else {
+			// Loading screen! 
+			egui::CentralPanel::default().show(&self.context, |ui| {
+				ui.centered_and_justified(|ui| {
+					ui.spinner();
+				})
+			});
+			(vec![], vec![])
+		};
+
+		let full_output = self.context.end_frame();
 
 		let device = &graphics.device;
 		let queue = &graphics.queue;
@@ -534,6 +544,14 @@ impl WindowManager {
 
 		info!("Creating client");
 		let client = Arc::new(Mutex::new(GameInstance::new(&graphics.device, &graphics.queue)));
+
+		let client2 = client.clone();
+		std::thread::spawn(move || {
+			info!("Extension setup thread start");
+			let mut client = client2.lock();
+			client.initialize();
+			info!("Extension setup thread done");
+		});
 
 		// info!("Creating internal server");
 		// info!("Attaching client to internal server");

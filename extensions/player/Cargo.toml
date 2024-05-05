@@ -13,6 +13,7 @@ rustc-wrapper = "/usr/bin/sccache"
 ekstensions = { path = "../../ekstensions" }
 log = "0.4.21"
 transform = { path = "../transform", features = ["no_export"] }
+controls = { path = "../controls", features = ["no_export"] }
 
 [features]
 no_export = []

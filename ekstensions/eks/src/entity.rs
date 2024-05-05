@@ -83,6 +83,9 @@ impl EntitySparseSet {
 	pub fn len(&self) -> usize {
 		self.entities.len()
 	}
+	pub fn iter(&self) -> std::slice::Iter<'_, Entity> {
+		self.entities.iter()
+	}
 }
 
 

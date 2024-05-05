@@ -39,15 +39,22 @@ impl GameInstance {
 		let shaders = ShaderManager::new();
 		let bind_groups = BindGroupManager::new();
 
-		let mut extensions = ExtensionRegistry::new();
-		extensions.register_all_in("extensions").unwrap();
-		extensions.reload(&mut world).unwrap();
-
-		if let Err(e) = extensions.run(&mut world, "client_init") {
-			warn!("Error running 'client_init': {}", e);
-		}
+		let extensions = ExtensionRegistry::new();
 
 		Self { extensions, world, shaders, bind_groups, }
+	}
+
+	/// Must be called after new and before anything else
+	/// Used to be part of new but I wanted a loading screen.
+	/// 
+	/// Maybe have a progress callback option. 
+	pub fn initialize(&mut self) {
+		self.extensions.register_all_in("extensions").unwrap();
+		self.extensions.reload(&mut self.world).unwrap();
+
+		if let Err(e) = self.extensions.run(&mut self.world, "client_init") {
+			warn!("Error running 'client_init': {}", e);
+		}
 	}
 
 	pub fn tick(&mut self) {
