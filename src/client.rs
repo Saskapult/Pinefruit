@@ -68,12 +68,7 @@ impl GameInstance {
 impl Drop for GameInstance {
 	fn drop(&mut self) {
 		// Storage drop functions reference external library code
-		// Maybe we coudl fix this using an Arc, but that mgiht not help if the extension code file itself is overwritten 
+		// Maybe we could fix this using an Arc, but that mgiht not help if the extension code file itself is overwritten 
 		self.world.clear();
 	}
 }
-
-// Maybe just fn creat client -> Arc<Mutex<World>>
-// Still needs to register native components and stuff!!
-
-

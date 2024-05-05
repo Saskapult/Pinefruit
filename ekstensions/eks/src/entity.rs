@@ -76,6 +76,13 @@ impl EntitySparseSet {
 		self.entities[entity.get_index()].set_index(self.next as u32);
 		self.next = entity.get_index();
 	}
+	pub fn clear(&mut self) {
+		self.entities.clear();
+		self.next = 0;
+	}
+	pub fn len(&self) -> usize {
+		self.entities.len()
+	}
 }
 
 
