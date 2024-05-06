@@ -1670,6 +1670,7 @@ dependencies = [
  "noise",
  "oktree",
  "parking_lot",
+ "player",
  "poisson",
  "pollster",
  "profiling",
@@ -2902,6 +2903,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "render2"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "ekstensions",
+ "glam",
+ "krender",
+ "log",
+ "rand 0.8.5",
+ "render",
+ "transform",
+ "wgpu",
+]
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3464,6 +3480,7 @@ dependencies = [
  "controls",
  "ekstensions",
  "glam",
+ "log",
  "serde",
 ]
 

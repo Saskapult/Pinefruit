@@ -4,6 +4,7 @@ use std::time::Instant;
 use controls::{ControlComponent, InputEvent, LocalInputComponent};
 use crossbeam_channel::Sender;
 use ekstensions::prelude::*;
+use player::PlayerSpawnResource;
 use render::{CameraComponent, ContextResource, SSAOComponent};
 use crate::window::WindowPropertiesAndSettings;
 use self::viewport::{ViewportManager, ViewportWidget};
@@ -46,6 +47,9 @@ impl GameWidget {
 		{ // Control
 			world.query::<CompMut<ControlComponent>>()
 				.insert(entity, ControlComponent::new());
+		}
+		{ // Add to player spawn queue
+			world.query::<ResMut<PlayerSpawnResource>>().entities.insert(entity);
 		}
 		let context = {
 			let mut contexts = world.query::<ResMut<ContextResource>>();

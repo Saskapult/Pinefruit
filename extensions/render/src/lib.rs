@@ -2,7 +2,7 @@ use ekstensions::prelude::*;
 use std::{ops::{Deref, DerefMut}, sync::Arc};
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec3, Mat4, Vec4, Vec2};
-use krender::{prelude::*, BufferKey, MaterialKey, MeshKey, RenderContextKey, TextureKey};
+use krender::{prelude::*, BufferKey, MaterialKey, RenderContextKey, TextureKey};
 use rand::Rng;
 use transform::*;
 
@@ -261,26 +261,6 @@ pub fn context_camera_system(
 
 
 #[derive(Component, Debug)]
-pub struct ModelComponent {
-	pub material: MaterialKey,
-	pub mesh: MeshKey,
-}
-
-
-// #[derive(Unique, Debug)]
-// pub struct RenderContextResource {
-// 	pub contexts: RenderContextManager<EntityId>,
-// 	// can't run systems with data, bah
-// 	// We will just set this or smnk
-// 	// Could be its own unique/resource
-// 	pub active_context: Option<RenderContextKey>,
-// }
-
-/// In the actual thing this should be a dynamic collection of things. 
-/// In this version it's just a static set of these functions. 
-/// Can't be a workload either 
-
-#[derive(Component, Debug)]
 pub struct RenderTargetSizeComponent {
 	pub size: [u32; 2],
 } 
@@ -337,26 +317,6 @@ pub fn output_texture_system(
 				context.insert_texture("depth", d);
 			}
 		}
-	}
-}
-
-
-fn model_render_system(
-	(
-		input,
-		context,
-	): (
-		&mut RenderInput<Entity>,
-		RenderContextKey,
-	), 
-	models: Comp<ModelComponent>,
-) {
-	let items = input.stage("models")
-		.target(AbstractRenderTarget::new()
-			.with_colour(RRID::context("albedo"), None)
-			.with_depth(RRID::context("depth")));
-	for (entity, (model,)) in (&models,).iter().with_entities() {
-		items.push((model.material, Some(model.mesh), entity));
 	}
 }
 
@@ -688,15 +648,12 @@ pub fn context_albedo_system(
 
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn dependencies() -> Vec<String> {
-	println!("Example0 deps");
 	vec![]
 }
 
 
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
-	println!("Example0 systems");
-
 	loader.system("render", "context_albedo_system", context_albedo_system);
 	loader.system("render", "context_camera_system", context_camera_system)
 		.run_after("output_texture");
@@ -711,7 +668,6 @@ pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
 	warn!("Note that wrapped wgpu things must be inserted by the main code");
 
 	p.component::<CameraComponent>();
-	p.component::<ModelComponent>();
 	p.component::<RenderTargetSizeComponent>();
 	p.component::<OutputResolutionComponent>();
 	p.component::<SSAOComponent>();

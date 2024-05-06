@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, time::SystemTime};
 use anyhow::{anyhow, Context};
-use eks::{prelude::*, system::SystemFunction};
+use eks::{prelude::*, system::SystemFunction, WorldEntitySpawn};
 pub use eks;
 pub mod prelude {
 	pub use eks::prelude::*;
@@ -27,6 +27,10 @@ impl<'a> ExtensionStorageLoader<'a> {
 		self.world.insert_resource(r);
 		self.storages.resources.push(R::STORAGE_ID.to_string());
 		self
+	}
+
+	pub fn spawn(&mut self) -> WorldEntitySpawn<'_> {
+		self.world.spawn()
 	}
 
 	// Should have functions to access world

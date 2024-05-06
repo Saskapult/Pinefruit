@@ -41,16 +41,18 @@ impl<T: EntityIdentifier> RenderInputStage<T> {
 			&& self.depth_clears.is_empty()
 	}
 
-	pub fn clear_depth(&mut self, id: RRID) {
+	pub fn clear_depth(&mut self, id: RRID) -> &mut Self {
 		if let Some(_) = self.depth_clears.insert(id.into(), 1.0) {
 			warn!("Depth clear already set");
 		}
+		self
 	}
 
-	pub fn clear_colour(&mut self, id: RRID) {
+	pub fn clear_colour(&mut self, id: RRID) -> &mut Self {
 		if let Some(_) = self.colour_clears.insert(id.into(), wgpu::Color::RED) {
 			warn!("Colour clear already set");
 		}
+		self
 	}
 
 	pub fn target(&mut self, target: AbstractRenderTarget) -> &mut Vec<(MaterialKey, Option<MeshKey>, T)> {

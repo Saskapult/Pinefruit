@@ -1,14 +1,18 @@
-use ekstensions::{eks::entity::EntitySparseSet, prelude::*};
-use transform::TransformComponent;
+use std::collections::HashSet;
+
+use controls::ControlMap;
+use ekstensions::prelude::*;
+use transform::{MovementComponent, TransformComponent};
 
 #[macro_use]
 extern crate log;
 
 
 
+// This coul also be accomplished using a component 
 #[derive(Debug, Resource, Default)]
 pub struct PlayerSpawnResource {
-	pub entities: EntitySparseSet,
+	pub entities: HashSet<Entity>,
 }
 
 
@@ -34,10 +38,15 @@ fn player_spawned(mut psr: ResMut<PlayerSpawnResource>) {
 fn player_spawn_components(
 	psr: Res<PlayerSpawnResource>,
 	mut transforms: CompMut<TransformComponent>,
+	mut movements: CompMut<MovementComponent>,
+	mut control_map: ResMut<ControlMap>,
 ) {
 	for entity in psr.entities.iter().copied() {
 		trace!("Add TransformComponent for player entity");
 		transforms.insert(entity, TransformComponent::new());
+
+		trace!("Add MovementComponent for player entity");
+		movements.insert(entity, MovementComponent::new(&mut control_map));
 	}
 }
 
@@ -62,5 +71,10 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
-	storages.resource(PlayerSpawnResource::default());
+	
+	let mut psr = PlayerSpawnResource::default();
+	let e = storages.spawn().finish();
+	storages.resource(psr);
+
+
 }

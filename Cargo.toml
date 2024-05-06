@@ -30,6 +30,7 @@ oktree = { path = "oktree" }
 ekstensions = { path = "ekstensions" }
 render = { path = "extensions/render", features = ["no_export"]}
 controls = { path = "extensions/controls", features = ["no_export"] }
+player = { path = "extensions/player", features = ["no_export"] }
 
 env_logger = "0.11.3"
 log = "0.4"

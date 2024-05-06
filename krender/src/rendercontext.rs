@@ -90,30 +90,17 @@ impl<T: EntityIdentifier> RenderContext<T> {
 		info!("{:?}", names);
 
 		for (material_key, material) in materials.materials.iter() {
-			error!("{}", material.specification.name);
-			if let Some(binding) = self.material_bindings.get(material_key) {
-				if binding.dirty.load(Ordering::Relaxed) {
-					error!("Is dirty");
-				} else {
-					error!("Is clean");
-				}
-			} else {
-				error!("Has no entry");
-			}
-		}
-
-		for (material_key, material) in materials.materials.iter() {
 			
-			error!("{}", material.specification.name);
-			if let Some(binding) = self.material_bindings.get(material_key) {
-				if binding.dirty.load(Ordering::Relaxed) {
-					error!("Is dirty");
-				} else {
-					error!("Is clean");
-				}
-			} else {
-				error!("Has no entry");
-			}
+			// error!("{}", material.specification.name);
+			// if let Some(binding) = self.material_bindings.get(material_key) {
+			// 	if binding.dirty.load(Ordering::Relaxed) {
+			// 		error!("Is dirty");
+			// 	} else {
+			// 		error!("Is clean");
+			// 	}
+			// } else {
+			// 	error!("Has no entry");
+			// }
 
 			// If dirty or DNE
 			if self.material_bindings.get(material_key)

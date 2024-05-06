@@ -2,6 +2,10 @@ use ekstensions::prelude::*;
 use glam::*;
 use controls::*;
 
+#[macro_use]
+extern crate log;
+
+
 
 #[repr(C)]
 #[derive(Component, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -165,12 +169,14 @@ pub fn movement_system(
 	mut transforms: CompMut<TransformComponent>,
 	mut movements: CompMut<MovementComponent>,
 ) {
-	// let apply_duration_secs = (time.this_tick_start - time.last_tick_start).as_secs_f32();
-	// println!("ads: {apply_duration_secs}");
+	info!("{} entities have a movement component", movements.len());
 
 	for (control, transform, movement) in (&controls, &mut transforms, &mut movements).iter() {
 
 		let [rx, ry] = control.last_tick_mouse_movement();
+
+		warn!("{rx} {ry} mouse stuff");
+
 		let rx = rx as f32 * 0.001;
 		let ry = ry as f32 * 0.001;
 		let quat_ry = Quat::from_euler(EulerRot::XYZ, ry, 0.0, 0.0);
@@ -202,7 +208,6 @@ pub fn movement_system(
 }
 
 
-
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn dependencies() -> Vec<String> {
 	vec![]
@@ -211,7 +216,7 @@ pub fn dependencies() -> Vec<String> {
 
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
-	loader.system("client_tick", "movement", movement_system)
+	loader.system("client_tick", "movement_system", movement_system)
 		.run_after("local_control_system");
 }
 

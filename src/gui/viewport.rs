@@ -94,6 +94,9 @@ impl ViewportEntry {
 		}
 		self.last_update = Some(Instant::now());
 
+		// Tick the client to the current time
+		instance.extensions.run(&mut instance.world, "client_tick").unwrap();
+
 		// Update size of display texture
 		let entity: Entity = {
 			let mut contexts = instance.world.query::<ResMut<ContextResource>>();
@@ -110,9 +113,7 @@ impl ViewportEntry {
 		instance.world.insert_resource(ActiveContextResource { key: self.context });
 		instance.world.insert_resource(RenderInputResource(RenderInput::new()));
 
-		trace!("Begin game render");
 		instance.extensions.run(&mut instance.world, "render").unwrap();
-		trace!("End game render");
 
 		let input = instance.world.remove_resource_typed::<RenderInputResource>().unwrap().0;
 		
