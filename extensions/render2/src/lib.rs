@@ -68,3 +68,4 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
 	p.component::<ModelComponent>();
 }
+

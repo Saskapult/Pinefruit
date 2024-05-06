@@ -390,6 +390,13 @@ impl GameWindow {
 					},
 					&WindowEvent::Focused(focused) => {
 						self.properties.focused = focused;
+
+						// Refresh extensions 
+						// Only if the initialization thread has terminated
+						if focused && self.game_widget.is_some() {
+							info!("Refreshing extensions"); 
+							self.client.lock().reload_extensions();
+						}
 					},
 					WindowEvent::RedrawRequested => {
 						self.update(graphics);

@@ -4,8 +4,8 @@ use render::{ActiveContextResource, BufferResource, ContextResource, DeviceResou
 use slotmap::SecondaryMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use ekstensions::prelude::*;
-
 use crate::{client::GameInstance, rendering_integration::WorldWrapper, GraphicsHandle};
+
 
 
 #[derive(Debug)]
@@ -57,7 +57,6 @@ impl ViewportWidget {
 		response
 	}
 }
-
 
 
 /// ViewportWidgets show textures from these, and are responsible for changing the settings. 
@@ -221,7 +220,7 @@ impl ViewportManager {
 			.collect()
 	}
 
-	// Could have a method for displaying all profiling information
+	/// Shows profiling data for each viewport. 
 	pub fn show_viewports(
 		&mut self, 
 		ui: &mut egui::Ui,
@@ -259,4 +258,3 @@ fn show_frame_rec(ui: &mut egui::Ui, frame: &Vec<GpuTimerQueryResult>) {
 		});
 	}
 }
-

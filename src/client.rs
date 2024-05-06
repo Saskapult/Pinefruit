@@ -65,6 +65,11 @@ impl GameInstance {
 		self.extensions.run(&mut self.world, "client_tick").unwrap();
 	}
 
+	// Borrow checker is angry if we try to do this outside of self
+	pub fn reload_extensions(&mut self) {
+		self.extensions.reload(&mut self.world).unwrap();
+	}
+
 	pub fn connect_server(&mut self) {
 		// Connect to local server by adding some storages
 		// Connect to external server by adding some other storages

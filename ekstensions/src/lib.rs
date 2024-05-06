@@ -311,12 +311,6 @@ impl ExtensionEntry {
 		Ok(dylib_path)
 	}
 
-	pub fn rebuild(&mut self, world: &mut World) -> anyhow::Result<()> {
-		self.unload(world)?;
-		*self = ExtensionEntry::new(&self.path)?;
-		Ok(())
-	}
-
 	fn build_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
 		// We care about Cargo.toml and everthing in the src directiory
 		let build_files = walkdir::WalkDir::new(path.as_ref().join("src"))
@@ -384,10 +378,10 @@ impl ExtensionEntry {
 	pub fn unload(&mut self, world: &mut World) -> anyhow::Result<()> {
 		assert!(self.loaded(), "Extension is not loaded!");
 
-		unsafe {
-			let f = self.library.get::<unsafe extern fn() -> ()>(b"unload")?;
-			f()
-		}
+		// unsafe {
+		// 	let f = self.library.get::<unsafe extern fn() -> ()>(b"unload")?;
+		// 	f()
+		// }
 
 		let provisions = self.provides.take().unwrap();
 		for component in provisions.components {
@@ -473,9 +467,17 @@ impl ExtensionRegistry {
 		for i in 0..self.extensions.len() {
 			match self.extensions[i].dirty_level() {
 				DirtyLevel::Rebuild => {
-					// Edit this one
 					debug!("Rebuild extension {}", self.extensions[i].name);
-					self.extensions[i].rebuild(world).unwrap();
+
+					// We can't overwite the library file while it's laoded
+					// Otherwise it will segfault 
+					// We must do some fanangling here
+					let mut ext = self.extensions.remove(i);
+					ext.unload(world)?;
+					let path = ext.path.clone();
+					drop(ext);
+					self.extensions.insert(i, ExtensionEntry::new(path)?);
+
 					// Push dependents to reload queue
 					for (j, e) in self.extensions.iter().enumerate() {
 						if e.load_dependencies.contains(&self.extensions[i].name) {
