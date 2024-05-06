@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 use krender::{prelude::RenderInput, prepare_for_render, RenderContextKey};
 use render::{ActiveContextResource, BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, OutputResolutionComponent, QueueResource, RenderInputResource, TextureResource};
 use slotmap::SecondaryMap;
-use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
+use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use ekstensions::prelude::*;
 
 use crate::{client::GameInstance, rendering_integration::WorldWrapper, GraphicsHandle};
@@ -26,6 +26,7 @@ impl ViewportWidget {
 			update_delay: None,
 			last_update: None,
 			profiler: GpuProfiler::new(GpuProfilerSettings::default()).unwrap(),
+			last_profiler_frame: None,
 			// update_times: RingDataHolder::new(30),
 			last_size: [400.0, 300.0],
 			aspect: None,
@@ -73,6 +74,7 @@ struct ViewportEntry {
 	last_update: Option<Instant>,
 
 	profiler: wgpu_profiler::GpuProfiler,
+	last_profiler_frame: Option<Vec<GpuTimerQueryResult>>,
 	// update_times: RingDataHolder<Duration>,
 
 	last_size: [f32; 2],
@@ -220,4 +222,41 @@ impl ViewportManager {
 	}
 
 	// Could have a method for displaying all profiling information
+	pub fn show_viewports(
+		&mut self, 
+		ui: &mut egui::Ui,
+		graphics: &GraphicsHandle, 
+	) {
+		for (i, (_, v)) in self.contexts.iter_mut().enumerate() {
+			ui.collapsing(format!("Viewport {}", i), |ui| {
+				// Check for new profiler data
+				if let Some(new_profiler_frame) = v.profiler.process_finished_frame(graphics.queue.get_timestamp_period()) {
+					v.last_profiler_frame = Some(new_profiler_frame);
+				}
+
+				// Display last profiler data
+				if let Some(frame) = v.last_profiler_frame.as_ref() {
+					let s = frame.iter()
+						.map(|r| r.time.end - r.time.start)
+						.sum::<f64>();
+
+					ui.label(format!("{:.4}ms ({:.1}HZ)", s * 1000.0, 1.0 / s));
+					show_frame_rec(ui, frame);
+				} else {
+					ui.label("No frame data (yet)");
+				}
+			});
+		}
+	}
 }
+
+
+fn show_frame_rec(ui: &mut egui::Ui, frame: &Vec<GpuTimerQueryResult>) {
+	for r in frame {
+		ui.collapsing(&r.label, |ui| {
+			ui.label(format!("{:.4}ms", (r.time.end - r.time.start) * 1000.0));
+			show_frame_rec(ui, &r.nested_queries);
+		});
+	}
+}
+

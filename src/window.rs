@@ -140,7 +140,7 @@ impl GameWindow {
 			None,
 		);
 
-		let mut viewports = ViewportManager::default();
+		let viewports = ViewportManager::default();
 
 		Self {
 			window_surface,
@@ -214,6 +214,8 @@ impl GameWindow {
 							.reduce(|a, v| a + v)
 							.unwrap_or(f32::INFINITY) / (self.update_times.len() as f32);
 						ui.label(format!("UI: {:>4.1}ms, {:.0}Hz", ui_update_rate * 1000.0, (1.0 / ui_update_rate).round()));
+
+						self.viewports.show_viewports(ui, graphics);
 					});
 				});
 			egui::SidePanel::right("right panel")
