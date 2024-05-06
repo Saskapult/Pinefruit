@@ -98,7 +98,10 @@ struct GameWindow {
 
 	viewports: ViewportManager,
 
-	game_widget: GameWidget,
+	// Game widget is an option becuase we need access to the client in order to create it 
+	// During the loading screen, this is not possible 
+	// It is created when the update fucntion is run and the client is able to lock 
+	game_widget: Option<GameWidget>,
 	// message_widget: MessageWidget,
 	// profiling_widget: RenderProfilingWidget,
 	// show_profiler: bool,
@@ -139,9 +142,6 @@ impl GameWindow {
 
 		let mut viewports = ViewportManager::default();
 
-		// TODO: actual entity
-		let game_widget = GameWidget::new(&mut client.lock().world, &mut viewports, Entity::default());
-
 		Self {
 			window_surface,
 			surface_config: surface,
@@ -161,7 +161,7 @@ impl GameWindow {
 
 			viewports,
 
-			game_widget,
+			game_widget: None,
 			// message_widget: MessageWidget::new(),
 			// profiling_widget: RenderProfilingWidget::new(),
 			// show_profiler: false,
@@ -171,17 +171,6 @@ impl GameWindow {
 	pub fn resize(&mut self, width: u32, height: u32) {
 		self.surface_config.set_size([width, height]);
 		self.last_update = None;
-	}
-
-	/// The code for displaying the UI. 
-	/// Can be copied and pasted into `update()`. 
-	#[profiling::function]
-	fn ui(
-		&mut self,
-		graphics: &mut GraphicsHandle,
-		instance: &mut GameInstance,
-	) {
-		
 	}
 
 	pub fn should_update(&self) -> bool {
@@ -236,7 +225,9 @@ impl GameWindow {
 			egui::CentralPanel::default()
 				.show(&self.context, |ui| {
 					ui.vertical_centered_justified(|ui| {
-						self.game_widget.show(ui, &mut setting_props, &mut self.viewports);
+						self.game_widget.get_or_insert_with(|| 
+							GameWidget::new(&mut instance.world, &mut self.viewports, Entity::default())
+						).show(ui, &mut setting_props, &mut self.viewports);
 					});
 				});
 			
@@ -331,10 +322,12 @@ impl GameWindow {
 				match window_event {
 					WindowEvent::KeyboardInput { event, .. } => {
 						if self.properties.cursor_inside && !event.repeat {
-							self.game_widget.input(
-								(event.physical_key, event.state),
-								when,
-							);
+							if let Some(gw) = self.game_widget.as_mut() {
+								gw.input(
+									(event.physical_key, event.state),
+									when,
+								);
+							}
 						}
 					},
 					&WindowEvent::MouseInput {
@@ -342,18 +335,22 @@ impl GameWindow {
 						button, 
 						..
 					} => {
-						self.game_widget.input(
-							InputEvent::KeyEvent((KeyKey::MouseKey(button), state.into())), 
-							when, 
-						);
+						if let Some(gw) = self.game_widget.as_mut() {
+							gw.input(
+								InputEvent::KeyEvent((KeyKey::MouseKey(button), state.into())), 
+								when, 
+							);
+						}
 					},
 					WindowEvent::MouseWheel { delta, .. } => {
 						match delta {
 							&winit::event::MouseScrollDelta::LineDelta(x, y) => {
-								self.game_widget.input(
-									InputEvent::Scroll([x, y]),
-									when, 
-								);
+								if let Some(gw) = self.game_widget.as_mut() {
+									gw.input(
+										InputEvent::Scroll([x, y]),
+										when, 
+									);
+								}
 							},
 							_ => warn!("only MouseScrollDelta::LineDelta is recognized by the application"),
 						}
@@ -376,10 +373,12 @@ impl GameWindow {
 							}
 						} else {
 							self.manual_cursor_lock_last_position.take();
-							self.game_widget.input(
-								InputEvent::CursorMoved([position.x, position.y]),
-								when,
-							);
+							if let Some(gw) = self.game_widget.as_mut() {
+								gw.input(
+									InputEvent::CursorMoved([position.x, position.y]),
+									when,
+								);
+							}
 						}
 					},
 					WindowEvent::Resized (newsize) => {
@@ -400,10 +399,12 @@ impl GameWindow {
 				match device_event {
 					&DeviceEvent::MouseMotion { delta: (dx, dy) } => {
 						if self.properties.cursor_inside && self.settings.cursor_captured {
-							self.game_widget.input(
-								InputEvent::MouseMotion([dx, dy]),
-								when,
-							);
+							if let Some(gw) = self.game_widget.as_mut() {
+								gw.input(
+									InputEvent::MouseMotion([dx, dy]),
+									when,
+								);
+							}
 						}
 					},
 					_ => {},
