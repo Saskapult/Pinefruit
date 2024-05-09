@@ -1,5 +1,5 @@
 use arrayvec::ArrayVec;
-use crate::{TextureKey, rendercontext::RenderContext, EntityIdentifier, texture::TextureManager, buffer::BufferManager, BufferKey};
+use crate::{TextureKey, rendercontext::RenderContext, texture::TextureManager, buffer::BufferManager, BufferKey};
 
 
 
@@ -23,14 +23,14 @@ impl RRID {
 		Self::Context(id.into())
 	}
 
-	pub fn texture<T: EntityIdentifier>(&self, context: &RenderContext<T>, textures: &TextureManager) -> Option<TextureKey> {
+	pub fn texture(&self, context: &RenderContext, textures: &TextureManager) -> Option<TextureKey> {
 		match self {
 			RRID::Global(id) => textures.key_by_name(id),
 			RRID::Context(id) => context.texture(id),
 		}
 	}
 
-	pub fn buffer<T: EntityIdentifier>(&self, context: &RenderContext<T>, buffers: &BufferManager) -> Option<BufferKey> {
+	pub fn buffer(&self, context: &RenderContext, buffers: &BufferManager) -> Option<BufferKey> {
 		match self {
 			RRID::Global(id) => buffers.key(id),
 			RRID::Context(id) => todo!(),
@@ -65,9 +65,9 @@ impl AbstractRenderTarget {
 		self
 	}
 
-	pub(crate) fn specify<T: EntityIdentifier>(
+	pub(crate) fn specify(
 		&self, 
-		context: &RenderContext<T>,
+		context: &RenderContext,
 		textures: &TextureManager,
 	) -> SpecificRenderTarget {
 		// let map_thing = |t: &RRID| match t {

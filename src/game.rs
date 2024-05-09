@@ -13,7 +13,6 @@ use std::sync::Arc;
 // use crate::ecs::modification::{map_modification_system, map_placement_system};
 // use crate::ecs::octree::{gpu_chunk_loading_system, chunk_rays_system, BigBufferResource, GPUChunksResource, block_colours_system};
 // use crate::ecs::terrain::{TerrainResource, TerrainLoadingResource, terrain_loading_system};
-use crate::rendering_integration::WorldWrapper;
 use crate::util::RingDataHolder;
 use crate::voxel::load_all_blocks_in_file;
 use crate::window::*;

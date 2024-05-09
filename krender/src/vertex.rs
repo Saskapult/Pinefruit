@@ -1,6 +1,6 @@
+use atomic_refcell::AtomicRef;
+use eks::{entity::Entity, resource::UntypedResource, sparseset::UntypedSparseSet};
 use serde::{Serialize, Deserialize};
-
-use crate::EntityIdentifier;
 
 
 /// Attributes needed for an instance for a shader
@@ -39,23 +39,9 @@ pub enum InstanceAttributeSource {
 }
 
 /// Am more advanced form of [InstanceAttributeSource], ready to be used.
-pub enum FetchedInstanceAttributeSource<'a, E: EntityIdentifier> {
-	Component(Box<dyn InstanceComponentProvider<'a, E> + 'a>), // Holds a reference which lives for that long
-	Resource(&'a [u8]),
-}
-
-/// Something that can return something which can return instance data.
-/// Like an ECS world.
-pub trait InstanceDataProvider<'a, E: EntityIdentifier> {
-	fn get_storage(&self, component_id: impl AsRef<str>) -> Option<impl InstanceComponentProvider<'a, E>>;
-	fn get_resource(&self, resource_id: impl Into<String>) -> Option<&'a [u8]>;
-	fn fetch_source(&self, attribute: &InstanceAttributeSource) -> Option<FetchedInstanceAttributeSource<'a, E>>;
-}
-
-/// Something which can return instance data
-/// Like a sparse set
-pub trait InstanceComponentProvider<'a, E> {
-	fn get_component(&self, entity_id: E) -> Option<&'a [u8]>; // Lifetime of reference, not self! 
+pub enum FetchedInstanceAttributeSource<'a> {
+	Component(AtomicRef<'a, UntypedSparseSet>), 
+	Resource(AtomicRef<'a, UntypedResource>),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]

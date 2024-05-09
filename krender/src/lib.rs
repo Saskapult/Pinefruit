@@ -10,7 +10,6 @@ use rendercontext::RenderContextManager;
 use shader::ShaderManager;
 use slotmap::new_key_type;
 use texture::TextureManager;
-use vertex::InstanceDataProvider;
 use wgpu::util::DeviceExt;
 
 use crate::vertex::FetchedInstanceAttributeSource;
@@ -35,7 +34,7 @@ pub mod prelude {
 	pub use crate::texture::{Texture, TextureManager, TextureFormat};
 	pub use crate::mesh::{Mesh, MeshManager};
 	pub use crate::buffer::{BufferManager, Buffer};
-	pub use crate::vertex::{InstanceDataProvider, InstanceComponentProvider, InstanceAttributeSource, FetchedInstanceAttributeSource};
+	pub use crate::vertex::{InstanceAttributeSource, FetchedInstanceAttributeSource};
 	pub use crate::shader::{ShaderManager, ShaderEntry};
 	pub use crate::bindgroup::BindGroupManager;
 	pub use crate::material::{MaterialManager, MaterialSpecification};
@@ -64,11 +63,7 @@ new_key_type! {
 }
 
 
-pub trait EntityIdentifier: Copy + PartialEq + Eq + Hash {}
-impl<T> EntityIdentifier for T where T: Copy + PartialEq + Eq + Hash {}
-
-
-pub struct RenderResourcesRefMut<'a, T: EntityIdentifier> {
+pub struct RenderResourcesRefMut<'a> {
 	pub device: &'a wgpu::Device,
 	pub queue: &'a wgpu::Queue,
 	pub shaders: &'a mut ShaderManager,
@@ -77,13 +72,13 @@ pub struct RenderResourcesRefMut<'a, T: EntityIdentifier> {
 	pub textures: &'a mut TextureManager,
 	pub buffers: &'a mut BufferManager,
 	pub bind_groups: &'a mut BindGroupManager,
-	pub contexts: &'a mut RenderContextManager<T>,
+	pub contexts: &'a mut RenderContextManager,
 }
 
 
 // Put in RenderResourcesRefMut
 #[profiling::function]
-pub fn prepare_for_render<T: EntityIdentifier>(
+pub fn prepare_for_render(
 	device: &wgpu::Device,
 	queue: &wgpu::Queue,
 	shaders: &mut ShaderManager,
@@ -92,7 +87,7 @@ pub fn prepare_for_render<T: EntityIdentifier>(
 	textures: &mut TextureManager,
 	buffers: &mut BufferManager,
 	bind_groups: &mut BindGroupManager,
-	contexts: &mut RenderContextManager<T>,
+	contexts: &mut RenderContextManager,
 ) {
 	info!("Preparing for render");
 

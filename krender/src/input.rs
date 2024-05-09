@@ -1,4 +1,5 @@
-use prelude::{AbstractRenderTarget, RenderContext};
+use eks::entity::Entity;
+use prelude::{AbstractRenderTarget, RenderContext, InstanceAttributeSource};
 use rendertarget::RRID;
 use slotmap::{SlotMap, SecondaryMap};
 use crate::{*, bundle::{RenderBundleStage, MaybeOwned, RenderBundle}};
@@ -15,16 +16,16 @@ use crate::{*, bundle::{RenderBundleStage, MaybeOwned, RenderBundle}};
 
 
 #[derive(Debug, Default)]
-pub struct RenderInputStage<T> {
+pub struct RenderInputStage {
 	// Target -> items
-	target_items: HashMap<AbstractRenderTarget, Vec<(MaterialKey, Option<MeshKey>, T)>>,
+	target_items: HashMap<AbstractRenderTarget, Vec<(MaterialKey, Option<MeshKey>, Entity)>>,
 	computes: SlotMap<RenderComputeKey, (MaterialKey, [u32; 3])>,
 
 	// Move to vecs? Faster insertion
 	colour_clears: HashMap<RRID, wgpu::Color>, 
 	depth_clears: HashMap<RRID, f32>, 
 }
-impl<T: EntityIdentifier> RenderInputStage<T> {
+impl RenderInputStage {
 	pub fn new() -> Self {
 		Self {
 			target_items: HashMap::new(),
@@ -55,7 +56,7 @@ impl<T: EntityIdentifier> RenderInputStage<T> {
 		self
 	}
 
-	pub fn target(&mut self, target: AbstractRenderTarget) -> &mut Vec<(MaterialKey, Option<MeshKey>, T)> {
+	pub fn target(&mut self, target: AbstractRenderTarget) -> &mut Vec<(MaterialKey, Option<MeshKey>, Entity)> {
 		self.target_items.entry(target.into()).or_default()
 	}
 
@@ -69,8 +70,8 @@ impl<T: EntityIdentifier> RenderInputStage<T> {
 		meshes: &mut MeshManager,
 		materials: &MaterialManager,
 		shaders: &ShaderManager,
-		storage_provider: &'a impl InstanceDataProvider<'a, T>,
-		context: &RenderContext<T>,
+		world: &'a eks::World,
+		context: &RenderContext,
 		sort: bool,
 	) -> RenderBundleStage {
 
@@ -165,9 +166,15 @@ impl<T: EntityIdentifier> RenderInputStage<T> {
 				let shader = shaders.get(shader_key).unwrap();
 				
 				// Borrow ECS storages
+				// TODO: allow return none rather than panicing when storage not found
 				let attributes = &shader.specification.base.polygonal().instance_attributes;
 				let storages = attributes.iter()
-					.map(|a| (a, storage_provider.fetch_source(&a.source)))
+					.map(|a| (a, match &a.source {
+						InstanceAttributeSource::Component(component_id) => {
+							Some(FetchedInstanceAttributeSource::<'_>::Component(world.component_raw_ref(component_id)))
+						},
+						InstanceAttributeSource::Resource(resource_id) => Some(FetchedInstanceAttributeSource::<'_>::Resource(world.resource_raw_ref(resource_id))),
+					}))
 					.collect::<Vec<_>>();
 
 				// Collect storage data
@@ -181,8 +188,8 @@ impl<T: EntityIdentifier> RenderInputStage<T> {
 					for &(_, _, _, e) in &mapped_items[r.clone()] {
 						for (attribute, storage) in storages.iter() {
 							let d = match storage.as_ref().unwrap() {
-								FetchedInstanceAttributeSource::Component(storage) => storage.get_component(e),
-								FetchedInstanceAttributeSource::Resource(r) => Some(*r)
+								FetchedInstanceAttributeSource::Component(storage) => storage.get(e),
+								FetchedInstanceAttributeSource::Resource(r) => Some(r.inner_raw()),
 							};
 							let data = if storage.is_some() && d.is_some() {
 								d.unwrap()
@@ -283,11 +290,11 @@ impl<T: EntityIdentifier> RenderInputStage<T> {
 
 
 #[derive(Debug)]
-pub struct RenderInput<T> {
-	stages: BTreeMap<String, RenderInputStage<T>>,
+pub struct RenderInput {
+	stages: BTreeMap<String, RenderInputStage>,
 	dependencies: Vec<(String, String)>,
 }
-impl<E: EntityIdentifier> RenderInput<E> {
+impl RenderInput {
 	pub fn new() -> Self {
 		Self {
 			stages: BTreeMap::new(),
@@ -295,7 +302,7 @@ impl<E: EntityIdentifier> RenderInput<E> {
 		}
 	}
 
-	pub fn stage(&mut self, stage: impl Into<String>) -> &mut RenderInputStage<E> {
+	pub fn stage(&mut self, stage: impl Into<String>) -> &mut RenderInputStage {
 		self.stages.entry(stage.into())
 			.or_insert_with(|| RenderInputStage::new())
 	}
@@ -344,8 +351,8 @@ impl<E: EntityIdentifier> RenderInput<E> {
 		meshes: &mut MeshManager,
 		materials: &MaterialManager,
 		shaders: &ShaderManager,
-		storage_provider: &'a impl InstanceDataProvider<'a, E>,
-		context: &RenderContext<E>,
+		storage_provider: &'a eks::World,
+		context: &RenderContext,
 		sort: bool,
 	) -> RenderBundle<'a> {
 		let mut bundle = RenderBundle::default();

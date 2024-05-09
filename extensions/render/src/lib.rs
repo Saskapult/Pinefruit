@@ -93,9 +93,9 @@ impl DerefMut for MeshResource {
 
 /// Contexts are stored as a resource (viewport->context->entity) rather than a component (viewport->entity->context) becuase we might want to have multiple contexts for one entity (example: rendering to two different resolutions). 
 #[derive(Debug, Resource, Default)]
-pub struct ContextResource (pub RenderContextManager<Entity>);
+pub struct ContextResource (pub RenderContextManager);
 impl Deref for ContextResource {
-	type Target = RenderContextManager<Entity>;
+	type Target = RenderContextManager;
 	fn deref(&self) -> &Self::Target {
 		&self.0
 	}
@@ -114,9 +114,9 @@ pub struct ActiveContextResource { pub key: RenderContextKey }
 
 /// This exists fro the same resaons descibed in [ActiveContextResource]. 
 #[derive(Debug, Resource)]
-pub struct RenderInputResource (pub RenderInput<Entity>);
+pub struct RenderInputResource (pub RenderInput);
 impl Deref for RenderInputResource {
-	type Target = RenderInput<Entity>;
+	type Target = RenderInput;
 	fn deref(&self) -> &Self::Target {
 		&self.0
 	}

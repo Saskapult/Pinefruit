@@ -4,7 +4,7 @@ use render::{ActiveContextResource, BufferResource, ContextResource, DeviceResou
 use slotmap::SecondaryMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use ekstensions::prelude::*;
-use crate::{client::GameInstance, rendering_integration::WorldWrapper, GraphicsHandle};
+use crate::{client::GameInstance, GraphicsHandle};
 
 
 
@@ -140,14 +140,14 @@ impl ViewportEntry {
 			);
 			
 			let context = contexts.get(self.context).unwrap();
-			let storage_provider = WorldWrapper { world: &instance.world, };
+			// let storage_provider = &;
 			let bundle = input.bundle(
 				&device, 
 				&textures, 
 				&mut meshes, 
 				&materials, 
 				&instance.shaders, 
-				&storage_provider, 
+				&instance.world, 
 				&context, 
 				false,
 			);

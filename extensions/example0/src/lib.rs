@@ -11,6 +11,7 @@ extern crate log;
 
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn dependencies() -> Vec<String> {
+	env_logger::init();
 	info!("Example0 deps");
 	vec![
 		// "libidk".into(),

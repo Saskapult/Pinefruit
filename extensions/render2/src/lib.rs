@@ -1,6 +1,8 @@
 use ekstensions::prelude::*;
+use glam::Vec3;
 use krender::{prelude::*, MaterialKey, MeshKey};
-use render::{MaterialResource, RenderInputResource};
+use render::{MaterialResource, MeshResource, RenderInputResource};
+use transform::TransformComponent;
 
 #[macro_use]
 extern crate log;
@@ -51,8 +53,25 @@ fn model_render_system(
 }
 
 
+fn spawn_test_model(
+	mut entities: EntitiesMut,
+	mut models: CompMut<ModelComponent>,
+	mut meshes: ResMut<MeshResource>,
+	mut materials: ResMut<MaterialResource>,
+	mut transforms: CompMut<TransformComponent>,
+) {
+	let material = materials.read("resources/materials/grass.ron");
+	let mesh = meshes.read_or("resources/meshes/box.obj", || Mesh::read_obj("resources/meshes/box.obj"));
+
+	let entity = entities.spawn();
+	models.insert(entity, ModelComponent { material, mesh, });
+	transforms.insert(entity, TransformComponent::new().with_position(Vec3::new(0.0, 0.0, 0.0)));
+}
+
+
 #[cfg_attr(not(feature = "no_export"), no_mangle)]
 pub fn dependencies() -> Vec<String> {
+	env_logger::init();
 	vec![]
 }
 
@@ -61,6 +80,8 @@ pub fn dependencies() -> Vec<String> {
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	loader.system("render", "model_render_system", model_render_system);
 	loader.system("render", "skybox_render_system", skybox_render_system);
+
+	loader.system("client_init", "spawn_test_model", spawn_test_model);
 }
 
 
@@ -68,4 +89,3 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
 	p.component::<ModelComponent>();
 }
-

@@ -12,6 +12,7 @@ rustc-wrapper = "/usr/bin/sccache"
 [dependencies]
 ekstensions = { path = "../../ekstensions" }
 log = "0.4.21"
+env_logger = "0.11.3"
 
 [features]
 no_export = []

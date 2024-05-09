@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::atomic::{AtomicBool, Ordering}};
+use eks::entity::Entity;
 use slotmap::{SlotMap, SecondaryMap};
-use crate::{EntityIdentifier, TextureKey, BufferKey, RenderContextKey, MaterialKey, BindGroupKey, material::{MaterialManager, MaterialError, MaterialResourceLocation, GlobalResourceIdentifier}, shader::{ShaderManager, BindGroupEntry}, bindgroup::{BindGroupEntryContentDescriptor, SamplerDescriptor}, prelude::BindGroupManager, texture::TextureManager, buffer::BufferManager};
+use crate::{TextureKey, BufferKey, RenderContextKey, MaterialKey, BindGroupKey, material::{MaterialManager, MaterialError, MaterialResourceLocation, GlobalResourceIdentifier}, shader::{ShaderManager, BindGroupEntry}, bindgroup::{BindGroupEntryContentDescriptor, SamplerDescriptor}, prelude::BindGroupManager, texture::TextureManager, buffer::BufferManager};
 
 
 
@@ -14,12 +15,12 @@ pub(crate) struct MaterialBinding {
 
 
 #[derive(Debug)]
-pub struct RenderContext<T: EntityIdentifier> {
+pub struct RenderContext {
 	pub name: String, // For debugging
 	// Systems take this entity and extract data from it to make context data
 	// Like camera buffer system, which looks for a camera component and then
 	// Writes its data to the camera buffer (a context resource)
-	pub entity: Option<T>,
+	pub entity: Option<Entity>,
 
 	pub textures: HashMap<String, TextureKey>,
 	pub buffers: HashMap<String, BufferKey>,
@@ -28,7 +29,7 @@ pub struct RenderContext<T: EntityIdentifier> {
 
 	pub key: RenderContextKey,
 }
-impl<T: EntityIdentifier> RenderContext<T> {
+impl RenderContext {
 	pub fn new(name: impl Into<String>, key: RenderContextKey) -> Self {
 		Self {
 			name: name.into(),
@@ -40,8 +41,8 @@ impl<T: EntityIdentifier> RenderContext<T> {
 		}
 	}
 
-	pub fn with_entity(mut self, entity_id: T) -> Self {
-		self.entity = Some(entity_id);
+	pub fn with_entity(mut self, entity: Entity) -> Self {
+		self.entity = Some(entity);
 		self
 	}
 
@@ -254,17 +255,17 @@ impl<T: EntityIdentifier> RenderContext<T> {
 
 
 #[derive(Debug, Default)]
-pub struct RenderContextManager<T: EntityIdentifier> {
-	pub render_contexts: SlotMap<RenderContextKey, RenderContext<T>>,
+pub struct RenderContextManager {
+	pub render_contexts: SlotMap<RenderContextKey, RenderContext>,
 }
-impl<T: EntityIdentifier> RenderContextManager<T> {
+impl RenderContextManager {
 	pub fn new() -> Self {
 		Self {
 			render_contexts: SlotMap::with_key(),
 		}
 	}
 
-	pub fn new_context(&mut self, name: impl Into<String>) -> (RenderContextKey, &mut RenderContext<T>) {
+	pub fn new_context(&mut self, name: impl Into<String>) -> (RenderContextKey, &mut RenderContext) {
 		if self.render_contexts.len() != 0 {
 			panic!("tell me why");
 		}
@@ -273,11 +274,11 @@ impl<T: EntityIdentifier> RenderContextManager<T> {
 		(k, self.render_contexts.get_mut(k).unwrap())
 	}
 
-	pub fn get(&self, key: RenderContextKey) -> Option<&RenderContext<T>> {
+	pub fn get(&self, key: RenderContextKey) -> Option<&RenderContext> {
 		self.render_contexts.get(key)
 	}
 
-	pub fn get_mut(&mut self, key: RenderContextKey) -> Option<&mut RenderContext<T>> {
+	pub fn get_mut(&mut self, key: RenderContextKey) -> Option<&mut RenderContext> {
 		self.render_contexts.get_mut(key)
 	}
 
