@@ -51,13 +51,13 @@ fn player_spawn_components(
 }
 
 
-#[cfg_attr(not(feature = "no_export"), no_mangle)]
+#[cfg_attr(feature = "extension", no_mangle)]
 pub fn dependencies() -> Vec<String> {
 	vec![]
 }
 
 
-#[cfg_attr(not(feature = "no_export"), no_mangle)]
+#[cfg_attr(feature = "extension", no_mangle)]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	loader.system("client_tick", "player_spawn", player_spawn);
 	loader.system("client_tick", "player_spawned", player_spawned)
@@ -69,7 +69,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 }
 
 
-#[cfg_attr(not(feature = "no_export"), no_mangle)]
+#[cfg_attr(feature = "extension", no_mangle)]
 pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
 	
 	let mut psr = PlayerSpawnResource::default();

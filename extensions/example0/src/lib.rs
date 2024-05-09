@@ -9,7 +9,7 @@ extern crate log;
 // pub struct ComponentA(u32);
 
 
-#[cfg_attr(not(feature = "no_export"), no_mangle)]
+#[cfg_attr(feature = "extension", no_mangle)]
 pub fn dependencies() -> Vec<String> {
 	env_logger::init();
 	info!("Example0 deps");
@@ -19,7 +19,7 @@ pub fn dependencies() -> Vec<String> {
 }
 
 
-#[cfg_attr(not(feature = "no_export"), no_mangle)]
+#[cfg_attr(feature = "extension", no_mangle)]
 pub fn systems(_loader: &mut ExtensionSystemsLoader) {
 	info!("Example0 systems");
 	
@@ -29,7 +29,7 @@ pub fn systems(_loader: &mut ExtensionSystemsLoader) {
 }
 
 
-#[cfg_attr(not(feature = "no_export"), no_mangle)]
+#[cfg_attr(feature = "extension", no_mangle)]
 pub fn load(_storages: &mut ekstensions::ExtensionStorageLoader) {
 	info!("Example0 load");
 
@@ -37,11 +37,11 @@ pub fn load(_storages: &mut ekstensions::ExtensionStorageLoader) {
 }
 
 
-// #[cfg_attr(not(feature = "no_export"), no_mangle)]
+// #[cfg_attr(feature = "extension", no_mangle)]
 // pub fn unload() {}
 
 
-// #[cfg_attr(not(feature = "no_export"), no_mangle)]
+// #[cfg_attr(feature = "extension", no_mangle)]
 // pub fn init(
 // 	_a: Comp<ComponentA>,
 // ) {

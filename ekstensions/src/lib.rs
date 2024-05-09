@@ -207,6 +207,8 @@ impl ExtensionEntry {
 			trace!("Either build does not exist or is outdated, rebuilding");
 			let status = std::process::Command::new("cargo")
 				.arg("build")
+				.arg("-F")
+				.arg("extension")
 				.current_dir(path.as_ref())
 				.status()
 				.with_context(|| "cargo build failed")?;
