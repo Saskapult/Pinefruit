@@ -48,7 +48,7 @@ impl TransformComponent {
 		Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
 	}
 	pub fn render_transform(this: &Self, buffer: &mut Vec<u8>) -> bincode::Result<()> {
-		bincode::serialize_into(buffer, this)
+		bincode::serialize_into(buffer, &TransformComponent::matrix(this))
 	}
 }
 impl Default for TransformComponent {

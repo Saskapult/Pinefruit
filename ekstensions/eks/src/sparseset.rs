@@ -220,26 +220,26 @@ pub struct UntypedSparseSet {
 	fn_get: fn(*mut u8, Entity) -> Option<(*const u8, usize)>,
 	fn_serde: Option<(
 		// Serialize 
-		fn(&mut Self, Entity, &mut Vec<u8>), // One 
-		fn(&mut Self, &[Entity], &mut Vec<u8>), // Many 
-		fn(&mut Self, &mut Vec<u8>), // All 
+		fn(&Self, Entity, &mut Vec<u8>), // One 
+		fn(&Self, &[Entity], &mut Vec<u8>), // Many 
+		fn(&Self, &mut Vec<u8>), // All 
 		// Deserialize 
 		fn(&mut Self, Entity, &[u8]), 
 		fn(&mut Self, &[Entity], &[u8]), 
 		fn(&mut Self, &[u8]),
 	)>,
-	fn_renderdata: Option<(
-		fn(&mut Self, Entity, &mut Vec<u8>), // One
-		fn(&mut Self, &[Entity], &mut Vec<u8>), // Many
-	)>,	
+	fn_renderdata: Option<
+		fn(*const u8, &mut Vec<u8>)
+	>,	
 
 	item_size: usize,
 	name: &'static str,
 }
 impl UntypedSparseSet {	
 	fn check_guards<C: Component>(&self) {
-		assert_eq!(self.item_size, std::mem::size_of::<C>(), "Component size differs!");
+		trace!("Access component storage '{}' ({}) as '{}' ({})", self.name, self.item_size, C::STORAGE_ID, std::mem::size_of::<C>());
 		assert_eq!(self.name, C::STORAGE_ID, "Component name differs!");
+		assert_eq!(self.item_size, std::mem::size_of::<C>(), "Component size differs!");
 	}
 
 	/// If you try this with the wrong type then stuff will only not break by coincidence. 
@@ -262,6 +262,22 @@ impl UntypedSparseSet {
 		(self.fn_get)(self.data, entity).and_then(|(data, len)| 
 			Some(unsafe { std::slice::from_raw_parts(data, len) }))
 	}
+
+	// Used by krender to extract render data and append it to a buffer 
+	pub fn render_extend(&self, entity: Entity, buffer: &mut Vec<u8>) -> bool {
+		error!("OH WERE DOIGN A RENDER EXTEND ({})", self.name);
+		if let Some(d) = self.get(entity) {
+			if let Some(f) = self.fn_renderdata {
+				error!("AND IT HAS A FUNCTION!");
+				(f)(d.as_ptr(), buffer);
+			} else {
+				error!("NO FUNCTION!");
+				buffer.extend_from_slice(d);
+			}
+			return true
+		}
+		false
+	}
 }
 impl Drop for UntypedSparseSet {
 	fn drop(&mut self) {
@@ -273,6 +289,12 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 	fn from(value: SparseSet<C>) -> Self {
 		let b = Box::new(value);
 		let p = Box::into_raw(b);
+
+		let g = |p: *const u8, b: &mut Vec<u8>| unsafe {
+			let c = p as *const C;
+			// TODO: error handling
+			(C::RENDERDATA_FN.unwrap())(&*c, b).unwrap();
+		};
 
 		UntypedSparseSet { 
 			data: p as *mut u8, 
@@ -289,7 +311,8 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 				(*(p as *mut SparseSet<C>)).get_ptr(entity).and_then(|data| Some((data as *const u8, std::mem::size_of::<C>())))
 			},
 			fn_serde: None,
-			fn_renderdata: None,
+			fn_renderdata: if C::RENDERDATA_FN.is_some() { Some(g) } else { None },
+			// fn_renderdata: None,
 			
 			item_size: std::mem::size_of::<C>(), 
 			name: C::STORAGE_ID,

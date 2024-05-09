@@ -2,19 +2,20 @@ extern crate proc_macro;
 
 
 #[derive(deluxe::ExtractAttributes)]
-#[deluxe(attributes(metadata))]
+#[deluxe(attributes(storage_options))]
 struct StorageDeriveAttibutes {
 	// The identifier used to identify this storage
 	#[deluxe(default = None)]
 	id: Option<String>,
 	// Whether or not to snap this storage
 	// Requires serde::serialize and serde::deserializes
+	// This is currently broken 
 	#[deluxe(default = false)]
 	snap: bool,
 	// Transformation of data for shader input
 	// If none then we just take the bytes directly 
-	#[deluxe(default = None)]
-	render_transform: Option<String>,
+	#[deluxe(default = "".to_string())]
+	render_transform: String,
 }
 
 
@@ -27,13 +28,13 @@ fn storage_derive_macro2(input: proc_macro2::TokenStream, component: bool) -> de
 	let storage_id = attributes.id.unwrap_or(ast.ident.clone().to_string());
 
 	let serialize_fn = quote::quote! {
-		Some(|item: &#ident, buffer: &mut Vec<u8>| bincode::serialize_into(buffer, item))
+		Some(bincode::serialize_into(buffer, item))
 	};
 	let serialize_many_fn = quote::quote! {
-		Some(|item: &[#ident]| bincode::serialize(item))
+		Some(bincode::serialize(item))
 	};
 	let deserialize_fn = quote::quote! {
-		Some(|data: &[u8]| bincode::deserialize(data))
+		Some(bincode::deserialize(data))
 	};
 
 	let serial_fn = attributes.snap.then(|| quote::quote! {
@@ -47,11 +48,16 @@ fn storage_derive_macro2(input: proc_macro2::TokenStream, component: bool) -> de
 		None
 	});
 
-	let render_fn = attributes.render_transform.and_then(|f| Some(quote::quote! {
-		Some(#f)
-	})).unwrap_or_else(|| quote::quote! {
-		None
-	});
+	let render_fn = if attributes.render_transform != "" {
+		let f: proc_macro2::TokenStream = attributes.render_transform.parse().unwrap();
+		quote::quote! {
+			Some(#f)
+		}
+	} else {
+		quote::quote! {
+			None
+		}
+	};
 
 	// Implement either component or storage
 	// It feels bad but I don't really care

@@ -6,8 +6,8 @@ use crate::Resource;
 pub struct UntypedResource {
 	data: *mut u8, // Borrowable pointer to Box<Resource>
 	fn_drop: fn(&mut Self), // This should be some variant of drop_as (as defined externally)
-	fn_serde: Option<(fn(&mut Self, &mut Vec<u8>), fn(&mut Self, &mut Vec<u8>))>,
-	fn_renderdata: Option<fn(&mut Self, &mut Vec<u8>)>,
+	fn_serde: Option<(fn(&Self, &mut Vec<u8>), fn(&mut Self, &mut Vec<u8>))>,
+	fn_renderdata: Option<fn(&Self, &mut Vec<u8>)>,
 	
 	data_size: usize,
 	name: &'static str,
@@ -39,6 +39,15 @@ impl UntypedResource {
 
 	pub fn inner_raw(&self) -> &[u8] {
 		unsafe { std::slice::from_raw_parts(self.data, self.data_size) }
+	}
+
+	// Used by krender to extract render data and append it to a buffer 
+	pub fn render_extend(&self, buffer: &mut Vec<u8>) {
+		if let Some(f) = self.fn_renderdata {
+			(f)(self, buffer);
+		} else {
+			buffer.extend_from_slice(self.inner_raw());
+		}
 	}
 
 	// Should only ever be called from drop code

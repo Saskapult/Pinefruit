@@ -29,7 +29,7 @@
 		instance_attributes: [
 			(
 				name: "model matrix",
-				source: Component("ModelMatrixComponent"),
+				source: Component("TransformComponent"),
 				fields: [Float32x4, Float32x4, Float32x4, Float32x4],
 				default: None,
 			),

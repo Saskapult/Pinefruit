@@ -186,19 +186,18 @@ impl RenderInputStage {
 					let attributes_len = attributes.iter().fold(0, |a, v| v.size() as usize + a);
 					let mut buffer_data = Vec::with_capacity(r.clone().count() * attributes_len);
 					for &(_, _, _, e) in &mapped_items[r.clone()] {
-						for (attribute, storage) in storages.iter() {
-							let d = match storage.as_ref().unwrap() {
-								FetchedInstanceAttributeSource::Component(storage) => storage.get(e),
-								FetchedInstanceAttributeSource::Resource(r) => Some(r.inner_raw()),
-							};
-							let data = if storage.is_some() && d.is_some() {
-								d.unwrap()
-							} else if let Some(d) = attribute.default.as_ref() {
-								d.as_slice()
-							} else {
-								panic!("Error pulling data for {:?}, no entity data and no default!", attribute);
-							};
-							buffer_data.extend_from_slice(data);
+						for (_attribute, storage) in storages.iter() {
+							match storage.as_ref().unwrap() {
+								FetchedInstanceAttributeSource::Component(storage) => {
+									storage.render_extend(e, &mut buffer_data);
+								},
+								FetchedInstanceAttributeSource::Resource(r) => {
+									r.render_extend(&mut buffer_data);
+								},
+							}
+							// Default values in shader specifications have been removed
+							// Perhaps the component can specity a default value
+							// TODO: reflect thing in code
 						}
 					}
 					buffer_data

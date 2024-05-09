@@ -342,8 +342,8 @@ mod tests {
 	#[derive(Debug, Resource, PartialEq, Eq, Clone, Copy)]
 	pub struct Ressy(u32);
 
-	#[derive(Debug, Component, serde::Serialize, serde::Deserialize)]
-	#[storage_options(snap = true)]
+	// #[derive(Debug, Component, serde::Serialize, serde::Deserialize)]
+	// #[storage_options(snap = true)]
 	pub struct Ikd(u32);
 
 	#[test]
