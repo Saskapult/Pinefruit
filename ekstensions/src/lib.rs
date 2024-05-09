@@ -194,7 +194,7 @@ impl ExtensionEntry {
 			.get("name").unwrap()
 			.as_str().unwrap();
 		
-		let dylib_path = Self::stored_output_path(name);
+		let dylib_path = Self::stored_extension_path(name);
 		trace!("Build files should be in {:?}", dylib_path);
 
 		// Check if recompilation is needed
@@ -205,6 +205,22 @@ impl ExtensionEntry {
 			.unwrap_or(true);
 		if needs_recompilation {
 			trace!("Either build does not exist or is outdated, rebuilding");
+
+			// Look for old build files
+			// If swap path is soem then unsawp after building
+			let out_path = Self::build_output_path(path.as_ref(), &name)?;
+			let swap_path = if out_path.exists() {
+				trace!("Previous build files exist, copying to library swap");
+
+				let storage = Self::stored_library_path(&name);
+				std::fs::copy(&out_path, &storage).unwrap();
+
+				Some(storage)
+			} else {
+				trace!("No previous build detected");
+				None
+			};
+
 			let status = std::process::Command::new("cargo")
 				.arg("build")
 				.arg("-F")
@@ -216,13 +232,19 @@ impl ExtensionEntry {
 				error!("Failed to compile extension");
 				panic!();
 			}
-			trace!("Copying new extension build to storage");
-			let new_files = Self::build_output_path(path.as_ref(), &name)?;
-			let storage = Self::stored_output_path(&name);
 
+			trace!("Copying output to extension storage");
+			let new_files = Self::build_output_path(path.as_ref(), &name)?;
+			let storage = Self::stored_extension_path(&name);
 			trace!("{:?} -> {:?}", new_files, storage);
 			std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
 			std::fs::copy(new_files, storage).unwrap();
+
+			if let Some(storage) = swap_path {
+				trace!("Restoring previous build files from library swap");
+				std::fs::copy(&storage, &out_path).unwrap();
+				std::fs::remove_file(&storage).unwrap();
+			}
 		}
 
 		assert!(std::fs::canonicalize(&dylib_path).is_ok(), "output path is bad");
@@ -260,17 +282,24 @@ impl ExtensionEntry {
 
 	/// After being built, extension files are copied here for storage. 
 	/// This is becuase building one extension that depends on other extensions will rebuild its dependents becuase of the change in `no_export` flag. 
-	fn stored_output_path(extension_name: impl AsRef<str>) -> PathBuf {
-		let extension_name = extension_name.as_ref();
-		let dylib_output_dir = PathBuf::from("target/extensions");
+	fn stored_extension_path(extension_name: impl AsRef<str>) -> PathBuf {
+		 PathBuf::from("target/extensions")
+			.join(Self::stored_name(extension_name))
+	}
 
+	fn stored_library_path(extension_name: impl AsRef<str>) -> PathBuf {
+		PathBuf::from("target/tmp")
+		   .join(Self::stored_name(extension_name))
+	}
+
+	fn stored_name(extension_name: impl AsRef<str>) -> PathBuf {
 		// File name varies by platform 
 		#[cfg(target_os = "linux")]
-		let dylib_path = dylib_output_dir.join(format!("lib{}", extension_name)).with_extension("so");
+		let dylib_path = PathBuf::from(format!("lib{}", extension_name.as_ref())).with_extension("so");
 		#[cfg(target_os = "macos")]
-		let dylib_path = dylib_output_dir.join(format!("lib{}", extension_name)).with_extension("dylib");
+		let dylib_path = PathBuf::from(format!("lib{}", extension_name.as_ref())).with_extension("dylib");
 		#[cfg(target_os = "windows")]
-		let dylib_path = dylib_output_dir.join(format!("{}", extension_name)).with_extension("dll");
+		let dylib_path = PathBuf::from(format!("{}", extension_name.as_ref())).with_extension("dll");
 
 		dylib_path
 	}
@@ -302,13 +331,7 @@ impl ExtensionEntry {
 			extension_path.as_ref().join("target/debug")
 		};
 
-		// File name varies by platform 
-		#[cfg(target_os = "linux")]
-		let dylib_path = dylib_output_dir.join(format!("lib{}", name)).with_extension("so");
-		#[cfg(target_os = "macos")]
-		let dylib_path = dylib_output_dir.join(format!("lib{}", name)).with_extension("dylib");
-		#[cfg(target_os = "windows")]
-		let dylib_path = dylib_output_dir.join(format!("{}", name)).with_extension("dll");
+		let dylib_path = dylib_output_dir.join(Self::stored_name(name));
 
 		Ok(dylib_path)
 	}
@@ -334,7 +357,7 @@ impl ExtensionEntry {
 
 		// If newer build file exists on disk 
 		// This path is old and not good and only works on linux
-		let dylib_path = Self::stored_output_path(&self.name);
+		let dylib_path = Self::stored_extension_path(&self.name);
 		if let Ok(p) = dylib_path.canonicalize() {
 			// If modified after we last loaded
 			let mod_time = p.metadata().unwrap().modified().unwrap();
