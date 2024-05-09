@@ -10,6 +10,9 @@ Kkraft a thing that I made to learn more about rendering and game engine archite
 Its visual design is based around Minecraft because Minecraft looks cool.
 If n*tch can do it so can I. 
 
+This project ustilizes features that require a nightly version of the rust compiler.
+At the time of writing, I am using `rustc 1.79.0-nightly`.
+
 ## Features
 - Multithreaded terrain generation
 - GPU-based voxel ray tracing
