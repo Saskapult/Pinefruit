@@ -72,7 +72,7 @@ pub struct MovementComponent {
 	pub cid_forward: ControlKey,
 	pub cid_backward: ControlKey,
 
-	movement_velocity: Vec3,
+	// movement_velocity: Vec3,
 	pub max_speed: f32,
 	pub acceleration: f32,
 	pub anti_acceleration: f32,
@@ -137,7 +137,7 @@ impl MovementComponent {
 
 		MovementComponent {
 			cid_right, cid_left, cid_up, cid_down, cid_forward, cid_backward, 
-			movement_velocity: Vec3::ZERO,
+			// movement_velocity: Vec3::ZERO,
 			max_speed: 15.0,
 			acceleration: 1.0,
 			anti_acceleration: 3.0,
