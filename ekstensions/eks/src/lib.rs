@@ -48,7 +48,7 @@ pub trait Storage: 'static + Send + Sync + std::fmt::Debug + Sized {
 	)>;
 	// A function to transform this data for passage into shaders 
 	// For example, converting position, scale, and rotation into a matrix
-	const RENDERDATA_FN: Option<fn(&Self, &mut Vec<u8>) -> bincode::Result<()>>;
+	const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>>;
 }
 
 
@@ -78,7 +78,7 @@ impl<R: Resource> Storage for Option<R> {
 		// See serialization of many items
 		fn(&[u8]) -> bincode::Result<Vec<Self>>,
 	)> = None;
-	const RENDERDATA_FN: Option<fn(&Self, &mut Vec<u8>) -> bincode::Result<()>> = None;
+	const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>> = None;
 }
 
 

@@ -69,7 +69,7 @@ fn storage_derive_macro2(input: proc_macro2::TokenStream, component: bool) -> de
 		impl Storage for #ident {
 			const STORAGE_ID: &'static str = #storage_id;
 			const SERIALIZE_FN: Option<(fn(&Self, &mut Vec<u8>) -> bincode::Result<()>, fn(&[Self]) -> bincode::Result<()>, fn(&[u8]) -> bincode::Result<Self>, fn(&[u8]) -> bincode::Result<Vec<Self>>)> = #serial_fn;
-			const RENDERDATA_FN: Option<fn(&Self, &mut Vec<u8>) -> bincode::Result<()>> = #render_fn;
+			const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>> = #render_fn;
 		}
 		impl #idk for #ident {}
 	})

@@ -229,7 +229,12 @@ pub struct UntypedSparseSet {
 		fn(&mut Self, &[u8]),
 	)>,
 	fn_renderdata: Option<
-		fn(*const u8, &mut Vec<u8>)
+		// This fucntion is a little different than the serialization functions 
+		// That's beucase it uses only one indirect function call 
+		// It's just copeid from the [Storage] trait
+		// This should increase performance, but I have no measurments for it
+		// Please alter the serializtion funtions to be like this
+		fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>
 	>,	
 
 	item_size: usize,
@@ -287,12 +292,6 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 		let b = Box::new(value);
 		let p = Box::into_raw(b);
 
-		let g = |p: *const u8, b: &mut Vec<u8>| unsafe {
-			let c = p as *const C;
-			// TODO: error handling
-			(C::RENDERDATA_FN.unwrap())(&*c, b).unwrap();
-		};
-
 		UntypedSparseSet { 
 			data: p as *mut u8, 
 			
@@ -307,7 +306,7 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 				(*(p as *mut SparseSet<C>)).get_ptr(entity).and_then(|data| Some((data as *const u8, std::mem::size_of::<C>())))
 			},
 			fn_serde: None,
-			fn_renderdata: if C::RENDERDATA_FN.is_some() { Some(g) } else { None },
+			fn_renderdata: C::RENDERDATA_FN,
 			// fn_renderdata: None,
 			
 			item_size: std::mem::size_of::<C>(), 
