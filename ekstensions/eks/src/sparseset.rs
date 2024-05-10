@@ -220,13 +220,13 @@ pub struct UntypedSparseSet {
 	fn_get: fn(*mut u8, Entity) -> Option<(*const u8, usize)>,
 	fn_serde: Option<(
 		// Serialize 
-		fn(&Self, Entity, &mut Vec<u8>), // One 
-		fn(&Self, &[Entity], &mut Vec<u8>), // Many 
-		fn(&Self, &mut Vec<u8>), // All 
+		fn(*const u8, &mut Vec<u8>), // &C
+		fn(*const u8, &mut Vec<u8>), // &[C] 
+		fn(*const u8, &mut Vec<u8>), // SparseSet<C> 
 		// Deserialize 
-		fn(&mut Self, Entity, &[u8]), 
-		fn(&mut Self, &[Entity], &[u8]), 
-		fn(&mut Self, &[u8]),
+		fn(&[u8], &mut [u8]), // deserialize into a given space 
+		fn(&[u8], &mut Vec<u8>), // deserialize as extension of Vec<C>
+		fn(&[u8]) -> *const u8, // SparseSet<~> -> Box<SparseSet<~>>
 	)>,
 	fn_renderdata: Option<
 		// This fucntion is a little different than the serialization functions 
@@ -268,17 +268,26 @@ impl UntypedSparseSet {
 			Some(unsafe { std::slice::from_raw_parts(data, len) }))
 	}
 
+	// -> bincode::Result<()>
+	// serialize_one(&self, buffer: &mut Vec<u8>)
+	// serialize_many(&self, entities: &[Entity], buffer: &mut Vec<u8>)
+	// serialize_all(&self, buffer: &mut Vec<u8>)
+	// deserialize_one(&mut self, entity: Entity, data: &[u8])
+	// deserialize_many(&mut self, entities: &[Entity], data: &[u8])
+	// deserialize_all(&mut self, data: &[u8])
+
 	// Used by krender to extract render data and append it to a buffer 
 	pub fn render_extend(&self, entity: Entity, buffer: &mut Vec<u8>) -> bool {
 		if let Some(d) = self.get(entity) {
 			if let Some(f) = self.fn_renderdata {
-				(f)(d.as_ptr(), buffer);
+				(f)(d.as_ptr(), buffer).is_ok()
 			} else {
 				buffer.extend_from_slice(d);
+				true
 			}
-			return true
+		} else {
+			false
 		}
-		false
 	}
 }
 impl Drop for UntypedSparseSet {
@@ -307,7 +316,6 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 			},
 			fn_serde: None,
 			fn_renderdata: C::RENDERDATA_FN,
-			// fn_renderdata: None,
 			
 			item_size: std::mem::size_of::<C>(), 
 			name: C::STORAGE_ID,

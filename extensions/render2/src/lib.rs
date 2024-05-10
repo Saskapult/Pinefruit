@@ -50,6 +50,9 @@ fn model_render_system(
 	for (entity, (model,)) in (&models,).iter().with_entities() {
 		items.push((model.material, Some(model.mesh), entity));
 	}
+
+	input.add_dependency("ssao generate", "models");
+	
 }
 
 
@@ -63,9 +66,16 @@ fn spawn_test_model(
 	let material = materials.read("resources/materials/grass.ron");
 	let mesh = meshes.read_or("resources/meshes/box.obj", || Mesh::read_obj("resources/meshes/box.obj"));
 
-	let entity = entities.spawn();
-	models.insert(entity, ModelComponent { material, mesh, });
-	transforms.insert(entity, TransformComponent::new().with_position(Vec3::new(0.0, 0.0, 0.0)));
+	for p in [
+		Vec3::new(0.0, 0.0, 0.0),
+		Vec3::new(0.0, 0.0, 1.0),
+		Vec3::new(0.0, 1.0, 0.0),
+		Vec3::new(1.0, 0.0, 0.0),
+	] {
+		let entity = entities.spawn();
+		models.insert(entity, ModelComponent { material, mesh, });
+		transforms.insert(entity, TransformComponent::new().with_position(p));
+	}
 }
 
 

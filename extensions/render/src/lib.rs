@@ -540,6 +540,8 @@ pub fn ssao_system(
 		input.stage("ssao apply")
 			.target(AbstractRenderTarget::new().with_colour(RRID::context("output_texture"), None))
 			.push((ssao_apply_mtl, None, Entity::default()));
+
+		input.add_dependency("ssao apply", "ssao generate");
 	}
 }
 
