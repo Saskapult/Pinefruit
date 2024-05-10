@@ -237,7 +237,7 @@ pub struct UntypedSparseSet {
 }
 impl UntypedSparseSet {	
 	fn check_guards<C: Component>(&self) {
-		trace!("Access component storage '{}' ({}) as '{}' ({})", self.name, self.item_size, C::STORAGE_ID, std::mem::size_of::<C>());
+		// trace!("Access component storage '{}' ({}) as '{}' ({})", self.name, self.item_size, C::STORAGE_ID, std::mem::size_of::<C>());
 		assert_eq!(self.name, C::STORAGE_ID, "Component name differs!");
 		assert_eq!(self.item_size, std::mem::size_of::<C>(), "Component size differs!");
 	}
@@ -265,13 +265,10 @@ impl UntypedSparseSet {
 
 	// Used by krender to extract render data and append it to a buffer 
 	pub fn render_extend(&self, entity: Entity, buffer: &mut Vec<u8>) -> bool {
-		error!("OH WERE DOIGN A RENDER EXTEND ({})", self.name);
 		if let Some(d) = self.get(entity) {
 			if let Some(f) = self.fn_renderdata {
-				error!("AND IT HAS A FUNCTION!");
 				(f)(d.as_ptr(), buffer);
 			} else {
-				error!("NO FUNCTION!");
 				buffer.extend_from_slice(d);
 			}
 			return true
@@ -300,7 +297,6 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 			data: p as *mut u8, 
 			
 			fn_drop: |s: &mut Self| unsafe {
-				println!("Dropping untyped sparseset as sparseset of {}", C::STORAGE_ID);
 				let b = Box::from_raw(s.data as *mut SparseSet<C>);
 				drop(b);
 			}, 
