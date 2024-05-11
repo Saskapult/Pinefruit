@@ -613,8 +613,9 @@ impl ExtensionRegistry {
 			// Add others to dependencies if they want to be run before
 			for (j, &(ej, sj)) in systems.iter().enumerate() {
 				if i == j { continue }
-				let s = &self.extensions[ej].systems[sj];
-				if s.run_before.contains(&s.id) {
+				let d = &self.extensions[ej].systems[sj];
+				if d.run_before.contains(&s.id) {
+					trace!("'{}' runs before '{}' so '{}' depends on '{}'", d.id, s.id, s.id, d.id);
 					deps.push(j);
 				}
 			}
@@ -679,7 +680,7 @@ impl ExtensionRegistry {
 	}
 
 	fn rebuild_systems(&mut self) -> anyhow::Result<()> {
-		debug!("Rebuilding workloads");
+		info!("Rebuilding workloads");
 
 		let mut groups2 = HashMap::new();
 
@@ -710,7 +711,7 @@ impl ExtensionRegistry {
 	}
 
 	pub fn run(&self, world: &mut World, group: impl AsRef<str>) -> anyhow::Result<()> {
-		info!("Running '{}'", group.as_ref());
+		debug!("Running '{}'", group.as_ref());
 		let (systems_deps, run_order) = self.systems.get(&group.as_ref().to_string())
 			.with_context(|| "Failed to locate workload")?;
 
@@ -719,7 +720,7 @@ impl ExtensionRegistry {
 				let ((ei, si), _) = &systems_deps[i];
 				let e = &self.extensions[*ei];
 				let s = &e.systems[*si];
-				debug!("Extension '{}' system '{}'", e.name, s.id);
+				trace!("Extension '{}' system '{}'", e.name, s.id);
 				let w = world as *const World;
 				(s.pointer)(w);
 			}

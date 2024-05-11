@@ -1,11 +1,11 @@
 use std::{sync::Arc, collections::HashMap};
-use eks::prelude::*;
-use glam::{IVec3, UVec3};
+use ekstensions::prelude::*;
+use glam::{IVec3, UVec3, Vec3};
 use parking_lot::RwLock;
 use slotmap::{SlotMap, new_key_type};
+use transform::TransformComponent;
 
-use crate::{ecs::TransformComponent, voxel::{chunk_of_point, VoxelCube}};
-
+use crate::{chunk_of_point, VoxelCube};
 
 
 new_key_type! {
@@ -50,7 +50,7 @@ impl std::ops::Deref for ChunksResource {
 
 /// The chunks resouce describes the chunks of the world that are loaded. 
 /// Other resources, such as for terrain and lighting, are based on this. 
-#[derive(Debug, Resource, Clone)]
+#[derive(Debug, Clone)]
 pub struct Chunks {
 	// We could reduce memory usage by not storing positions here but it is 
 	// useful to iterate over these
@@ -119,18 +119,17 @@ impl ChunkLoadingComponent {
 		Self { radius, tolerence: 2, }
 	}
 
-	pub fn loading_volume(&self, transform: TransformComponent) -> VoxelCube {
-		VoxelCube::new(chunk_of_point(transform.translation), UVec3::splat(self.radius as u32))
+	pub fn loading_volume(&self, pos: Vec3) -> VoxelCube {
+		VoxelCube::new(chunk_of_point(pos), UVec3::splat(self.radius as u32))
 	}
 
 	// Volume but expanded by tolerence
-	pub fn un_loading_volume(&self, transform: TransformComponent) -> VoxelCube {
-		VoxelCube::new(chunk_of_point(transform.translation), UVec3::splat((self.radius + self.tolerence) as u32))
+	pub fn un_loading_volume(&self, pos: Vec3) -> VoxelCube {
+		VoxelCube::new(chunk_of_point(pos), UVec3::splat((self.radius + self.tolerence) as u32))
 	}
 }
 
 
-#[profiling::function]
 pub fn chunk_loading_system(
 	chunks: ResMut<ChunksResource>,
 	map_loaders: Comp<ChunkLoadingComponent>,
@@ -139,11 +138,11 @@ pub fn chunk_loading_system(
 	// info!("Chunk loading system");
 
 	let loading_volumes = (&map_loaders, &transforms).iter()
-		.map(|(loader, transform)| loader.loading_volume(*transform))
+		.map(|(loader, transform)| loader.loading_volume(transform.translation))
 		.collect::<Vec<_>>();
 
 	let un_loading_volumes = (&map_loaders, &transforms).iter()
-		.map(|(loader, transform)| loader.un_loading_volume(*transform))
+		.map(|(loader, transform)| loader.un_loading_volume(transform.translation))
 		.collect::<Vec<_>>();
 
 	let chunks_read = chunks.read();
@@ -156,7 +155,7 @@ pub fn chunk_loading_system(
 	// In a release build, hashmap lookups take ~4ns, 19^3 lookups in ~0.03ms
 	// This data was collected using benchmarks and is reflected by profiling
 	let chunks_to_load = {
-		profiling::scope!("Collect chunks to load");
+		// profiling::scope!("Collect chunks to load");
 		loading_volumes.iter()
 			.map(|lv| lv.iter())
 			.flatten()
@@ -164,7 +163,7 @@ pub fn chunk_loading_system(
 	};
 
 	let chunks_to_prune = {
-		profiling::scope!("Collect chunks to prune");
+		// profiling::scope!("Collect chunks to prune");
 		chunks_read.chunks.iter()
 			.filter(|(_, &p)| !un_loading_volumes.iter()
 				.any(|lv| lv.contains(p)))
@@ -177,7 +176,7 @@ pub fn chunk_loading_system(
 
 	// Todo: save data
 	{ // Prune chunks that should not be loaded
-		profiling::scope!("Prune chunks");
+		// profiling::scope!("Prune chunks");
 		// debug!("Prune {} chunks", chunks_to_prune.len());
 		for (key, _) in chunks_to_prune {
 			chunks_write.unload(key);
@@ -185,7 +184,7 @@ pub fn chunk_loading_system(
 	}
 
 	{ // Insert entries for chunks that should be in the HM but are not
-		profiling::scope!("Insert chunk entries");
+		// profiling::scope!("Insert chunk entries");
 		// debug!("Insert {} entries", chunks_to_load.len());
 		for position in chunks_to_load {
 			chunks_write.load(position);

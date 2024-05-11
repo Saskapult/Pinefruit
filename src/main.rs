@@ -2,10 +2,7 @@
 #![allow(dead_code, soft_unstable)]
 
 mod window;
-mod voxel;
-mod game;
 mod util;
-mod ecs;
 mod noise;
 mod gui;
 mod rays;

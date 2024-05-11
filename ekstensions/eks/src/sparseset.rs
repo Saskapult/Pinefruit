@@ -130,7 +130,7 @@ impl<T> SparseSet<T> {
 	}
 
 	pub fn insert(&mut self, entity: Entity, data: T) -> Option<T> {
-		info!("Insert entity {entity} ({})", std::any::type_name::<T>());
+		trace!("Insert entity {entity} ({})", std::any::type_name::<T>());
 		let index = self.sparse.insert(entity);
 		let old_data = match index {
 			index if (0..self.data.len()).contains(&index) => {
@@ -292,7 +292,7 @@ impl UntypedSparseSet {
 }
 impl Drop for UntypedSparseSet {
 	fn drop(&mut self) {
-		info!("Dropping UntypedSparseSet '{}'", self.name);
+		trace!("Dropping UntypedSparseSet '{}'", self.name);
 		(self.fn_drop)(self)
 	}
 }

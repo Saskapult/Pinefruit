@@ -108,7 +108,7 @@ impl<S> WorldStorage<S> {
 
 	pub fn insert(&self, k: impl Into<String>, s: S) {
 		let k = k.into();
-		info!("Creating storage '{k}'");
+		trace!("Creating storage '{k}'");
 		let mut storages = self.storages.write();
 		storages.insert(k, Box::into_raw(Box::new(AtomicRefCell::new(s))));
 	}

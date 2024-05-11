@@ -5,13 +5,32 @@ use std::hash::Hash;
 use std::hash::Hasher;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use krender::prelude::*;
 use krender::MaterialKey;
-use krender::prelude::MaterialManager;
+use parking_lot::RwLock;
 use serde::{Serialize, Deserialize};
-use anyhow::*;
 use slotmap::SlotMap;
 use slotmap::new_key_type;
+use ekstensions::prelude::*;
 
+
+
+#[derive(Debug, Resource, Default)]
+pub struct BlockResource {
+	pub blocks: Arc<RwLock<BlockManager>>,
+}
+impl std::ops::Deref for BlockResource {
+	type Target = Arc<RwLock<BlockManager>>;
+	fn deref(&self) -> &Self::Target {
+		&self.blocks
+	}
+}
+impl std::ops::DerefMut for BlockResource {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.blocks
+	}
+}
 
 
 new_key_type! {

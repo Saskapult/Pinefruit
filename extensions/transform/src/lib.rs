@@ -170,13 +170,11 @@ pub fn movement_system(
 	mut transforms: CompMut<TransformComponent>,
 	mut movements: CompMut<MovementComponent>,
 ) {
-	info!("{} entities have a movement component", movements.len());
+	// info!("{} entities have a movement component", movements.len());
 
 	for (control, transform, movement) in (&controls, &mut transforms, &mut movements).iter() {
 
 		let [rx, ry] = control.last_tick_mouse_movement();
-
-		warn!("{rx} {ry} mouse stuff");
 
 		let rx = rx as f32 * 0.001;
 		let ry = ry as f32 * 0.001;
@@ -211,6 +209,7 @@ pub fn movement_system(
 
 #[cfg_attr(feature = "extension", no_mangle)]
 pub fn dependencies() -> Vec<String> {
+	env_logger::init();
 	vec![]
 }
 

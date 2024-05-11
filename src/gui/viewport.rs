@@ -10,7 +10,7 @@ use crate::{client::GameInstance, GraphicsHandle};
 
 #[derive(Debug)]
 pub struct ViewportWidget {
-	context: RenderContextKey,
+	pub context: RenderContextKey,
 	// Could hold Arc<Mutex<ViewportManager>> in order to drop automatically 
 }
 impl ViewportWidget {

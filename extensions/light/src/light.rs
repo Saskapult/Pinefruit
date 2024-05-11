@@ -1,13 +1,12 @@
 use std::{sync::Arc, num::NonZeroU16, collections::VecDeque, time::{Instant, Duration}};
-
-use arrayvec::ArrayVec;
-use eks::prelude::*;
-use glam::{UVec3, Vec4, IVec3, Vec3};
+use chunks::{array_volume::ArrayVolume, chunk_of_point, chunk_of_voxel, chunks::{ChunkKey, ChunksResource}, fvt::FVTIterator, generation::KGeneration, voxel_relative_to_chunk, CHUNK_SIZE};
+use controls::{ControlComponent, ControlKey, ControlMap, KeyCode, KeyCombo, KeyKey, KeyModifiers};
+use ekstensions::prelude::*;
+use glam::{IVec3, UVec3, Vec3, Vec4};
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
-use winit::keyboard::KeyCode;
-use crate::{voxel::{CHUNK_SIZE, ArrayVolume, chunk_of_voxel, voxel_relative_to_chunk, chunk_of_point}, util::KGeneration, ecs::{ControlKey, ControlMap, KeyCombo, KeyModifiers, TransformComponent, ControlComponent}, input::KeyKey, rays::FVTIterator, game::BufferResource};
-use super::{model::MapModelResource, chunks::{ChunkKey, ChunksResource}, terrain::TerrainResource};
+use terrain::terrain::TerrainResource;
+use transform::TransformComponent;
 
 
 
@@ -23,7 +22,7 @@ pub struct LightRGBA {
 	pub a: u16, // Scaling for all channels
 }
 impl LightRGBA {
-	pub fn as_vec4(self) -> Vec4 {
+	pub fn into_vec4(self) -> Vec4 {
 		Vec4::new(
 			self.r as f32 / U4_MAX_F32, 
 			self.g as f32 / U4_MAX_F32, 
@@ -125,7 +124,6 @@ pub struct TorchLightChunksResource {
 
 /// Creates torchlight storage for existing chunks. 
 /// Removes torchlight storage for non-existing chunks. 
-#[profiling::function]
 pub fn torchlight_chunk_init_system(
 	chunks: Res<ChunksResource>,
 	torchlight_chunks: ResMut<TorchLightChunksResource>,
@@ -149,7 +147,6 @@ pub fn torchlight_chunk_init_system(
 
 
 /// Relights chunks
-#[profiling::function]
 pub fn torchlight_update_system(
 	chunks: Res<ChunksResource>,
 	terrain: Res<TerrainResource>,
@@ -258,12 +255,10 @@ impl TorchLightModifierComponent {
 				"place torchlight", 
 				"Creates torchlight where you are looking",
 			);
-			control_map.add_control_binding(control, KeyCombo {
-				modifiers: KeyModifiers::EMPTY,
-				keys: ArrayVec::try_from([
-					KeyKey::BoardKey(KeyCode::KeyT.into()),
-				].as_slice()).unwrap(),
-			});
+			control_map.add_control_binding(control, KeyCombo::new(
+				[KeyKey::BoardKey(KeyCode::KeyT.into())],
+				KeyModifiers::EMPTY,
+			));
 			control
 		};
 
@@ -272,12 +267,10 @@ impl TorchLightModifierComponent {
 				"remove torchlight", 
 				"Remove torchlight where you are looking",
 			);
-			control_map.add_control_binding(control, KeyCombo {
-				modifiers: KeyModifiers::EMPTY,
-				keys: ArrayVec::try_from([
-					KeyKey::BoardKey(KeyCode::KeyY.into()),
-				].as_slice()).unwrap(),
-			});
+			control_map.add_control_binding(control, KeyCombo::new(
+				[KeyKey::BoardKey(KeyCode::KeyY.into())],
+				KeyModifiers::EMPTY,
+			));
 			control
 		};
 
@@ -286,12 +279,10 @@ impl TorchLightModifierComponent {
 				"wipe models", 
 				"wipe models",
 			);
-			control_map.add_control_binding(control, KeyCombo {
-				modifiers: KeyModifiers::EMPTY,
-				keys: ArrayVec::try_from([
-					KeyKey::BoardKey(KeyCode::KeyM.into()),
-				].as_slice()).unwrap(),
-			});
+			control_map.add_control_binding(control, KeyCombo::new(
+				[KeyKey::BoardKey(KeyCode::KeyM.into())],
+				KeyModifiers::EMPTY,
+			));
 			control
 		};
 
@@ -300,12 +291,10 @@ impl TorchLightModifierComponent {
 				"set chunk", 
 				"set whole chunk light to maximum",
 			);
-			control_map.add_control_binding(control, KeyCombo {
-				modifiers: KeyModifiers::EMPTY,
-				keys: ArrayVec::try_from([
-					KeyKey::BoardKey(KeyCode::KeyN.into()),
-				].as_slice()).unwrap(),
-			});
+			control_map.add_control_binding(control, KeyCombo::new(
+				[KeyKey::BoardKey(KeyCode::KeyN.into())],
+				KeyModifiers::EMPTY,
+			));
 			control
 		};
 
@@ -320,7 +309,6 @@ impl TorchLightModifierComponent {
 }
 
 
-#[profiling::function]
 pub fn torchlight_debug_place_system(
 	chunks: Res<ChunksResource>,
 	terrain: Res<TerrainResource>,
@@ -328,7 +316,6 @@ pub fn torchlight_debug_place_system(
 	transforms: Comp<TransformComponent>,
 	controls: Comp<ControlComponent>,
 	mut modifiers: CompMut<TorchLightModifierComponent>,
-	mut models: ResMut<MapModelResource>,
 ) {
 	for (transform, control, modifier) in (&transforms, &controls, &mut modifiers).iter() {
 
@@ -343,13 +330,6 @@ pub fn torchlight_debug_place_system(
 			let lc = tlc.get_mut(k).unwrap();
 			lc.volume.fill_with(PackedLightRGBA(NonZeroU16::MAX));
 			lc.generation.increment();
-		}
-		
-		// Only for testing, doesn't wipe jobs in progress
-		if control.last_tick_pressed(modifier.wipe) && modifier.last_modification.and_then(|i| Some(i.elapsed() > Duration::from_secs_f32(0.1))).unwrap_or(true) {
-			modifier.last_modification = Some(Instant::now());
-
-			models.chunks.clear();
 		}
 
 		if control.last_tick_pressed(modifier.place) && modifier.last_modification.and_then(|i| Some(i.elapsed() > Duration::from_secs_f32(0.1))).unwrap_or(true) {
@@ -399,15 +379,14 @@ pub fn torchlight_debug_place_system(
 }
 
 
-// In the future, this should nto be derived directly form time. 
-pub fn daylight_buffer_system(
-	buffers: ResMut<BufferResource>,
-) {
-	struct DaylightBuffer {
-		// Angle of the light (radians)
-		pub angle: f32,
-		// Brightness of the light ([0, 1])
-		pub brightness: f32,
-	}
-
-}
+// // In the future, this should nto be derived directly form time. 
+// pub fn daylight_buffer_system(
+// 	buffers: ResMut<BufferResource>,
+// ) {
+// 	struct DaylightBuffer {
+// 		// Angle of the light (radians)
+// 		pub angle: f32,
+// 		// Brightness of the light ([0, 1])
+// 		pub brightness: f32,
+// 	}
+// }

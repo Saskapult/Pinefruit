@@ -298,20 +298,9 @@ impl<T: std::fmt::Debug + Clone + PartialEq + Eq + Default> TypedArrayVoxelVolum
 // }
 
 
-
-fn indexof(position: [u32; 2], scales: [u32; 2]) -> Option<usize> {
-	if position[0] >= scales[0] || position[1] >= scales[1] {
-		None
-	} else {
-		Some((position[0] * scales[1] + position[1]) as usize)
-	}
-}
-
-
-
 #[test]
 fn test_greedy2d() {
-	use hashbrown::HashMap;
+	use std::collections::HashMap;
 
 	let extent = [5, 5];
 	let slice = vec![
@@ -324,6 +313,14 @@ fn test_greedy2d() {
 
 	for row in slice.chunks(extent[0]).map(|r| r.iter().map(|&v| format!("{v}")).collect::<Vec<_>>().join(", ")) {
 		println!("{row}");
+	}
+
+	fn indexof(position: [u32; 2], scales: [u32; 2]) -> Option<usize> {
+		if position[0] >= scales[0] || position[1] >= scales[1] {
+			None
+		} else {
+			Some((position[0] * scales[1] + position[1]) as usize)
+		}
 	}
 
 	// Starting positions

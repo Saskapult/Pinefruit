@@ -184,9 +184,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.82"
+version = "1.0.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f538837af36e6f6a9be0faa67f9a314f8119e4e4b5867c6ab40ed60360142519"
+checksum = "25bdb32cbbdce2b519a9cd7df3a678443100e265d5e25ca763b7572a5104f5f3"
 
 [[package]]
 name = "approx"
@@ -551,6 +551,23 @@ name = "cfg_aliases"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+
+[[package]]
+name = "chunks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ekstensions",
+ "env_logger 0.11.3",
+ "glam",
+ "krender",
+ "log",
+ "parking_lot",
+ "ron 0.8.1",
+ "serde",
+ "slotmap",
+ "transform",
+]
 
 [[package]]
 name = "clipboard-win"
@@ -1791,6 +1808,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "light"
+version = "0.1.0"
+dependencies = [
+ "chunks",
+ "controls",
+ "ekstensions",
+ "env_logger 0.11.3",
+ "glam",
+ "log",
+ "parking_lot",
+ "slotmap",
+ "terrain",
+ "transform",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1886,6 +1919,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5aa361d4faea93603064a027415f07bd8e1d5c88c9fbf68bf56a285428fd79ce"
 dependencies = [
  "autocfg 1.2.0",
+]
+
+[[package]]
+name = "meshing"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "chunks",
+ "controls",
+ "crossbeam-channel",
+ "ekstensions",
+ "env_logger 0.11.3",
+ "glam",
+ "krender",
+ "light",
+ "log",
+ "parking_lot",
+ "rayon",
+ "render",
+ "slotmap",
+ "smallvec",
+ "terrain",
+ "thiserror",
+ "transform",
 ]
 
 [[package]]
@@ -2342,9 +2399,9 @@ dependencies = [
 
 [[package]]
 name = "parking_lot"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3742b2c103b9f06bc9fff0a37ff4912935851bee6d36f3c02bcc755bcfec228f"
+checksum = "7e4af0ca4f6caed20e900d564c242b8e5d4903fdacf31d3daf527b66fe6f42fb"
 dependencies = [
  "lock_api",
  "parking_lot_core",
@@ -2412,6 +2469,7 @@ version = "0.1.0"
 dependencies = [
  "controls",
  "ekstensions",
+ "env_logger 0.11.3",
  "log",
  "transform",
 ]
@@ -3027,18 +3085,18 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.200"
+version = "1.0.201"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddc6f9cc94d67c0e21aaf7eda3a010fd3af78ebf6e096aa6e2e13c79749cce4f"
+checksum = "780f1cebed1629e4753a1a38a3c72d30b97ec044f0aef68cb26650a3c5cf363c"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.200"
+version = "1.0.201"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "856f046b9400cee3c8c94ed572ecdb752444c24528c035cd35882aad6f492bcb"
+checksum = "c5e405930b9796f1c00bee880d03fc7e0bb4b9a11afc776885ffe84320da2865"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3281,19 +3339,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "terrain"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chunks",
+ "controls",
+ "crossbeam-channel",
+ "ekstensions",
+ "env_logger 0.11.3",
+ "glam",
+ "log",
+ "parking_lot",
+ "rayon",
+ "ron 0.8.1",
+ "simdnoise",
+ "slotmap",
+ "splines",
+ "thiserror",
+ "transform",
+ "variantly",
+]
+
+[[package]]
 name = "thiserror"
-version = "1.0.59"
+version = "1.0.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0126ad08bff79f29fc3ae6a55cc72352056dfff61e3ff8bb7129476d44b23aa"
+checksum = "579e9083ca58dd9dcf91a9923bb9054071b9ebbd800b342194c9feb0ee89fc18"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.59"
+version = "1.0.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d1cd413b5d558b4c5bf3680e324a6fa5014e7b7c067a51e69dbdf47eb7148b66"
+checksum = "e2470041c06ec3ac1ab38d0356a6119054dedaea53e12fbefc0de730a1c08524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3483,6 +3564,7 @@ version = "0.1.0"
 dependencies = [
  "controls",
  "ekstensions",
+ "env_logger 0.11.3",
  "glam",
  "log",
  "serde",
@@ -4412,6 +4494,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0c976aaaa0e1f90dbb21e9587cdaf1d9679a1cde8875c0d6bd83ab96a208352"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "world"
+version = "0.1.0"
+dependencies = [
+ "ekstensions",
+ "env_logger 0.11.3",
+ "log",
 ]
 
 [[package]]

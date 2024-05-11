@@ -1,5 +1,5 @@
 [package]
-name = "player"
+name = "terrain"
 version = "0.1.0"
 edition = "2021"
 
@@ -13,7 +13,19 @@ rustc-wrapper = "/usr/bin/sccache"
 ekstensions = { path = "../../ekstensions" }
 log = "0.4.21"
 env_logger = "0.11.3"
+chunks = { path = "../chunks" }
+simdnoise = "3.1.6"
+splines = { version = "4.3.1", features = ["serde"] }
+glam = "0.27.0"
+thiserror = "1.0.60"
+anyhow = "1.0.83"
+ron = "0.8.1"
+variantly = "0.4.0"
+crossbeam-channel = "0.5.12"
+slotmap = "1.0.7"
+parking_lot = "0.12.2"
 transform = { path = "../transform" }
+rayon = "1.10.0"
 controls = { path = "../controls" }
 
 [features]

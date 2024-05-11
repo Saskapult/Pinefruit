@@ -1,11 +1,13 @@
 use std::{sync::Arc, collections::HashMap, time::{Instant, Duration}};
+use chunks::{array_volume::ArrayVolume, blocks::{BlockKey, BlockResource}, chunk::Chunk, chunk_of_voxel, chunks::{ChunkKey, ChunkLoadingComponent, ChunksResource}, voxel_relative_to_chunk, CHUNK_SIZE};
 use crossbeam_channel::{Sender, Receiver, unbounded};
-use eks::prelude::*;
+use ekstensions::prelude::*;
 use glam::IVec3;
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
-use crate::{voxel::{ArrayVolume, BlockKey, VoxelModification, chunk_of_voxel, voxel_relative_to_chunk, CHUNK_SIZE, NewTerrainGenerator, Chunk}, util::RingDataHolder, ecs::TransformComponent};
-use super::{chunks::{ChunkKey, ChunksResource, ChunkLoadingComponent}, BlockResource};
+use transform::TransformComponent;
+
+use crate::{generator::NewTerrainGenerator, modification::VoxelModification};
 
 
 
@@ -69,7 +71,7 @@ pub struct TerrainLoadingResource {
 	pub max_generation_jobs: u8,
 	pub cur_generation_jobs: u8,
 	pub vec_generation_jobs: Vec<(IVec3, Instant)>, // For profiling
-	pub generation_durations: RingDataHolder<Duration>, // For profiling
+	// pub generation_durations: RingDataHolder<Duration>, // For profiling
 
 	pub seed: u32,
 	pub pending_blockmods: HashMap<IVec3, Vec<VoxelModification>>,
@@ -83,7 +85,7 @@ impl TerrainLoadingResource {
 			max_generation_jobs: 16,
 			cur_generation_jobs: 0,
 			vec_generation_jobs: Vec::with_capacity(8),
-			generation_durations: RingDataHolder::new(32),
+			// generation_durations: RingDataHolder::new(32),
 			seed, 
 			pending_blockmods: HashMap::new(),
 			generator: Arc::new(NewTerrainGenerator::new(seed as i32)),
@@ -92,7 +94,6 @@ impl TerrainLoadingResource {
 }
 
 
-#[profiling::function]
 pub fn terrain_loading_system(
 	blocks: Res<BlockResource>,
 	chunks: Res<ChunksResource>,
@@ -107,18 +108,18 @@ pub fn terrain_loading_system(
 	// Prune chunks that should not be loaded
 	// Todo: save data
 	{ 
-		profiling::scope!("Prune chunks");
+		// profiling::scope!("Prune chunks");
 		terrain_chunks.retain(|k, _| chunks.chunks.contains_key(k));
 	}
 
 	{ // Receive new chunks
-		profiling::scope!("Receive new chunks");
+		// profiling::scope!("Receive new chunks");
 		while let Ok((position, chunk, modifications)) = loading.chunk_receiver.try_recv() {
 			trace!("Received generated chunk for {position}");
 			let i = loading.vec_generation_jobs.iter().position(|&(v, _)| v == position)
 				.expect("We don't seem to have queued this for generation");
 			let (_, t_start) = loading.vec_generation_jobs.remove(i);
-			loading.generation_durations.insert(t_start.elapsed());
+			// loading.generation_durations.insert(t_start.elapsed());
 
 			if let Some(k) = chunks.get_position(position) {
 				terrain_chunks.insert(k, TerrainEntry::Complete(Arc::new(Chunk::new_with_contents(chunk))));
@@ -131,7 +132,7 @@ pub fn terrain_loading_system(
 	}
 
 	{ // Insert entries for chunks that should be in the HM but are not
-		profiling::scope!("Insert chunk entries");
+		// profiling::scope!("Insert chunk entries");
 		// debug!("Insert {} entries", chunks_to_load.len());
 		for (key, &position) in chunks.chunks.iter() {
 			if !terrain_chunks.contains_key(key) {
@@ -145,7 +146,7 @@ pub fn terrain_loading_system(
 	// Find potential jobs, sort by closest distance to a viewer
 	// A bit hackey but it works
 	let mut potential_jobs = {
-		profiling::scope!("Find potential jobs");
+		// profiling::scope!("Find potential jobs");
 		terrain_chunks.iter_mut()
 		.filter(|(_, entry)| if let TerrainEntry::UnLoaded = entry {true} else {false})
 		.map(|(k, entry)|{
@@ -159,12 +160,12 @@ pub fn terrain_loading_system(
 		.collect::<Vec<_>>()
 	};
 	{
-		profiling::scope!("Sort potential jobs");
+		// profiling::scope!("Sort potential jobs");
 		potential_jobs.sort_unstable_by(|a, b| a.2.total_cmp(&b.2));
 	}
 	
 	{
-		profiling::scope!("Start new jobs");
+		// profiling::scope!("Start new jobs");
 		for (position, entry, p) in potential_jobs {
 			if loading.cur_generation_jobs >= loading.max_generation_jobs {
 				trace!("Reached maxium chunk generation jobs");

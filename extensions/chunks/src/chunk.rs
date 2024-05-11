@@ -1,7 +1,6 @@
 use glam::UVec3;
-
-use crate::util::KGeneration;
-use super::{ArrayVolume, CHUNK_SIZE};
+use crate::generation::KGeneration;
+use super::{array_volume::ArrayVolume, CHUNK_SIZE};
 
 
 

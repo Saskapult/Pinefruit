@@ -1,15 +1,18 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::{Duration, Instant}};
 use arrayvec::ArrayVec;
-use crossbeam_channel::{Sender, Receiver, unbounded};
-use eks::prelude::*;
-use glam::{IVec3, UVec3, Vec3, Vec2};
-use krender::{MeshKey, MaterialKey, prelude::{Mesh, RenderInput, AbstractRenderTarget, RRID}, RenderContextKey};
+use chunks::{blocks::{BlockEntry, BlockKey, BlockManager, BlockRenderType, BlockResource}, chunk::Chunk, chunk_of_point, chunks::{ChunkKey, ChunksResource}, generation::KGeneration, VoxelCube, CHUNK_SIZE};
+use controls::ControlComponent;
+use crossbeam_channel::{Receiver, Sender};
+use ekstensions::prelude::*;
+use glam::{IVec3, UVec3, Vec2, Vec3};
+use krender::{prelude::{AbstractRenderTarget, Mesh, RRID}, MaterialKey, MeshKey};
+use light::light::{LightRGBA, TorchLightChunksResource, TorchLightModifierComponent};
 use parking_lot::RwLock;
+use render::{MeshResource, RenderInputResource};
 use slotmap::SecondaryMap;
-use smallvec::{SmallVec, smallvec};
-use crate::{util::KGeneration, game::{MeshResource, ModelMatrixComponent, MaterialResource}, ecs::TransformComponent, voxel::{chunk_of_point, Chunk, CHUNK_SIZE, BlockManager, BlockRenderType, BlockEntry, VoxelCube, BlockKey}};
-use super::{BlockResource, ChunkKey, light::TorchLightChunksResource, terrain::{TerrainResource, TerrainEntry}, chunks::ChunksResource};
-use crate::ecs::light::LightRGBA;
+use smallvec::{smallvec, SmallVec};
+use terrain::terrain::{TerrainEntry, TerrainResource};
+use transform::TransformComponent;
 
 
 
@@ -73,7 +76,7 @@ pub struct MapModelResource {
 impl MapModelResource {
 	pub fn new(max_meshing_jobs: u8) -> Self {
 		assert_ne!(0, max_meshing_jobs);
-		let (sender, receiver) = unbounded();
+		let (sender, receiver) = crossbeam_channel::unbounded();
 		Self {
 			chunks: SecondaryMap::new(),
 			sender,
@@ -83,13 +86,11 @@ impl MapModelResource {
 		}
 	}
 
-	#[profiling::function]
 	pub fn receive_jobs(
 		&mut self, 
 		meshes: &mut MeshResource,
 		entities: &mut EntitiesMut,
 		transforms: &mut CompMut<TransformComponent>, 
-		modelmat: &mut CompMut<ModelMatrixComponent>,
 		torchlight: &TorchLightChunksResource,
 	) {
 		let torchlight_chunks = torchlight.chunks.read();
@@ -162,7 +163,7 @@ impl MapModelResource {
 									error!("{p}: {}", l.r);
 								}
 
-								l.as_vec4().x
+								l.into_vec4().x
 							};
 							lights.extend_from_slice(&[light; 4]);
 							
@@ -187,7 +188,6 @@ impl MapModelResource {
 					trace!("Spawning chunk entity with position {world_position}");
 					let entity = entities.spawn();
 					transforms.insert(entity, TransformComponent::new().with_position(world_position));
-					modelmat.insert(entity, ModelMatrixComponent::new());
 
 					let entry = MapModelEntry {
 						terrain_dependencies, light_dependencies, models, entity, outdated: false,
@@ -202,7 +202,6 @@ impl MapModelResource {
 						let entity = e.entity;
 						warn!("Remove entity {entity:?}");
 						transforms.remove(entity);
-						modelmat.remove(entity);
 						entities.remove(entity);
 						
 						for (_, key) in e.models {
@@ -220,7 +219,6 @@ impl MapModelResource {
 		}
 	}
 
-	#[profiling::function]
 	pub fn start_jobs(
 		&mut self, 
 		chunks: &ChunksResource,
@@ -282,7 +280,23 @@ impl MapMeshingComponent {
 }
 
 
-#[profiling::function]
+
+pub fn model_wipe_system(
+	controls: Comp<ControlComponent>,
+	mut modifiers: CompMut<TorchLightModifierComponent>,
+	mut models: ResMut<MapModelResource>,
+) {
+	for (control, modifier) in (&controls, &mut modifiers).iter() {
+		// Only for testing, doesn't wipe jobs in progress
+		if control.last_tick_pressed(modifier.wipe) && modifier.last_modification.and_then(|i| Some(i.elapsed() > Duration::from_secs_f32(0.1))).unwrap_or(true) {
+			modifier.last_modification = Some(Instant::now());
+
+			models.chunks.clear();
+		}
+	}
+}
+
+
 pub fn map_modelling_system(
 	mut entities: EntitiesMut,
 	chunks: Res<ChunksResource>,
@@ -292,7 +306,6 @@ pub fn map_modelling_system(
 	loaders: Comp<MapMeshingComponent>,
 	mut transforms: CompMut<TransformComponent>,
 	mut meshes: ResMut<MeshResource>,
-	mut modelmat: CompMut<ModelMatrixComponent>,
 	blocks: Res<BlockResource>,
 ) {
 	let loading_volumes = (&loaders, &transforms).iter()
@@ -304,7 +317,7 @@ pub fn map_modelling_system(
 		.collect::<Vec<_>>();
 
 	{
-		profiling::scope!("Mark");
+		// profiling::scope!("Mark");
 		let chunks_chunks = chunks.read();
 		for (k, &p) in chunks_chunks.chunks.iter() {
 			if loading_volumes.iter().any(|lv| lv.contains(p)) {
@@ -317,7 +330,7 @@ pub fn map_modelling_system(
 	}
 
 	{
-		profiling::scope!("Prune");
+		// profiling::scope!("Prune");
 		let g = models.chunks.iter()
 			.map(|(key, (pos, _, _))| (key, *pos))
 			.collect::<Vec<_>>();
@@ -332,10 +345,10 @@ pub fn map_modelling_system(
 		}
 	}
 
-	models.receive_jobs(&mut meshes, &mut entities, &mut transforms, &mut modelmat, &torchlight);
+	models.receive_jobs(&mut meshes, &mut entities, &mut transforms, &torchlight);
 
 	{
-		profiling::scope!("Check for remesh viability");
+		// profiling::scope!("Check for remesh viability");
 		let chunks_chunks = chunks.read();
 		let terrain_chunks = terrain.chunks.read();
 		let light_chunks = torchlight.chunks.read();
@@ -679,18 +692,13 @@ fn quad_indices(direction: u32) -> [u32; 6] {
 }
 
 
-#[profiling::function]
 pub fn map_model_rendering_system(
-	(
-		input,
-		_context,
-	): (
-		&mut RenderInput<Entity>,
-		RenderContextKey,
-	), 
+	// context: Res<ActiveContextResource>,
+	// mut contexts: ResMut<ContextResource>, 
 	models: Res<MapModelResource>,
-	_materials: Res<MaterialResource>,
+	mut input: ResMut<RenderInputResource>,
 ) {
+
 	let target = AbstractRenderTarget::new()
 		.with_colour(RRID::context("albedo"), None)
 		.with_depth(RRID::context("depth"));

@@ -51,8 +51,9 @@ fn model_render_system(
 		items.push((model.material, Some(model.mesh), entity));
 	}
 
-	input.add_dependency("ssao generate", "models");
-	
+	if models.len() != 0 {
+		input.add_dependency("ssao generate", "models");
+	}
 }
 
 
@@ -66,11 +67,19 @@ fn spawn_test_model(
 	let material = materials.read("resources/materials/grass.ron");
 	let mesh = meshes.read_or("resources/meshes/box.obj", || Mesh::read_obj("resources/meshes/box.obj"));
 
+	// Player entity is spawned by gmae widget 
+	// Then this runs
+	// But we need this or else the first entity is the saem as the player entity! 
+	// I do not know why
+	// It is infuriating 
+	// I will (hopefully) investigate more tomorrow 
+	entities.spawn(); 
 	for p in [
 		Vec3::new(0.0, 0.0, 0.0),
 		Vec3::new(0.0, 0.0, 1.0),
 		Vec3::new(0.0, 1.0, 0.0),
 		Vec3::new(1.0, 0.0, 0.0),
+		Vec3::new(0.0, -10.0, 0.0),
 	] {
 		let entity = entities.spawn();
 		models.insert(entity, ModelComponent { material, mesh, });

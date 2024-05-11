@@ -1,0 +1,34 @@
+[package]
+name = "meshing"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[build]
+rustc-wrapper = "/usr/bin/sccache"
+
+[dependencies]
+ekstensions = { path = "../../ekstensions" }
+log = "0.4.21"
+env_logger = "0.11.3"
+controls = { path = "../controls" }
+render = { path = "../render" }
+# render2 = { path = "../render2" }
+krender = { path = "../../krender" }
+smallvec = "1.13.2"
+glam = "0.27.0"
+arrayvec = "0.7.4"
+slotmap = "1.0.7"
+crossbeam-channel = "0.5.12"
+chunks = { path = "../chunks" }
+light = { path = "../light" }
+terrain = { path = "../terrain" }
+transform = { path = "../transform" }
+rayon = "1.10.0"
+thiserror = "1.0.60"
+parking_lot = "0.12.2"
+
+[features]
+extension = []

@@ -70,11 +70,6 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[cfg_attr(feature = "extension", no_mangle)]
-pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
-	
-	let mut psr = PlayerSpawnResource::default();
-	let e = storages.spawn().finish();
-	storages.resource(psr);
-
-
+pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {	
+	storages.resource(PlayerSpawnResource::default());
 }

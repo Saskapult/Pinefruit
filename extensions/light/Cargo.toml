@@ -1,5 +1,5 @@
 [package]
-name = "transform"
+name = "light"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,11 +11,15 @@ rustc-wrapper = "/usr/bin/sccache"
 
 [dependencies]
 ekstensions = { path = "../../ekstensions" }
-controls = { path = "../controls" }
-glam = { version = "0.27.0", features = ["serde"] }
-serde = "1.0.200"
 log = "0.4.21"
 env_logger = "0.11.3"
+chunks = { path = "../chunks" }
+terrain = { path = "../terrain" }
+transform = { path = "../transform" }
+controls = { path = "../controls" }
+slotmap = "1.0.7"
+glam = "0.27.0"
+parking_lot = "0.12.2"
 
 [features]
 extension = []

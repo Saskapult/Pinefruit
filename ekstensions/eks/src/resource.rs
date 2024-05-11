@@ -52,7 +52,7 @@ impl UntypedResource {
 
 	// Should only ever be called from drop code
 	fn drop_as<R: Resource>(&mut self) {
-		info!("Dropping untype resource as resource of {}", R::STORAGE_ID);
+		trace!("Dropping untype resource as resource of {}", R::STORAGE_ID);
 		let resource = unsafe { Box::from_raw(self.data as *mut R) };
 		drop(resource);
 	}

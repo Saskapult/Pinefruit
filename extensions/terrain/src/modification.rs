@@ -1,13 +1,27 @@
 use std::{time::{Instant, Duration}, sync::Arc};
+use chunks::{blocks::{BlockKey, BlockResource}, chunk_of_voxel, chunks::ChunksResource, fvt::FVTIterator, CHUNK_SIZE};
+use controls::{ControlComponent, ControlKey, ControlMap, KeyCode, KeyCombo, KeyKey, KeyModifiers};
+use ekstensions::prelude::*;
+use glam::{IVec3, Vec3};
+use transform::TransformComponent;
+use crate::terrain::{TerrainEntry, TerrainResource};
 
-use crate::{ecs::{TransformComponent, ControlComponent, ControlMap, ControlKey, KeyModifiers, KeyCombo}, rays::FVTIterator, voxel::VoxelModification, input::KeyKey};
 
-use super::{BlockResource, terrain::{TerrainResource, TerrainEntry}, chunks::ChunksResource};
-use arrayvec::ArrayVec;
-use eks::prelude::*;
-use glam::Vec3;
-use winit::keyboard::KeyCode;
 
+#[derive(Debug, Clone, Copy)]
+pub struct VoxelModification {
+	pub position: IVec3, // Usually world-relative, but it's left unclear so we don't have to write as much code
+	pub set_to: Option<BlockKey>,
+	pub priority: u32,
+}
+impl VoxelModification {
+	// This should return another type of struct but I'm lazy
+	pub fn as_chunk_relative(mut self) -> (IVec3, Self) {
+		let c = chunk_of_voxel(self.position);
+		self.position -= c * (CHUNK_SIZE as i32);
+		(c, self)
+	}
+}
 
 
 #[derive(Debug, Component)]
@@ -23,13 +37,10 @@ impl VoxelModifierComponent {
 				"place voxel", 
 				"Creates a voxel where you are looking",
 			);
-			control_map.add_control_binding(control, KeyCombo {
-				modifiers: KeyModifiers::EMPTY,
-				keys: ArrayVec::try_from([
-					// KeyKey::MouseKey(winit::event::MouseButton::Right),
-					KeyKey::BoardKey(KeyCode::KeyE.into()),
-				].as_slice()).unwrap(),
-			});
+			control_map.add_control_binding(control, KeyCombo::new(
+				[KeyKey::BoardKey(KeyCode::KeyE.into())],
+				KeyModifiers::EMPTY,	
+			));
 			control
 		};
 
@@ -38,13 +49,10 @@ impl VoxelModifierComponent {
 				"remove voxel", 
 				"Remove a voxel where you are looking",
 			);
-			control_map.add_control_binding(control, KeyCombo {
-				modifiers: KeyModifiers::EMPTY,
-				keys: ArrayVec::try_from([
-					// KeyKey::MouseKey(winit::event::MouseButton::Left),
-					KeyKey::BoardKey(KeyCode::KeyQ.into()),
-				].as_slice()).unwrap(),
-			});
+			control_map.add_control_binding(control, KeyCombo::new(
+				[KeyKey::BoardKey(KeyCode::KeyQ.into())],
+				KeyModifiers::EMPTY,	
+			));
 			control
 		};
 
@@ -57,8 +65,7 @@ impl VoxelModifierComponent {
 }
 
 
-#[profiling::function]
-pub fn map_placement_system(
+pub fn terrain_placement_queue(
 	cr: Res<ChunksResource>,
 	terrain: Res<TerrainResource>,
 	transforms: Comp<TransformComponent>,
@@ -113,8 +120,7 @@ pub fn map_placement_system(
 
 
 /// Applies queued voxel modifications. 
-#[profiling::function]
-pub fn map_modification_system(
+pub fn terrain_modification_application(
 	chunks: Res<ChunksResource>, 
 	terrain: ResMut<TerrainResource>,
 ) {
