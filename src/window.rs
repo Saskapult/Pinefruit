@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 use crate::client::GameInstance;
+use crate::gui::profiling::ProfilingWidget;
 use crate::gui::viewport::ViewportManager;
 use crate::gui::{show_workgroup_info, GameWidget};
 use crate::server::ServerCommand;
@@ -102,9 +103,7 @@ struct GameWindow {
 	// During the loading screen, this is not possible 
 	// It is created when the update fucntion is run and the client is able to lock 
 	game_widget: Option<GameWidget>,
-	// message_widget: MessageWidget,
-	// profiling_widget: RenderProfilingWidget,
-	// show_profiler: bool,
+	profiling_widget: ProfilingWidget, 
 	show_workloads: bool, 
 }
 impl GameWindow {
@@ -163,9 +162,7 @@ impl GameWindow {
 			viewports,
 
 			game_widget: None,
-			// message_widget: MessageWidget::new(),
-			// profiling_widget: RenderProfilingWidget::new(),
-			// show_profiler: false,
+			profiling_widget: ProfilingWidget::new(),
 			show_workloads: false,
 		}
 	}
@@ -180,7 +177,6 @@ impl GameWindow {
 	}
 
 	/// Encodes and executes an update to this window's display.
-	#[profiling::function]
 	pub fn update(
 		&mut self,
 		graphics: &mut GraphicsHandle,
@@ -196,6 +192,7 @@ impl GameWindow {
 		// This never occurs due to gamewidget creation requiring a lock immediately after spawning the setup thread
 		// I've left it this way so that you can find a way to make it work later
 		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = if let Some(mut instance) = self.client.try_lock() {
+			// profiling::scope!("Window Update");
 			// Do egui frame
 			// I can't put this in its own function beucase of the borrow checker 
 			let mut setting_props = WindowPropertiesAndSettings {
@@ -220,6 +217,8 @@ impl GameWindow {
 						self.viewports.show_viewport_profiling(ui, graphics);
 
 						ui.toggle_value(&mut self.show_workloads, "Workloads");
+
+						self.profiling_widget.show_options(ui);
 					});
 				});
 			egui::SidePanel::right("right panel")
@@ -243,9 +242,11 @@ impl GameWindow {
 					show_workgroup_info(ui, &instance.extensions);
 				});
 			}
+
+			self.profiling_widget.show_profiler(&self.context);			
 			
 			// Create command buffers for any viewports
-			self.viewports.update_viewports(graphics, &mut instance).into_iter().unzip()
+			self.viewports.update_viewports(graphics, &mut instance, self.profiling_widget.profiling_mode).into_iter().unzip()
 		} else {
 			// Loading screen! 
 			egui::CentralPanel::default().show(&self.context, |ui| {
@@ -312,8 +313,6 @@ impl GameWindow {
 		profilers.iter_mut().for_each(|p| p.end_frame().unwrap());
 
 		surface.present();
-
-		profiling::finish_frame!();
 	}
 
 	pub fn handle_event(

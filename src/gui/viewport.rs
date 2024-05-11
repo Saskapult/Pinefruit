@@ -6,6 +6,8 @@ use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use ekstensions::prelude::*;
 use crate::{client::GameInstance, GraphicsHandle};
 
+use super::profiling::ProfilingMode;
+
 
 
 #[derive(Debug)]
@@ -89,14 +91,13 @@ impl ViewportEntry {
 		graphics: &mut GraphicsHandle,
 		instance: &mut GameInstance, // Replace with (render)world? 
 	) -> (wgpu::CommandBuffer, &'a mut wgpu_profiler::GpuProfiler) {
+		profiling::scope!("Viewport Update");
+
 		// Record update
 		if let Some(t) = self.last_update {
 			// self.update_times.insert(t.elapsed());
 		}
 		self.last_update = Some(Instant::now());
-
-		// Tick the client to the current time
-		instance.extensions.run(&mut instance.world, "client_tick").unwrap();
 
 		// Update size of display texture
 		let entity: Entity = {
@@ -141,16 +142,19 @@ impl ViewportEntry {
 			
 			let context = contexts.get(self.context).unwrap();
 			// let storage_provider = &;
-			let bundle = input.bundle(
-				&device, 
-				&textures, 
-				&mut meshes, 
-				&materials, 
-				&instance.shaders, 
-				&instance.world, 
-				&context, 
-				false,
-			);
+			let bundle = {
+				profiling::scope!("Render Bundle");
+				input.bundle(
+					&device, 
+					&textures, 
+					&mut meshes, 
+					&materials, 
+					&instance.shaders, 
+					&instance.world, 
+					&context, 
+					false,
+				)
+			};
 
 			meshes.bind_unbound(&device);
 
@@ -158,15 +162,18 @@ impl ViewportEntry {
 				label: None,
 			});
 
-			bundle.execute(
-				&device, 
-				&mut instance.shaders, 
-				&mut instance.bind_groups, 
-				&meshes, 
-				&textures, 
-				&mut encoder, 
-				&mut self.profiler,
-			);
+			{
+				profiling::scope!("Render Execute");
+				bundle.execute(
+					&device, 
+					&mut instance.shaders, 
+					&mut instance.bind_groups, 
+					&meshes, 
+					&textures, 
+					&mut encoder, 
+					&mut self.profiler,
+				);
+			}
 
 			self.profiler.resolve_queries(&mut encoder);
 
@@ -213,11 +220,31 @@ impl ViewportManager {
 		&mut self, 
 		graphics: &mut GraphicsHandle, 
 		instance: &mut GameInstance,
+		profiling_mode: ProfilingMode,
 	) -> Vec<(wgpu::CommandBuffer, &mut wgpu_profiler::GpuProfiler)> {
-		self.contexts.iter_mut()
+		let should_tick = self.contexts.iter().any(|(_, v)| v.should_update());
+		if should_tick {
+			// Tick the client to the current time
+			profiling::puffin::set_scopes_on(profiling_mode.enable_client());
+			profiling::scope!("Client tick");
+			instance.extensions.run(&mut instance.world, "client_tick").unwrap();
+			if profiling_mode.frame_post_client() {
+				profiling::finish_frame!();
+			}
+			profiling::puffin::set_scopes_on(false);
+		}
+
+		profiling::puffin::set_scopes_on(profiling_mode.enable_render());
+		let o = self.contexts.iter_mut()
 			.filter(|(_, v)| v.should_update())
 			.map(|(_, v)| v.update(graphics, instance))
-			.collect()
+			.collect();
+		if profiling_mode.frame_post_render() {
+			profiling::finish_frame!();
+		}
+		profiling::puffin::set_scopes_on(false);
+
+		o
 	}
 
 	/// Shows profiling data for each viewport. 

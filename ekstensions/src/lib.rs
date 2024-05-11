@@ -5,6 +5,7 @@ pub use eks;
 pub mod prelude {
 	pub use eks::prelude::*;
 	pub use crate::{ExtensionRegistry, ExtensionSystemsLoader};
+	pub use profiling;
 }
 
 #[macro_use]
@@ -721,6 +722,7 @@ impl ExtensionRegistry {
 				let e = &self.extensions[*ei];
 				let s = &e.systems[*si];
 				trace!("Extension '{}' system '{}'", e.name, s.id);
+				profiling::scope!(format!("{}::{}", e.name, s.id));
 				let w = world as *const World;
 				(s.pointer)(w);
 			}

@@ -1,3 +1,4 @@
+pub mod profiling;
 pub mod viewport;
 
 use std::time::Instant;
