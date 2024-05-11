@@ -231,9 +231,10 @@ impl GameWindow {
 			egui::CentralPanel::default()
 				.show(&self.context, |ui| {
 					ui.vertical_centered_justified(|ui| {
-						self.game_widget.get_or_insert_with(|| 
-							GameWidget::new(&mut instance.world, &mut self.viewports, Entity::default())
-						).show(ui, &mut setting_props, &mut self.viewports);
+						self.game_widget.get_or_insert_with(|| {
+							let entity = instance.world.spawn().finish();
+							GameWidget::new(&mut instance.world, &mut self.viewports, entity)
+						}).show(ui, &mut setting_props, &mut self.viewports);
 					});
 				});
 
