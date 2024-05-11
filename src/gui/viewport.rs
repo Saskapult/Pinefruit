@@ -221,7 +221,7 @@ impl ViewportManager {
 	}
 
 	/// Shows profiling data for each viewport. 
-	pub fn show_viewports(
+	pub fn show_viewport_profiling(
 		&mut self, 
 		ui: &mut egui::Ui,
 		graphics: &GraphicsHandle, 

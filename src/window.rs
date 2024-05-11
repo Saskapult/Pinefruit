@@ -18,7 +18,7 @@ use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 use crate::client::GameInstance;
 use crate::gui::viewport::ViewportManager;
-use crate::gui::GameWidget;
+use crate::gui::{show_workgroup_info, GameWidget};
 use crate::server::ServerCommand;
 use crate::util::RingDataHolder;
 
@@ -105,6 +105,7 @@ struct GameWindow {
 	// message_widget: MessageWidget,
 	// profiling_widget: RenderProfilingWidget,
 	// show_profiler: bool,
+	show_workloads: bool, 
 }
 impl GameWindow {
 	pub fn new(
@@ -165,6 +166,7 @@ impl GameWindow {
 			// message_widget: MessageWidget::new(),
 			// profiling_widget: RenderProfilingWidget::new(),
 			// show_profiler: false,
+			show_workloads: false,
 		}
 	}
 
@@ -215,7 +217,9 @@ impl GameWindow {
 							.unwrap_or(f32::INFINITY) / (self.update_times.len() as f32);
 						ui.label(format!("UI: {:>4.1}ms, {:.0}Hz", ui_update_rate * 1000.0, (1.0 / ui_update_rate).round()));
 
-						self.viewports.show_viewports(ui, graphics);
+						self.viewports.show_viewport_profiling(ui, graphics);
+
+						ui.toggle_value(&mut self.show_workloads, "Workloads");
 					});
 				});
 			egui::SidePanel::right("right panel")
@@ -232,6 +236,12 @@ impl GameWindow {
 						).show(ui, &mut setting_props, &mut self.viewports);
 					});
 				});
+
+			if self.show_workloads {
+				egui::Window::new("Workloads").show(&self.context, |ui| {
+					show_workgroup_info(ui, &instance.extensions);
+				});
+			}
 			
 			// Create command buffers for any viewports
 			self.viewports.update_viewports(graphics, &mut instance).into_iter().unzip()

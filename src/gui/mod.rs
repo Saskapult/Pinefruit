@@ -96,6 +96,30 @@ impl GameWidget {
 }
 
 
+pub fn show_workgroup_info(ui: &mut egui::Ui, registry: &ExtensionRegistry) {
+	let wg_info = registry.workgroup_info();
+
+	for (name, systems, order) in wg_info {
+		ui.collapsing(name, |ui| {
+			ui.horizontal(|ui| {
+				for (i, stage) in order.iter().enumerate() {
+					ui.vertical(|ui| {
+						ui.heading(format!("Stage {}", i));
+						
+						for item in stage {
+							let (name, _) = systems[*item];
+							ui.label(format!("{}", name));
+						}
+					});
+				}
+			});
+		});
+	}
+	// Get run order
+	// Get edges between nodes
+}
+
+
 // pub struct MapLoadingWidget;
 // impl MapLoadingWidget {
 // 	pub fn display(

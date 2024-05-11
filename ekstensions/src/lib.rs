@@ -432,55 +432,18 @@ impl Drop for ExtensionEntry {
 }
 
 
-#[derive(Default)]
-pub struct NativeSystems {
-	systems: Vec<ExtensionSystem>,
-}
-impl NativeSystems {
-	pub fn system<S: SystemFunction<'static, (), Q, R> + Copy + 'static, R, Q: Queriable<'static>>(
-		&mut self, 
-		group: impl AsRef<str>,
-		name: impl AsRef<str>, 
-		function: S,
-	) -> &mut ExtensionSystem {
-		let i = self.systems.len();
-		self.systems.push(ExtensionSystem::new::<S, R, Q>(group, name, function));
-		self.systems.get_mut(i).unwrap()
-	}
-}
-
-
-#[derive(Debug, Clone, Copy)]
-enum SystemIndex {
-	External((usize, usize)),
-	Native(usize),
-}
-impl From<(usize, usize)> for SystemIndex {
-	fn from(value: (usize, usize)) -> Self {
-		Self::External(value)
-	}
-}
-
-
 pub struct ExtensionRegistry {
 	extensions: Vec<ExtensionEntry>,
 
-	native_systems: NativeSystems,
-
 	// Rebuilt when anything changes
-	systems: HashMap<String, Vec<Vec<SystemIndex>>>,
+	systems: HashMap<String, (Vec<((usize, usize), Vec<usize>)>, Vec<Vec<usize>>)>,
 }
 impl ExtensionRegistry {
 	pub fn new() -> Self {
 		Self {
 			extensions: Vec::new(),
-			native_systems: NativeSystems::default(),
 			systems: HashMap::new(),
 		}
-	}
-
-	pub fn native_systems(&mut self) -> &mut NativeSystems {
-		&mut self.native_systems
 	}
 
 	pub fn reload(&mut self, world: &mut World) -> anyhow::Result<()> {
@@ -617,120 +580,150 @@ impl ExtensionRegistry {
 		Ok(())
 	}
 
-	pub fn run(&self, world: &mut World, group: impl AsRef<str>) -> anyhow::Result<()> {
-		info!("Running '{}'", group.as_ref());
-		let stages = self.systems.get(&group.as_ref().to_string())
-			.with_context(|| "Failed to locate workload")?;
+	/// Returns work group name, contents, and run order. 
+	/// Used for displaying visually. 
+	pub fn workgroup_info(&self) -> Vec<(&String, Vec<(&String, &Vec<usize>)>, &Vec<Vec<usize>>)> {
+		self.systems.iter().map(|(n, (s, o))| {
+			let systems = s.iter()
+				.map(|((ei, si), d)| (&self.extensions[*ei].systems[*si].id, d))
+				.collect::<Vec<_>>();
+			(n, systems, o)
+		}).collect::<Vec<_>>()
+	}
 
-		for stage in stages {
-			for &i in stage {
-				match i {
-					SystemIndex::External((ei, si)) => {
-						let e = &self.extensions[ei];
-						let s = &e.systems[si];
-						debug!("Extension '{}' system '{}'", e.name, s.id);
-						let w = world as *const World;
-						(s.pointer)(w);
-					},
-					SystemIndex::Native(i) => {
-						let s = &self.native_systems.systems[i];
-						debug!("Native system '{}'", s.id);
-						let w = world as *const World;
-						(s.pointer)(w);
-					}
+	/// Creates a list of systems and their dependencies. 
+	// (Vec<(usize, usize)>, Vec<Vec<usize>>)
+	fn get_systems_and_deps(&self, group: impl AsRef<str>) -> Vec<((usize, usize), Vec<usize>)> {
+		// Vec of (extension index, system index in extension)
+		let systems = self.extensions.iter().enumerate()
+			.flat_map(|(i, e)| {
+				e.systems.iter().enumerate()
+					.filter(|(_, s)| s.group == group.as_ref())
+					.map(move |(j, _)| (i, j))
+			}).collect::<Vec<_>>();
+		
+		let deps = systems.iter().enumerate().map(|(i, &(ei, si))| {
+			let s = &self.extensions[ei].systems[si];
+			// Find group system index of dependencies
+			let mut deps = s.run_after.iter()
+				.map(|id: &String| systems.iter()
+					.map(|&(ei, si)| &self.extensions[ei].systems[si])
+					.position(|s| s.id.eq(id)).expect("Failed to find dependent system"))
+				.collect::<Vec<_>>();
+			// Add others to dependencies if they want to be run before
+			for (j, &(ej, sj)) in systems.iter().enumerate() {
+				if i == j { continue }
+				let s = &self.extensions[ej].systems[sj];
+				if s.run_before.contains(&s.id) {
+					deps.push(j);
 				}
 			}
-		} 
+			deps
+		}).collect::<Vec<_>>();
+
+		systems.into_iter().zip(deps.into_iter()).collect()
+	}
+
+	/// Constructs a run order from a list of systems and their dependencies. 
+	fn construct_run_order(&self, systems_deps: &Vec<((usize, usize), Vec<usize>)>) -> Vec<Vec<usize>> {
+		// let systems_deps = self.get_systems_and_deps(group.as_ref());
+		let mut queue = (0..systems_deps.len()).collect::<Vec<_>>();
+
+		let mut stages = vec![vec![]];
+
+		// Satisfied if in any of the PREVIOUS stages (but NOT the current stage) 
+		fn satisfied(stages: &Vec<Vec<usize>>, i: usize) -> bool {
+			(&stages[0..stages.len()-1]).iter().any(|systems| systems.contains(&i))
+		}
+
+		while !queue.is_empty() {
+			let next = queue.iter().copied()
+				.map(|i| &systems_deps[i])
+				.position(|(_, deps)| deps.iter().copied().all(|i| satisfied(&stages, i)));
+			if let Some(qi) = next {
+				let i = queue.remove(qi);
+				// debug!("Run '{}'", i);
+				stages.last_mut().unwrap().push(i);
+			} else {
+				if stages.last().and_then(|s| Some(s.is_empty())).unwrap_or(false) {
+					error!("Failing to meet some dependency!");
+					error!("Stages are:");
+					for (i, stage) in stages.into_iter().enumerate() {
+						error!("{}:", i);
+						for j in stage {
+							let ((ei, si), _d) = &systems_deps[j];
+							let s = &self.extensions[*ei].systems[*si];
+							error!("\t'{}'", s.id);
+						}
+					}
+					error!("Remaining items are:");
+					for i in queue {
+						let ((ei, si), d) = &systems_deps[i];
+						let s = &self.extensions[*ei].systems[*si];
+						let n = &s.id;
+						let d = d.iter().copied().map(|i| {
+							let ((ei, si), _d) = &systems_deps[i];
+							let s = &self.extensions[*ei].systems[*si];
+							&s.id
+						}).collect::<Vec<_>>();
+						error!("'{}' - {:?}", n, d);
+					}
+					panic!();
+				}
+				debug!("New stage");
+				stages.push(Vec::new());
+			}
+		}
+
+		stages
+	}
+
+	fn rebuild_systems(&mut self) -> anyhow::Result<()> {
+		debug!("Rebuilding workloads");
+
+		let mut groups2 = HashMap::new();
+
+		let mut groups = self.extensions.iter()
+			.flat_map(|e| e.systems.iter())
+			.map(|s| &s.group)
+			.collect::<Vec<_>>();
+		groups.sort_unstable();
+		groups.dedup();
+
+		debug!("There are {} workloads to build ({:?})", groups.len(), groups);
+
+		for group in groups {
+			debug!("Collect systems for group '{}'", group);
+			let systems_deps = self.get_systems_and_deps(group);
+			debug!("{} systems are found", systems_deps.len());
+
+			debug!("Construct run order for group '{}'", group);
+			let run_order = self.construct_run_order(&systems_deps);
+			debug!("Run in {} stages", run_order.len());
+
+			groups2.insert(group.clone(), (systems_deps, run_order));
+		}
+
+		self.systems = groups2;
 
 		Ok(())
 	}
 
-	fn rebuild_systems(&mut self) -> anyhow::Result<()> {
-		trace!("Collect into groups");
-		let mut groups = HashMap::new();
-		for (i, e) in self.extensions.iter().enumerate() {
-			if !e.loaded() {
-				warn!("Skipping systems for unloaded extension '{}'", e.name);
-				continue
+	pub fn run(&self, world: &mut World, group: impl AsRef<str>) -> anyhow::Result<()> {
+		info!("Running '{}'", group.as_ref());
+		let (systems_deps, run_order) = self.systems.get(&group.as_ref().to_string())
+			.with_context(|| "Failed to locate workload")?;
+
+		for stage in run_order {
+			for &i in stage {
+				let ((ei, si), _) = &systems_deps[i];
+				let e = &self.extensions[*ei];
+				let s = &e.systems[*si];
+				debug!("Extension '{}' system '{}'", e.name, s.id);
+				let w = world as *const World;
+				(s.pointer)(w);
 			}
-			for (j, s) in e.systems.iter().enumerate() {
-				let group = groups.entry(&s.group).or_insert(Vec::new());
-				group.push(((i, j).into(), s));
-			}
-		}
-		for (i, s) in self.native_systems.systems.iter().enumerate() {
-			let group = groups.entry(&s.group).or_insert(Vec::new());
-			group.push((SystemIndex::Native(i), s));
-		}
-		debug!("{} groups", groups.len());
-
-		trace!("Collect queue dependencies");
-		let groups = groups.into_iter().map(|(name, queue)| {
-			let q2 = queue.clone();
-			(name, queue.into_iter().enumerate().map(|(i, (index, s))| {
-			let mut depends_on = s.run_after.clone();
-			// If another system wants to be run before this one, then this system depends on it
-			for (j, (_, o)) in q2.iter().enumerate() {
-				if i == j { continue }
-				if o.run_before.contains(&s.id) {
-					trace!("'{}' depends on '{}'", o.id, s.id);
-					depends_on.push(o.id.clone());
-				}
-			}
-			// map to ((i, j), name, depends_on)
-			(index, &s.id, depends_on)
-		}).collect::<Vec<_>>())}).collect::<HashMap<_, _>>();
-
-		trace!("Create group orders");
-		let mut orders = HashMap::new();
-		for (group, mut queue) in groups {
-			debug!("Group '{}'", group);
-			let mut stages = vec![vec![]];
-
-			// Satisfied if in any of the PREVIOUS stages (but NOT the current stage) 
-			fn satisfied(stages: &Vec<Vec<(SystemIndex, &String)>>, id: &String) -> bool {
-				(&stages[0..stages.len()-1]).iter()
-				.any(|stage| stage.iter()
-					.map(|v| v.1)
-					.fold(false, |a, v| a || v.eq(id)))
-			}
-
-			while !queue.is_empty() {
-				let next = queue.iter().position(|(_, _, d)| 
-					d.iter().all(|id| satisfied(&stages, id)));
-				
-				if let Some(i) = next {
-					let (p, name, _) = queue.remove(i);
-					debug!("Run '{}'", name);
-					stages.last_mut().unwrap().push((p, name));
-				} else {
-					if stages.last().and_then(|s| Some(s.is_empty())).unwrap_or(false) {
-						error!("Failing to meet some dependency!");
-						error!("Stages are:");
-						for (i, stage) in stages.into_iter().enumerate() {
-							error!("{}", i);
-							for (_, name) in stage {
-								error!("\t'{}'", name);
-							}
-						}
-						error!("Remaining items are:");
-						for (_, n, d) in queue {
-							error!("'{}' - {:?}", n, d);
-						}
-						panic!();
-					}
-					debug!("New stage");
-					stages.push(Vec::new());
-				}
-			}
-
-			let stages = stages.iter().map(|stage| 
-				stage.iter().map(|&(p, _)| p).collect::<Vec<_>>()
-			).collect::<Vec<_>>();
-			orders.insert(group.clone(), stages);
-		}
-
-		self.systems = orders;
+		} 
 
 		Ok(())
 	}
