@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::{Path, PathBuf}, time::SystemTime};
 use anyhow::{anyhow, Context};
-use eks::{prelude::*, system::SystemFunction, WorldEntitySpawn};
+use eks::{prelude::*, resource::UntypedResource, sparseset::UntypedSparseSet, system::SystemFunction, WorldEntitySpawn};
 pub use eks;
 pub mod prelude {
 	pub use eks::prelude::*;
@@ -196,7 +196,7 @@ impl ExtensionEntry {
 			.as_str().unwrap();
 		
 		let dylib_path = Self::stored_extension_path(name);
-		trace!("Build files should be in {:?}", dylib_path);
+		trace!("Extension file should be {:?}", dylib_path);
 
 		// Check if recompilation is needed
 		// stored files exist and are not older than build files
@@ -205,20 +205,20 @@ impl ExtensionEntry {
 			.and_then(|t| Ok(t < Self::build_files_last_modified(path.as_ref())))
 			.unwrap_or(true);
 		if needs_recompilation {
-			trace!("Either build does not exist or is outdated, rebuilding");
+			trace!("Either extension file does not exist or is outdated, rebuilding");
 
 			// Look for old build files
 			// If swap path is soem then unsawp after building
 			let out_path = Self::build_output_path(path.as_ref(), &name)?;
 			let swap_path = if out_path.exists() {
-				trace!("Previous build files exist, copying to library swap");
+				trace!("Library files exist, copying to library swap");
 
 				let storage = Self::stored_library_path(&name);
 				std::fs::copy(&out_path, &storage).unwrap();
 
 				Some(storage)
 			} else {
-				trace!("No previous build detected");
+				trace!("No library build detected");
 				None
 			};
 
@@ -234,15 +234,15 @@ impl ExtensionEntry {
 				panic!();
 			}
 
-			trace!("Copying output to extension storage");
+			trace!("Moving output to extension storage");
 			let new_files = Self::build_output_path(path.as_ref(), &name)?;
 			let storage = Self::stored_extension_path(&name);
-			trace!("{:?} -> {:?}", new_files, storage);
 			std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
-			std::fs::copy(new_files, storage).unwrap();
+			std::fs::copy(&new_files, storage).unwrap();
+			std::fs::remove_file(&new_files).unwrap();
 
 			if let Some(storage) = swap_path {
-				trace!("Restoring previous build files from library swap");
+				trace!("Restoring previous library files from library swap");
 				std::fs::copy(&storage, &out_path).unwrap();
 				std::fs::remove_file(&storage).unwrap();
 			}
@@ -352,7 +352,7 @@ impl ExtensionEntry {
 	// Checks if this extension has been modified since it was last loaded
 	pub fn dirty_level(&self) -> DirtyLevel {		
 		if Self::build_files_last_modified(&self.path) > self.read_at {
-			trace!("Build files modified, rebuild");
+			trace!("Source files modified, rebuild");
 			return DirtyLevel::Rebuild;
 		}
 
@@ -364,13 +364,13 @@ impl ExtensionEntry {
 			let mod_time = p.metadata().unwrap().modified().unwrap();
 			if mod_time > self.read_at {
 				let d = mod_time.duration_since(self.read_at).unwrap();
-				trace!("Build files are new, reload ({:?}, {:.2}s)", p, d.as_secs_f32());
+				trace!("Extension file is newer, reload ({:?}, {:.2}s)", p, d.as_secs_f32());
 				return DirtyLevel::Reload;
 			} else {
 				return DirtyLevel::Clean;
 			}
 		} else {
-			trace!("Build file does not exist, rebuild");
+			trace!("Extension file does not exist, rebuild");
 			return DirtyLevel::Rebuild;
 		}
 	}
@@ -401,7 +401,12 @@ impl ExtensionEntry {
 	// Systems and components and resources will be removed automatically
 	// In the future maybe we should be able to choose whether to serialize the data and try to reload it 
 	// This would use serde so that if the data format changed the restoration can fail 
-	pub fn unload(&mut self, world: &mut World) -> anyhow::Result<()> {
+	pub fn unload(
+		&mut self, world: &mut World
+	) -> anyhow::Result<(
+		Vec<(String, UntypedSparseSet)>,
+		Vec<(String, UntypedResource)>,
+	)> {
 		assert!(self.loaded(), "Extension is not loaded!");
 
 		// unsafe {
@@ -410,16 +415,19 @@ impl ExtensionEntry {
 		// }
 
 		let provisions = self.provides.take().unwrap();
-		for component in provisions.components {
+		let components = provisions.components.into_iter().map(|component| {
 			info!("Remove component '{}'", component);
-			world.unregister_component(component).expect("Component not found!");
-		}
-		for resource in provisions.resources {
-			info!("Remove comonent '{}'", resource);
-			world.remove_resource(resource).expect("Resource not found!");
-		}
+			let s = world.unregister_component(&component).expect("Component not found!");
+			(component, s)
+		}).collect();
 
-		Ok(())
+		let resources = provisions.resources.into_iter().map(|resource| {
+			info!("Remove comonent '{}'", resource);
+			let s = world.remove_resource(&resource).expect("Resource not found!");
+			(resource, s)
+		}).collect();
+
+		Ok((components, resources))
 	}
 }
 impl Drop for ExtensionEntry {
@@ -448,66 +456,84 @@ impl ExtensionRegistry {
 	}
 
 	pub fn reload(&mut self, world: &mut World) -> anyhow::Result<()> {
-		let mut reload_queue = Vec::new();
+		let mut load_queue = HashMap::new();
 
 		trace!("Look for rebuilds");
 
 		// Rebuild
 		for i in 0..self.extensions.len() {
+			if !self.extensions[i].loaded() {
+				load_queue.entry(i).or_insert(false);
+				continue
+			}
+
 			match self.extensions[i].dirty_level() {
 				DirtyLevel::Rebuild => {
 					debug!("Rebuild extension {}", self.extensions[i].name);
-
-					// We can't overwite the library file while it's laoded
-					// Otherwise it will segfault 
-					// We must do some fanangling here
-					let mut ext = self.extensions.remove(i);
-					ext.unload(world)?;
-					let path = ext.path.clone();
-					drop(ext);
-					self.extensions.insert(i, ExtensionEntry::new(path)?);
-
+					load_queue.insert(i, true);
 					// Push dependents to reload queue
 					for (j, e) in self.extensions.iter().enumerate() {
 						if e.load_dependencies.contains(&self.extensions[i].name) {
-							reload_queue.push(j);
+							load_queue.entry(j).or_insert(false);
 						}
 					}
 				},
 				DirtyLevel::Reload => {
 					debug!("Reload extension {}", self.extensions[i].name);
-					reload_queue.push(i);
+					load_queue.entry(i).or_insert(false);
 				},
-				DirtyLevel::Clean => {},
+				DirtyLevel::Clean => {
+					debug!("Extension {} is clean", self.extensions[i].name);
+				},
 			}
 		}
 
-		trace!("Propagate reloads");
+		// TODO: Dependency load order
+		for (i, hard) in load_queue {
+			if hard {
+				let mut ext = self.extensions.remove(i);
+				debug!("Hard reload of {}", ext.name);
+				
+				// Unload from world
+				let (c, r) = ext.unload(world)?;
 
-		// Reload propagation
-		reload_queue.sort();
-		reload_queue.dedup();
-		trace!("Need to unload extensions {:?}", reload_queue.iter().map(|&i| &self.extensions[i].name).collect::<Vec<_>>());
-		while let Some(i) = reload_queue.pop() {
-			debug!("Unload extension {}", self.extensions[i].name);
-			
-			self.extensions[i].unload(world)?;
-			for (i, e) in self.extensions.iter().enumerate() {
-				if e.loaded() && e.load_dependencies.contains(&self.extensions[i].name) {
-					reload_queue.push(i);
+				// Rip out references to data
+				let c = c.into_iter()
+					.map(|(n, c)| (n, unsafe { c.into_raw() }))
+					.collect::<Vec<_>>();
+				let r = r.into_iter()
+					.map(|(n, r)| (n, unsafe { r.into_raw() }))
+					.collect::<Vec<_>>();
+
+				// TODO: if serializable, use serialization
+				// Needs untypedsparseset to finish serialization feature 
+
+				// Reload code
+				let path = ext.path.clone();
+				drop(ext);
+				self.extensions.insert(i, ExtensionEntry::new(path)?);
+
+				// Load with new code
+				self.extensions[i].load(world)?;
+
+				// Replace storages
+				for (id, uss) in c {
+					warn!("Replacing component storage '{}' with raw persisted data", id);
+					let mut s = world.component_raw_mut(id);
+					unsafe { s.load_raw(uss) };
 				}
+				for (id, uss) in r {
+					warn!("Replacing resource storage '{}' with raw persisted data", id);
+					let mut s = world.resource_raw_mut(id);
+					unsafe { s.load_raw(uss) };
+				}
+			} else {
+				debug!("Soft reload of {}", self.extensions[i].name);
+				self.extensions[i].load(world)?;
 			}
 		}
 
-		let did_anything = self.extensions.iter().any(|e| !e.loaded());
-
-		// Load everything not loaded
-		self.load(world)?;
-
-		// Rebuild exectuion order if anything changed
-		if did_anything {
-			self.rebuild_systems()?;
-		}
+		self.rebuild_systems()?;
 		
 		Ok(())
 	}

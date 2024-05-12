@@ -253,6 +253,14 @@ impl World {
 		r.try_borrow().unwrap()
 	}
 
+	pub fn resource_raw_mut(&self, id: impl AsRef<str>) -> AtomicRefMut<UntypedResource> {
+		self.resources.get(id.as_ref())
+			.map(|r| unsafe { &*r })
+			.map(|r| r.try_borrow_mut())
+			.expect(&*format!("Failed to locate storage '{}'", id.as_ref()))
+			.expect(&*format!("Failed to borrow storage '{}'", id.as_ref()))
+	}
+
 	pub fn resource_ref<R: Resource>(&self) -> AtomicRef<'_, R> {
 		AtomicRef::map(
 			self.resource_raw_ref(R::STORAGE_ID), 
