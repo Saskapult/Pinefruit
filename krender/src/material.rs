@@ -21,8 +21,8 @@ pub enum MaterialError {
 	MaterialMappingMissingError(String),
 
 	/// Used when a resource is not found. 
-	#[error("Failed to find resource '{0}' for this material!")]
-	MaterialResourceMissingError(MaterialResourceLocation),
+	#[error("Failed to find resource '{1}' for material '{0}'!")]
+	MaterialResourceMissingError(String, MaterialResourceLocation),
 }
 
 

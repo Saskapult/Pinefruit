@@ -147,7 +147,7 @@ impl RenderContext {
 										GlobalResourceIdentifier::Path(_) => todo!("Buffers currently cannot be read! You must decide what format to use for this feature!"),
 									},
 									MaterialResourceLocation::Context(label) => self.buffers.get(label).cloned(),
-								}.ok_or(MaterialError::MaterialResourceMissingError(data.clone()))?;
+								}.ok_or(MaterialError::MaterialResourceMissingError(material.specification.name.clone(), data.clone()))?;
 								trace!("Adding uniform usages to buffer {:?} ({:?})", data, key);
 								buffer_usages.push((key, wgpu::BufferUsages::UNIFORM));
 								BindGroupEntryContentDescriptor::Buffer(key)
@@ -163,7 +163,7 @@ impl RenderContext {
 											GlobalResourceIdentifier::Path(_) => todo!("Buffers currently cannot be read! You must decide what format to use for this feature!"),
 										},
 										MaterialResourceLocation::Context(label) => self.buffers.get(label).cloned(),
-									}.ok_or(MaterialError::MaterialResourceMissingError(data.clone())))
+									}.ok_or(MaterialError::MaterialResourceMissingError(material.specification.name.clone(), data.clone())))
 									.collect::<Result<Vec<_>, MaterialError>>()?;
 								keys.iter().for_each(|&key| buffer_usages.push((key, wgpu::BufferUsages::UNIFORM)));
 								BindGroupEntryContentDescriptor::Buffers(keys)
@@ -178,7 +178,7 @@ impl RenderContext {
 											GlobalResourceIdentifier::Path(_) => todo!("Buffers currently cannot be read! You must decide what format to use for this feature!"),
 										},
 										MaterialResourceLocation::Context(label) => self.buffers.get(label).cloned(),
-									}.ok_or(MaterialError::MaterialResourceMissingError(data.clone())))
+									}.ok_or(MaterialError::MaterialResourceMissingError(material.specification.name.clone(), data.clone())))
 									.collect::<Result<Vec<_>, MaterialError>>()?;
 								keys.iter().for_each(|&key| buffer_usages.push((key, wgpu::BufferUsages::UNIFORM)));
 								BindGroupEntryContentDescriptor::Buffers(keys)
@@ -192,7 +192,7 @@ impl RenderContext {
 										GlobalResourceIdentifier::Path(path) => textures.key_by_path(path),
 									},
 									MaterialResourceLocation::Context(label) => self.textures.get(label).copied(),
-								}.ok_or(MaterialError::MaterialResourceMissingError(data.clone()))?;
+								}.ok_or(MaterialError::MaterialResourceMissingError(material.specification.name.clone(), data.clone()))?;
 								texture_usages.push((key, wgpu::TextureUsages::TEXTURE_BINDING));
 								BindGroupEntryContentDescriptor::Texture(key)
 							},
@@ -218,7 +218,7 @@ impl RenderContext {
 										GlobalResourceIdentifier::Path(_) => todo!("Buffers currently cannot be read! You must decide what format to use for this feature!"),
 									},
 									MaterialResourceLocation::Context(label) => self.buffers.get(label).cloned(),
-								}.ok_or(MaterialError::MaterialResourceMissingError(data.clone()))?;
+								}.ok_or(MaterialError::MaterialResourceMissingError(material.specification.name.clone(), data.clone()))?;
 								trace!("Adding uniform usages to buffer {:?} ({:?})", data, key);
 								buffer_usages.push((key, wgpu::BufferUsages::STORAGE));
 								BindGroupEntryContentDescriptor::Buffer(key)

@@ -238,7 +238,9 @@ impl GameWindow {
 				});
 
 			if self.show_workloads {
-				egui::Window::new("Workloads").show(&self.context, |ui| {
+				egui::Window::new("Workloads")
+				.open(&mut self.show_workloads)
+				.show(&self.context, |ui| {
 					show_workgroup_info(ui, &instance.extensions);
 				});
 			}

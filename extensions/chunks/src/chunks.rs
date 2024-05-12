@@ -177,7 +177,9 @@ pub fn chunk_loading_system(
 	// Todo: save data
 	{ // Prune chunks that should not be loaded
 		// profiling::scope!("Prune chunks");
-		// debug!("Prune {} chunks", chunks_to_prune.len());
+		if chunks_to_prune.len() != 0 {
+			debug!("Prune {} chunks", chunks_to_prune.len());
+		}
 		for (key, _) in chunks_to_prune {
 			chunks_write.unload(key);
 		}
@@ -185,7 +187,9 @@ pub fn chunk_loading_system(
 
 	{ // Insert entries for chunks that should be in the HM but are not
 		// profiling::scope!("Insert chunk entries");
-		// debug!("Insert {} entries", chunks_to_load.len());
+		if chunks_to_load.len() != 0 {			
+			debug!("Load {} chunks", chunks_to_load.len());
+		}
 		for position in chunks_to_load {
 			chunks_write.load(position);
 		}

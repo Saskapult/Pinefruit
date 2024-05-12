@@ -1,5 +1,5 @@
 [package]
-name = "chunks"
+name = "time"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,18 +11,11 @@ rustc-wrapper = "/usr/bin/sccache"
 
 [dependencies]
 ekstensions = { path = "../../ekstensions" }
+render = { path = "../render" }
+krender = { path = "../../krender" }
 log = "0.4.21"
 env_logger = "0.11.3"
-glam = "0.27.0"
-slotmap = "1.0.7"
-parking_lot = "0.12.2"
-transform = { path = "../transform" }
-render = { path = "../render" }
-player = { path = "../player" }
-serde = "1.0.201"
-krender = { path = "../../krender" }
-anyhow = "1.0.83"
-ron = "0.8.1"
+bytemuck = "1.15.0"
 
 [features]
 extension = []

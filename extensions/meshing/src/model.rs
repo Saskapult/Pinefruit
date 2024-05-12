@@ -692,7 +692,7 @@ fn quad_indices(direction: u32) -> [u32; 6] {
 }
 
 
-pub fn map_model_rendering_system(
+pub fn map_rendering_system(
 	// context: Res<ActiveContextResource>,
 	// mut contexts: ResMut<ContextResource>, 
 	models: Res<MapModelResource>,

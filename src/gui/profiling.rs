@@ -66,27 +66,18 @@ impl ProfilingWidget {
 				}
 			});
 		});
-
-		let f = profiling::puffin::GlobalFrameView::default();
-		let l = f.lock();
-		if let Some(fr) = l.latest_frame() {
-			for h in fr.scope_delta.iter() {
-				if let Some(n) = h.scope_name.as_ref() {
-					ui.label(n.clone());
-				}
-			}
-		} else {
-			ui.label("No latest frame");
-		}
 	}
 
-	pub fn show_profiler(&self, ctx: &egui::Context) {
-		egui::Window::new(format!("Profiling: {:?}", self.profiling_mode))
-		.id(egui::Id::new("Profiling"))
-		.show(ctx, |ui| {
-			profiling::puffin::set_scopes_on(true);
-			puffin_egui::profiler_ui(ui);
-			profiling::puffin::set_scopes_on(false);
-		});
+	pub fn show_profiler(&mut self, ctx: &egui::Context) {
+		if self.show_profiling {
+			egui::Window::new(format!("Profiling: {:?}", self.profiling_mode))
+			.id(egui::Id::new("Profiling"))
+			.open(&mut self.show_profiling)
+			.show(ctx, |ui| {
+				profiling::puffin::set_scopes_on(true);
+				puffin_egui::profiler_ui(ui);
+				profiling::puffin::set_scopes_on(false);
+			});
+		}
 	}
 }

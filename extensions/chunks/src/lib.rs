@@ -5,9 +5,11 @@ pub mod chunks;
 pub mod fvt;
 pub mod generation;
 
+use blocks::{load_blocks, BlockResource};
 use chunks::{chunk_loading_system, ChunkLoadingComponent, ChunksResource};
 use ekstensions::prelude::*;
 use glam::{Vec3, IVec3, UVec3};
+use player::PlayerSpawnResource;
 
 #[macro_use]
 extern crate log;
@@ -125,6 +127,17 @@ impl VoxelCube {
 }
 
 
+fn player_chunk_loader(
+	psr: Res<PlayerSpawnResource>,
+	mut loaders: CompMut<ChunkLoadingComponent>,
+) {
+	for entity in psr.entities.iter().copied() {
+		debug!("Insert chunk loding component for player");
+		loaders.insert(entity, ChunkLoadingComponent::new(5));
+	}
+}
+
+
 #[cfg_attr(feature = "extension", no_mangle)]
 pub fn dependencies() -> Vec<String> {
 	env_logger::init();
@@ -134,12 +147,19 @@ pub fn dependencies() -> Vec<String> {
 
 #[cfg_attr(feature = "extension", no_mangle)]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
-	// loader.system("client_tick", "chunk_loading_system", chunk_loading_system);
+	loader.system("client_init", "load_blocks", load_blocks);
+	
+	loader.system("client_tick", "chunk_loading_system", chunk_loading_system);
+	
+	loader.system("client_tick", "player_chunk_loader", player_chunk_loader)
+		.run_after("player_spawn")
+		.run_before("player_spawned");
 }
 
 
 #[cfg_attr(feature = "extension", no_mangle)]
 pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
 	storages.resource(ChunksResource::new());
+	storages.resource(BlockResource::default());
 	storages.component::<ChunkLoadingComponent>();
 }

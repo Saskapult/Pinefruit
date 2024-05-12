@@ -9,6 +9,7 @@ use std::sync::Arc;
 use krender::prelude::*;
 use krender::MaterialKey;
 use parking_lot::RwLock;
+use render::MaterialResource;
 use serde::{Serialize, Deserialize};
 use slotmap::SlotMap;
 use slotmap::new_key_type;
@@ -312,4 +313,13 @@ pub fn load_all_blocks_in_file(
 	}
 
 	Ok(())
+}
+
+pub fn load_blocks(
+	br: Res<BlockResource>,
+	mut materials: ResMut<MaterialResource>,
+) {
+	info!("Loading blocks from file");
+	let mut blocks = br.write();
+	load_all_blocks_in_file(&mut blocks, "resources/kblocks.ron", &mut materials).unwrap();
 }

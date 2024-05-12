@@ -208,10 +208,11 @@ impl World {
 	}
 
 	pub fn component_raw_ref(&self, id: impl AsRef<str>) -> AtomicRef<UntypedSparseSet> {
-		let r = self.components.get(id.as_ref())
-			.expect(&*format!("Bad component '{}'", id.as_ref()));
-		let r = unsafe { &*r };
-		r.try_borrow().unwrap()
+		self.components.get(id.as_ref())
+			.map(|r| unsafe { &*r })
+			.map(|r| r.try_borrow())
+			.expect(&*format!("Failed to locate storage '{}'", id.as_ref()))
+			.expect(&*format!("Failed to borrow storage '{}'", id.as_ref()))
 	}
 
 	pub fn component_ref<C: Component>(&self) -> AtomicRef<SparseSet<C>> {
@@ -222,10 +223,11 @@ impl World {
 	}
 
 	pub fn component_raw_mut(&self, id: impl AsRef<str>) -> AtomicRefMut<UntypedSparseSet> {
-		let r = self.components.get(id.as_ref())
-			.expect(&*format!("Bad component '{}'", id.as_ref()));
-		let r = unsafe { &*r };
-		r.try_borrow_mut().unwrap()
+		self.components.get(id.as_ref())
+			.map(|r| unsafe { &*r })
+			.map(|r| r.try_borrow_mut())
+			.expect(&*format!("Failed to locate storage '{}'", id.as_ref()))
+			.expect(&*format!("Failed to borrow storage '{}'", id.as_ref()))
 	}
 
 	pub fn component_mut<C: Component>(&self) -> AtomicRefMut<SparseSet<C>> {
