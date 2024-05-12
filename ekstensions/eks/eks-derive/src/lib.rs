@@ -8,8 +8,7 @@ struct StorageDeriveAttibutes {
 	#[deluxe(default = None)]
 	id: Option<String>,
 	// Whether or not to snap this storage
-	// Requires serde::serialize and serde::deserializes
-	// This is currently broken 
+	// Requires serde::serialize and serde::deserialize
 	#[deluxe(default = false)]
 	snap: bool,
 	// Transformation of data for shader input
@@ -27,22 +26,30 @@ fn storage_derive_macro2(input: proc_macro2::TokenStream, component: bool) -> de
 	let ident = &ast.ident;
 	let storage_id = attributes.id.unwrap_or(ast.ident.clone().to_string());
 
-	let serialize_fn = quote::quote! {
-		Some(bincode::serialize_into(buffer, item))
-	};
-	let serialize_many_fn = quote::quote! {
-		Some(bincode::serialize(item))
-	};
-	let deserialize_fn = quote::quote! {
-		Some(bincode::deserialize(data))
-	};
-
 	let serial_fn = attributes.snap.then(|| quote::quote! {
 		Some((
-			#serialize_fn,
-			#serialize_many_fn,
-			#deserialize_fn,
-			#deserialize_fn,
+			|p, buffer| {
+				let s = p as *const Self;
+				let s = unsafe { &*s };
+				bincode::serialize_into(buffer, s)?;
+				Ok(())
+			},
+			|p, buffer| {
+				let s = p as *const [Self];
+				let s = unsafe { &*s };
+				bincode::serialize_into(buffer, s)?;
+				Ok(())
+			},
+			|buffer| {
+				let t = bincode::deserialize::<Self>(buffer)?;
+				let p = Box::into_raw(Box::new(t)) as *mut u8;
+				Ok(p)
+			},
+			|buffer| {
+				let t = bincode::deserialize::<Box<[Self]>>(buffer)?;
+				let p = Box::into_raw(t) as *mut u8;
+				Ok(p)
+			},
 		))
 	}).unwrap_or_else(|| quote::quote! {
 		None
@@ -68,7 +75,12 @@ fn storage_derive_macro2(input: proc_macro2::TokenStream, component: bool) -> de
 	Ok(quote::quote! {
 		impl Storage for #ident {
 			const STORAGE_ID: &'static str = #storage_id;
-			const SERIALIZE_FN: Option<(fn(&Self, &mut Vec<u8>) -> bincode::Result<()>, fn(&[Self]) -> bincode::Result<()>, fn(&[u8]) -> bincode::Result<Self>, fn(&[u8]) -> bincode::Result<Vec<Self>>)> = #serial_fn;
+			const SERIALIZE_FN: Option<(
+				fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
+				fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
+				fn(&[u8]) -> bincode::Result<*mut u8>, 
+				fn(&[u8]) -> bincode::Result<*mut u8>, 
+			)> = #serial_fn;
 			const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>> = #render_fn;
 		}
 		impl #idk for #ident {}

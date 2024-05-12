@@ -5,9 +5,14 @@ use crate::Resource;
 // But it is an unholy mixture of the two
 pub struct UntypedResource {
 	data: *mut u8, // Borrowable pointer to Box<Resource>
-	fn_drop: fn(&mut Self), // This should be some variant of drop_as (as defined externally)
-	fn_serde: Option<(fn(&Self, &mut Vec<u8>), fn(&mut Self, &mut Vec<u8>))>,
-	fn_renderdata: Option<fn(&Self, &mut Vec<u8>)>,
+	data_drop: fn(*mut u8), // This should be some variant of drop_as (as defined externally)
+	data_serde: Option<(
+		// These are from the derived functions for Resource
+		// Should return result 
+		fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>, 
+		fn(&[u8]) -> bincode::Result<*mut u8>, // Box<Resource>
+	)>,
+	data_renderdata: Option<fn(&Self, &mut Vec<u8>)>,
 	
 	data_size: usize,
 	name: &'static str,
@@ -27,6 +32,40 @@ impl UntypedResource {
 		*b
 	}
 
+	// For hot reloading without serializable data
+	pub unsafe fn into_raw(self) -> *mut u8 {
+		let d = self.data;
+		std::mem::forget(self);
+		d
+	}
+	pub unsafe fn load_raw(&mut self, data: *mut u8) {
+		(self.data_drop)(self.data); 
+		self.data = data;
+	}
+
+	pub fn is_serializable(&self) -> bool {
+		self.data_serde.is_some()
+	}
+
+	// For taking snapshots
+	pub fn serialize(&self, buffer: &mut Vec<u8>) -> bincode::Result<()> {
+		// call serialization function
+		// Include name and data size guard? No becuase serde has that already I think
+		let (f, _) = self.data_serde
+			.expect("UntypedResource has no serialization function!");
+		(f)(self.data, buffer)
+	}
+	pub fn deserialize(&mut self, buffer: &[u8]) -> bincode::Result<()> {
+		// Drop old data
+		(self.data_drop)(self.data); 
+		// Load new data
+		let (_, f) = self.data_serde
+			.expect("UntypedResource has no serialization function!");
+		let data = f(buffer)?;
+		self.data = data;
+		Ok(())
+	}
+
 	pub fn inner_ref<R: Resource>(&self) -> &R {
 		self.check_guards::<R>();
 		unsafe { &*(self.data as *mut R) }
@@ -43,7 +82,7 @@ impl UntypedResource {
 
 	// Used by krender to extract render data and append it to a buffer 
 	pub fn render_extend(&self, buffer: &mut Vec<u8>) {
-		if let Some(f) = self.fn_renderdata {
+		if let Some(f) = self.data_renderdata {
 			(f)(self, buffer);
 		} else {
 			buffer.extend_from_slice(self.inner_raw());
@@ -51,15 +90,15 @@ impl UntypedResource {
 	}
 
 	// Should only ever be called from drop code
-	fn drop_as<R: Resource>(&mut self) {
+	fn drop_data_as<R: Resource>(data: *mut u8) {
 		trace!("Dropping untype resource as resource of {}", R::STORAGE_ID);
-		let resource = unsafe { Box::from_raw(self.data as *mut R) };
+		let resource = unsafe { Box::from_raw(data as *mut R) };
 		drop(resource);
 	}
 }
 impl Drop for UntypedResource {
 	fn drop(&mut self) {
-		(self.fn_drop)(self); 
+		(self.data_drop)(self.data); 
 	}
 }
 impl<R: Resource> From<R> for UntypedResource {
@@ -67,18 +106,48 @@ impl<R: Resource> From<R> for UntypedResource {
 		let b = Box::new(value);
 		let data = Box::into_raw(b) as *mut u8;
 		
-		let fn_drop = UntypedResource::drop_as::<R>;
+		let fn_drop = UntypedResource::drop_data_as::<R>;
 
 		let data_size = std::mem::size_of::<R>();
 		let name = R::STORAGE_ID;
 
 		UntypedResource { 
 			data, 
-			fn_drop, 
-			fn_serde: None,
-			fn_renderdata: None,
+			data_drop: fn_drop, 
+			data_serde: R::SERIALIZE_FN.map(|(a, _, c, _)| (a, c)),
+			data_renderdata: None,
 			data_size, 
 			name, 
 		}
+	}
+}
+
+
+#[cfg(test)]
+mod tests {
+	use crate::prelude::*;
+	use super::UntypedResource;
+
+	#[derive(Debug, Resource, serde::Serialize, serde::Deserialize)]
+	#[storage_options(snap = true)]
+	struct ResourceA(pub u32);
+
+	#[test]
+	fn test_serde() {
+		let mut storage: UntypedResource = ResourceA(42).into();
+
+		assert!(storage.is_serializable());
+
+		let mut buffer = Vec::new();
+		storage.serialize(&mut buffer).unwrap();
+
+		let res = storage.inner_mut::<ResourceA>();
+		res.0 += 1;
+
+		assert_eq!(43, res.0);
+
+		storage.deserialize(&buffer).unwrap();
+		let res = storage.inner_mut::<ResourceA>();
+		assert_eq!(42, res.0);
 	}
 }

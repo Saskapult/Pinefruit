@@ -35,16 +35,21 @@ pub trait Storage: 'static + Send + Sync + std::fmt::Debug + Sized {
 	const SERIALIZE_FN: Option<(
 		// Serialization of one item
 		// Used in network communication when we only want to replicate some entities
-		fn(&Self, &mut Vec<u8>) -> bincode::Result<()>,
+		fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
+		// fn(&Self, &mut Vec<u8>) -> bincode::Result<()>,
 		// Serialization of many items
-		// Used when taking world snapshots 
-		fn(&[Self]) -> bincode::Result<()>,
+		// Used when taking world snapshots
+		// Points to &[Self]
+		fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
+		// fn(&[Self]) -> bincode::Result<()>,
 		// Deserialization of one item 
 		// See serialization of one item
-		fn(&[u8]) -> bincode::Result<Self>,
+		fn(&[u8]) -> bincode::Result<*mut u8>, // Box<Type>
+		// fn(&[u8]) -> bincode::Result<Self>,
 		// Deserialization of many items 
 		// See serialization of many items
-		fn(&[u8]) -> bincode::Result<Vec<Self>>,
+		fn(&[u8]) -> bincode::Result<*mut u8>, // Box<[Type]>
+		// fn(&[u8]) -> bincode::Result<Vec<Self>>,
 	)>;
 	// A function to transform this data for passage into shaders 
 	// For example, converting position, scale, and rotation into a matrix
@@ -65,18 +70,10 @@ impl<R: Resource> Resource for Option<R> {}
 impl<R: Resource> Storage for Option<R> {
 	const STORAGE_ID: &'static str = R::STORAGE_ID;
 	const SERIALIZE_FN: Option<(
-		// Serialization of one item
-		// Used in network communication when we only want to replicate some entities
-		fn(&Self, &mut Vec<u8>) -> bincode::Result<()>,
-		// Serialization of many items
-		// Used when taking world snapshots 
-		fn(&[Self]) -> bincode::Result<()>,
-		// Deserialization of one item 
-		// See serialization of one item
-		fn(&[u8]) -> bincode::Result<Self>,
-		// Deserialization of many items 
-		// See serialization of many items
-		fn(&[u8]) -> bincode::Result<Vec<Self>>,
+		fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
+		fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
+		fn(&[u8]) -> bincode::Result<*mut u8>, 
+		fn(&[u8]) -> bincode::Result<*mut u8>, 
 	)> = None;
 	const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>> = None;
 }
@@ -344,9 +341,42 @@ mod tests {
 	#[derive(Debug, Resource, PartialEq, Eq, Clone, Copy)]
 	pub struct Ressy(u32);
 
-	// #[derive(Debug, Component, serde::Serialize, serde::Deserialize)]
+	#[derive(Debug, serde::Serialize, serde::Deserialize)]
 	// #[storage_options(snap = true)]
 	pub struct Ikd(u32);
+	impl Storage for Ikd {
+		const STORAGE_ID: &'static str = "Ikd";
+		const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>> = Some(|p, b| Ok(()));
+		const SERIALIZE_FN: Option<(
+			fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
+			fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
+			fn(&[u8]) -> bincode::Result<*mut u8>, 
+			fn(&[u8]) -> bincode::Result<*mut u8>, 
+		)> = Some((
+			|p, buffer| {
+				let s = p as *const Self;
+				let s = unsafe { &*s };
+				bincode::serialize_into(buffer, s)?;
+				Ok(())
+			},
+			|p, buffer| {
+				let s = p as *const [Self];
+				let s = unsafe { &*s };
+				bincode::serialize_into(buffer, s)?;
+				Ok(())
+			},
+			|buffer| {
+				let t = bincode::deserialize::<Self>(buffer)?;
+				let p = Box::into_raw(Box::new(t)) as *mut u8;
+				Ok(p)
+			},
+			|buffer| {
+				let t = bincode::deserialize::<Box<[Self]>>(buffer)?;
+				let p = Box::into_raw(t) as *mut u8;
+				Ok(p)
+			},
+		));
+	}
 
 	#[test]
 	fn test_spawn_get() {
