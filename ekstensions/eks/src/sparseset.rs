@@ -215,10 +215,10 @@ impl<'a, T: Debug> Iterator for Iter<'a, T> {
 pub struct UntypedSparseSet {
 	data: *mut u8, // Raw box of SparseSet<C>
 
-	fn_drop: fn(&mut Self), 
-	fn_delete: fn(*mut u8, Entity) -> bool, 
-	fn_get: fn(*mut u8, Entity) -> Option<(*const u8, usize)>,
-	fn_serde: Option<(
+	data_drop: fn(*mut u8), 
+	data_delete: fn(*mut u8, Entity) -> bool, 
+	data_get: fn(*mut u8, Entity) -> Option<(*const u8, usize)>,
+	data_serde: Option<(
 		// Serialize 
 		fn(*const u8, &mut Vec<u8>), // &C
 		fn(*const u8, &mut Vec<u8>), // &[C] 
@@ -228,7 +228,7 @@ pub struct UntypedSparseSet {
 		fn(&[u8], &mut Vec<u8>), // deserialize as extension of Vec<C>
 		fn(&[u8]) -> *const u8, // SparseSet<~> -> Box<SparseSet<~>>
 	)>,
-	fn_renderdata: Option<
+	data_renderdata: Option<
 		// This fucntion is a little different than the serialization functions 
 		// That's beucase it uses only one indirect function call 
 		// It's just copeid from the [Storage] trait
@@ -247,6 +247,48 @@ impl UntypedSparseSet {
 		assert_eq!(self.item_size, std::mem::size_of::<C>(), "Component size differs!");
 	}
 
+	// For hot reloading without serializable data
+	pub unsafe fn into_raw(self) -> *mut u8 {
+		let d = self.data;
+		std::mem::forget(self);
+		d
+	}
+	pub unsafe fn load_raw(&mut self, data: *mut u8) {
+		(self.data_drop)(self.data); 
+		self.data = data;
+	}
+
+	pub fn is_serializable(&self) -> bool {
+		self.data_serde.is_some()
+	}
+
+	// serialize_one(&self, entity: Entity, buffer: &mut Vec<u8>) -> bincode::Result<()>
+	// serialize_some(&self, entities: &[Entity], buffer: &mut Vec<u8>) -> bincode::Result<()>
+	// serialize_all(&self, buffer: &mut Vec<u8>) -> bincode::Result<()>
+	
+	// deserialize_one(&mut self, entity: Entity, buffer: &mut Vec<u8>) -> bincode::Result<()>
+	// deserialize_some(&mut self, entities: &[Entity], buffer: &mut Vec<u8>) -> bincode::Result<()>
+	// deserialize_all(&mut self, buffer: &mut Vec<u8>) -> bincode::Result<()>
+
+	// // For taking snapshots
+	// pub fn serialize(&self, buffer: &mut Vec<u8>) -> bincode::Result<()> {
+	// 	// call serialization function
+	// 	// Include name and data size guard? No becuase serde has that already I think
+	// 	let (f, _) = self.data_serde
+	// 		.expect("UntypedResource has no serialization function!");
+	// 	(f)(self.data, buffer)
+	// }
+	// pub fn deserialize(&mut self, buffer: &[u8]) -> bincode::Result<()> {
+	// 	// Drop old data
+	// 	(self.data_drop)(self.data); 
+	// 	// Load new data
+	// 	let (_, f) = self.data_serde
+	// 		.expect("UntypedResource has no serialization function!");
+	// 	let data = f(buffer)?;
+	// 	self.data = data;
+	// 	Ok(())
+	// }
+
 	/// If you try this with the wrong type then stuff will only not break by coincidence. 
 	pub fn inner_ref<C: Component>(&self) -> &SparseSet<C> {
 		self.check_guards::<C>();
@@ -260,11 +302,11 @@ impl UntypedSparseSet {
 	}
 
 	pub fn delete(&mut self, entity: Entity) -> bool {
-		(self.fn_delete)(self.data, entity)
+		(self.data_delete)(self.data, entity)
 	}
 
 	pub fn get(&self, entity: Entity) -> Option<&[u8]> {
-		(self.fn_get)(self.data, entity).and_then(|(data, len)| 
+		(self.data_get)(self.data, entity).and_then(|(data, len)| 
 			Some(unsafe { std::slice::from_raw_parts(data, len) }))
 	}
 
@@ -279,7 +321,7 @@ impl UntypedSparseSet {
 	// Used by krender to extract render data and append it to a buffer 
 	pub fn render_extend(&self, entity: Entity, buffer: &mut Vec<u8>) -> bool {
 		if let Some(d) = self.get(entity) {
-			if let Some(f) = self.fn_renderdata {
+			if let Some(f) = self.data_renderdata {
 				(f)(d.as_ptr(), buffer).is_ok()
 			} else {
 				buffer.extend_from_slice(d);
@@ -289,11 +331,16 @@ impl UntypedSparseSet {
 			false
 		}
 	}
+
+	fn drop_data_as<C: Component>(data: *mut u8) {
+		trace!("Dropping untyped sparseset as sparseset of {}", C::STORAGE_ID);
+		let resource = unsafe { Box::from_raw(data as *mut SparseSet<C>) };
+		drop(resource);
+	}
 }
 impl Drop for UntypedSparseSet {
 	fn drop(&mut self) {
-		trace!("Dropping UntypedSparseSet '{}'", self.name);
-		(self.fn_drop)(self)
+		(self.data_drop)(self.data)
 	}
 }
 impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
@@ -303,19 +350,15 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 
 		UntypedSparseSet { 
 			data: p as *mut u8, 
-			
-			fn_drop: |s: &mut Self| unsafe {
-				let b = Box::from_raw(s.data as *mut SparseSet<C>);
-				drop(b);
-			}, 
-			fn_delete: |p, entity| unsafe {
+			data_drop: Self::drop_data_as::<C>, 
+			data_delete: |p, entity| unsafe {
 				(*(p as *mut SparseSet<C>)).remove(entity).is_some()
 			}, 
-			fn_get: |p, entity| unsafe {
+			data_get: |p, entity| unsafe {
 				(*(p as *mut SparseSet<C>)).get_ptr(entity).and_then(|data| Some((data as *const u8, std::mem::size_of::<C>())))
 			},
-			fn_serde: None,
-			fn_renderdata: C::RENDERDATA_FN,
+			data_serde: None,
+			data_renderdata: C::RENDERDATA_FN,
 			
 			item_size: std::mem::size_of::<C>(), 
 			name: C::STORAGE_ID,
@@ -326,12 +369,21 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 
 #[cfg(test)]
 mod tests {
+	use crate::prelude::*;
 	use super::*;
 
+	#[derive(Debug, Component, serde::Serialize, serde::Deserialize)]
+	struct ComponentA(pub u32);
+
 	#[test]
-	fn test_array_insert_remove() {
-		// let mut set = BasicSparseArray::default();
-		// let e0 = set.insert(Entity { id: 0, generation: 0 });
+	fn test_serde() {
+		// let mut storage: UntypedSparseSet = SparseSet::<ComponentA>::new().into();
+
+		// Serialization is not yet implemented 
+		// We do not know what use case to expect, anmely how data will be transmitted across networks
+		// It is better to serialize (entity, component) or (entity) and (component)? 
+
+		assert!(false, "TODO: component serialization");
 	}
 
 	#[test]

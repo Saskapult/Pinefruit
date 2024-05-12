@@ -106,14 +106,12 @@ impl<R: Resource> From<R> for UntypedResource {
 		let b = Box::new(value);
 		let data = Box::into_raw(b) as *mut u8;
 		
-		let fn_drop = UntypedResource::drop_data_as::<R>;
-
 		let data_size = std::mem::size_of::<R>();
 		let name = R::STORAGE_ID;
 
 		UntypedResource { 
 			data, 
-			data_drop: fn_drop, 
+			data_drop: Self::drop_data_as::<R>, 
 			data_serde: R::SERIALIZE_FN.map(|(a, _, c, _)| (a, c)),
 			data_renderdata: None,
 			data_size, 
