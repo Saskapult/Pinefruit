@@ -1,6 +1,6 @@
 # EKStensions
 Ekstensions is an extension to EKS with a hot-reloadable ECS. 
- An extension is a crate which complies to a shared library. 
+An extension is a crate which complies to a shared library. 
 This library exports the `dependecies`, `systems`, and `load` functions. 
 
 The `dependecies` function describes which `load` functions are to be called before this extension's `load` function. 
@@ -17,3 +17,13 @@ Work-heavy initialization should happen in systems in the `init` group because t
 
 When an extension is included as a dependency, the `no_export` feature must be enabled. 
 This prevents the linker from becoming confused by multiple exported `dependecies`, `systems`, and `load` symbols. 
+
+## To Do
+Serialization in reloading. 
+We must decide how to serialize component storages. 
+
+Discover why loading fails when `"rlib"` is removed form `crate-type`. 
+Some extensions successfully initialize. 
+Others do not, having undefined symbols to core and eks. 
+We do not seem to otherwise need the output `.rlib` files, only the `.so` files. 
+Removal of the `"rlib"` flag seems to greatly improve compile times, and saves a lot of disk space. 

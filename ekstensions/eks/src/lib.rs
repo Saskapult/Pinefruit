@@ -349,42 +349,42 @@ mod tests {
 	#[derive(Debug, Resource, PartialEq, Eq, Clone, Copy)]
 	pub struct Ressy(u32);
 
-	#[derive(Debug, serde::Serialize, serde::Deserialize)]
-	// #[storage_options(snap = true)]
-	pub struct Ikd(u32);
-	impl Storage for Ikd {
-		const STORAGE_ID: &'static str = "Ikd";
-		const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>> = Some(|p, b| Ok(()));
-		const SERIALIZE_FN: Option<(
-			fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
-			fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
-			fn(&[u8]) -> bincode::Result<*mut u8>, 
-			fn(&[u8]) -> bincode::Result<*mut u8>, 
-		)> = Some((
-			|p, buffer| {
-				let s = p as *const Self;
-				let s = unsafe { &*s };
-				bincode::serialize_into(buffer, s)?;
-				Ok(())
-			},
-			|p, buffer| {
-				let s = p as *const [Self];
-				let s = unsafe { &*s };
-				bincode::serialize_into(buffer, s)?;
-				Ok(())
-			},
-			|buffer| {
-				let t = bincode::deserialize::<Self>(buffer)?;
-				let p = Box::into_raw(Box::new(t)) as *mut u8;
-				Ok(p)
-			},
-			|buffer| {
-				let t = bincode::deserialize::<Box<[Self]>>(buffer)?;
-				let p = Box::into_raw(t) as *mut u8;
-				Ok(p)
-			},
-		));
-	}
+	// #[derive(Debug, serde::Serialize, serde::Deserialize)]
+	// // #[storage_options(snap = true)]
+	// pub struct Ikd(u32);
+	// impl Storage for Ikd {
+	// 	const STORAGE_ID: &'static str = "Ikd";
+	// 	const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>> = Some(|p, b| Ok(()));
+	// 	const SERIALIZE_FN: Option<(
+	// 		fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
+	// 		fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
+	// 		fn(&[u8]) -> bincode::Result<*mut u8>, 
+	// 		fn(&[u8]) -> bincode::Result<*mut u8>, 
+	// 	)> = Some((
+	// 		|p, buffer| {
+	// 			let s = p as *const Self;
+	// 			let s = unsafe { &*s };
+	// 			bincode::serialize_into(buffer, s)?;
+	// 			Ok(())
+	// 		},
+	// 		|p, buffer| {
+	// 			let s = p as *const [Self];
+	// 			let s = unsafe { &*s };
+	// 			bincode::serialize_into(buffer, s)?;
+	// 			Ok(())
+	// 		},
+	// 		|buffer| {
+	// 			let t = bincode::deserialize::<Self>(buffer)?;
+	// 			let p = Box::into_raw(Box::new(t)) as *mut u8;
+	// 			Ok(p)
+	// 		},
+	// 		|buffer| {
+	// 			let t = bincode::deserialize::<Box<[Self]>>(buffer)?;
+	// 			let p = Box::into_raw(t) as *mut u8;
+	// 			Ok(p)
+	// 		},
+	// 	));
+	// }
 
 	#[test]
 	fn test_spawn_get() {

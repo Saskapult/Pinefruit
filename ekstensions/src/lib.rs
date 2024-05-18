@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::{Path, PathBuf}, time::SystemTime};
+use std::{collections::HashMap, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
 use anyhow::{anyhow, Context};
 use eks::{prelude::*, resource::UntypedResource, sparseset::UntypedSparseSet, system::SystemFunction, WorldEntitySpawn};
 pub use eks;
@@ -161,16 +161,12 @@ impl ExtensionEntry {
 		let cargo_toml_table = cargo_toml_content.parse::<toml::Table>()
 			.with_context(|| "failed to parse cargo.toml")?;
 
-		// Require rlib && dylib 
+		// Require dylib 
 		let is_dylib = cargo_toml_table.get("lib")
 			.and_then(|v| v.as_table())
 			.and_then(|t| t.get("crate-type"))
 			.and_then(|v| v.as_array())
-			.and_then(|v| Some(
-				v.contains(&toml::Value::String("rlib".to_string())) 
-				&&
-				v.contains(&toml::Value::String("dylib".to_string())) 
-			))
+			.map(|v| v.contains(&toml::Value::String("dylib".to_string())))
 			.unwrap_or(false);
 		if !is_dylib {
 			error!("Not rlib dylib!");
@@ -194,29 +190,39 @@ impl ExtensionEntry {
 			.as_table().unwrap()
 			.get("name").unwrap()
 			.as_str().unwrap();
-		
-		let dylib_path = Self::stored_extension_path(name);
-		trace!("Extension file should be {:?}", dylib_path);
 
-		// Check if recompilation is needed
-		// stored files exist and are not older than build files
-		let needs_recompilation = dylib_path.canonicalize()
-			.and_then(|p| p.metadata().unwrap().modified())
-			.and_then(|t| Ok(t < Self::build_files_last_modified(path.as_ref())))
-			.unwrap_or(true);
-		if needs_recompilation {
+		let last_mod = Self::src_files_last_modified(path.as_ref());
+		
+		let ext_file = Self::stored_extension_file(name, last_mod);
+		let ext_folder = ext_file.parent().unwrap();
+		std::fs::create_dir_all(ext_folder).unwrap();
+		trace!("Extension file should be {:?}", ext_file);
+
+		// Try to find an existing extension file
+		// There should only be one 
+		let ext_previous = std::fs::read_dir(ext_folder).ok().and_then(|rd| rd
+			.filter_map(|f| f.ok())
+			.map(|f| f.path())
+			.find(|f| f.extension().map(|e| e == "so").unwrap_or(false)));
+		trace!("Previous extension file {:?}", ext_previous);
+
+		// If both are same then build is up-to-date 
+		if ext_previous.as_ref().map(|p| !p.eq(&ext_file)).unwrap_or(true) {
 			trace!("Either extension file does not exist or is outdated, rebuilding");
 
 			// Look for old build files
 			// If swap path is soem then unsawp after building
 			let out_path = Self::build_output_path(path.as_ref(), &name)?;
-			let swap_path = if out_path.exists() {
+			let lib_path = if out_path.exists() {
 				trace!("Library files exist, copying to library swap");
 
-				let storage = Self::stored_library_path(&name);
-				std::fs::copy(&out_path, &storage).unwrap();
+				let lib_path = Self::stored_library_file(&name);
+				trace!("{:?} -> {:?}", out_path, lib_path);
+				std::fs::create_dir_all(lib_path.parent().unwrap()).unwrap();
+				std::fs::copy(&out_path, &lib_path).unwrap();
+				std::fs::remove_file(&out_path).unwrap();
 
-				Some(storage)
+				Some(lib_path)
 			} else {
 				trace!("No library build detected");
 				None
@@ -235,22 +241,31 @@ impl ExtensionEntry {
 			}
 
 			trace!("Moving output to extension storage");
-			let new_files = Self::build_output_path(path.as_ref(), &name)?;
-			let storage = Self::stored_extension_path(&name);
-			std::fs::create_dir_all(storage.parent().unwrap()).unwrap();
-			std::fs::copy(&new_files, storage).unwrap();
-			std::fs::remove_file(&new_files).unwrap();
+			trace!("{:?} -> {:?}", out_path, ext_file);
+			std::fs::create_dir_all(ext_file.parent().unwrap()).unwrap();
+			std::fs::copy(&out_path, &ext_file).unwrap();
+			std::fs::remove_file(&out_path).unwrap();
 
-			if let Some(storage) = swap_path {
-				trace!("Restoring previous library files from library swap");
-				std::fs::copy(&storage, &out_path).unwrap();
-				std::fs::remove_file(&storage).unwrap();
+			if let Some(pp) = ext_previous.as_ref() {
+				trace!("Deleting old extension file {:?}", pp);
+				std::fs::remove_file(&pp).unwrap();
 			}
+
+			if let Some(lib_path) = lib_path {
+				trace!("Restoring previous library files from library swap");
+				trace!("{:?} -> {:?}", lib_path, out_path);
+				std::fs::copy(&lib_path, &out_path).unwrap();
+				std::fs::remove_file(&lib_path).unwrap();
+			} 
+			// else {
+			// 	std::fs::remove_file(&out_path).unwrap();
+			// }
 		}
 
-		assert!(std::fs::canonicalize(&dylib_path).is_ok(), "output path is bad");
-		let library = unsafe { libloading::Library::new(&dylib_path)? };
-		let library_ts = dylib_path.metadata().unwrap().modified().unwrap();
+		assert!(std::fs::canonicalize(&ext_file).is_ok(), "output path is bad");
+		trace!("Loading extension from {:?}", ext_file);
+		let library = unsafe { libloading::Library::new(&ext_file)? };
+		let library_ts = ext_file.metadata().unwrap().modified().unwrap();
 
 		// Fetch load dependencies 
 		let load_dependencies = unsafe {
@@ -283,17 +298,21 @@ impl ExtensionEntry {
 
 	/// After being built, extension files are copied here for storage. 
 	/// This is becuase building one extension that depends on other extensions will rebuild its dependents becuase of the change in `no_export` flag. 
-	fn stored_extension_path(extension_name: impl AsRef<str>) -> PathBuf {
-		 PathBuf::from("target/extensions")
-			.join(Self::stored_name(extension_name))
+	/// 
+	/// TODO: extensions on non-linux platforms
+	fn stored_extension_file(extension_name: impl AsRef<str>, last_mod: SystemTime) -> PathBuf {
+		let epoch_dur = last_mod.duration_since(UNIX_EPOCH).unwrap();
+		PathBuf::from("target/extensions")
+			.join(extension_name.as_ref())
+		   .join(format!("{}.so", epoch_dur.as_nanos()))
 	}
 
-	fn stored_library_path(extension_name: impl AsRef<str>) -> PathBuf {
+	fn stored_library_file(extension_name: impl AsRef<str>) -> PathBuf {
 		PathBuf::from("target/tmp")
-		   .join(Self::stored_name(extension_name))
+		   .join(Self::out_name(extension_name))
 	}
 
-	fn stored_name(extension_name: impl AsRef<str>) -> PathBuf {
+	fn out_name(extension_name: impl AsRef<str>) -> PathBuf {
 		// File name varies by platform 
 		#[cfg(target_os = "linux")]
 		let dylib_path = PathBuf::from(format!("lib{}", extension_name.as_ref())).with_extension("so");
@@ -332,34 +351,37 @@ impl ExtensionEntry {
 			extension_path.as_ref().join("target/debug")
 		};
 
-		let dylib_path = dylib_output_dir.join(Self::stored_name(name));
+		let dylib_path = dylib_output_dir.join(Self::out_name(name));
 
 		Ok(dylib_path)
 	}
 
-	fn build_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
+	fn src_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
 		// We care about Cargo.toml and everthing in the src directiory
-		let build_files = walkdir::WalkDir::new(path.as_ref().join("src"))
+		let src_files = walkdir::WalkDir::new(path.as_ref().join("src"))
 			.into_iter().filter_map(|e| e.ok())
 			.map(|d| d.into_path())
 			.chain(["Cargo.toml".into()]);
-		let last_modified = build_files
+		let last_modified = src_files
 			.map(|p| p.metadata().unwrap().modified().unwrap())
 			.max().unwrap();
 		last_modified
 	}
 	
 	// Checks if this extension has been modified since it was last loaded
-	pub fn dirty_level(&self) -> DirtyLevel {		
-		if Self::build_files_last_modified(&self.path) > self.read_at {
+	pub fn dirty_level(&self) -> DirtyLevel {	
+		// If build exists, then look at the .d file to find all depenedent files
+		// Rebuld if any changed after the build file (not the .d file?)
+
+		let last_mod = Self::src_files_last_modified(&self.path);
+		if last_mod > self.read_at {
 			trace!("Source files modified, rebuild");
 			return DirtyLevel::Rebuild;
 		}
 
 		// If newer build file exists on disk 
-		// This path is old and not good and only works on linux
-		let dylib_path = Self::stored_extension_path(&self.name);
-		if let Ok(p) = dylib_path.canonicalize() {
+		let ext_path = Self::stored_extension_file(&self.name, last_mod);
+		if let Ok(p) = ext_path.canonicalize() {
 			// If modified after we last loaded
 			let mod_time = p.metadata().unwrap().modified().unwrap();
 			if mod_time > self.read_at {
@@ -495,8 +517,10 @@ impl ExtensionRegistry {
 				debug!("Hard reload of {}", ext.name);
 				
 				// Unload from world
+				trace!("Unloading from world...");
 				let (c, r) = ext.unload(world)?;
 
+				trace!("Removing storages...");
 				// Rip out references to data
 				let c = c.into_iter()
 					.map(|(n, c)| (n, unsafe { c.into_raw() }))
@@ -510,13 +534,17 @@ impl ExtensionRegistry {
 
 				// Reload code
 				let path = ext.path.clone();
+				trace!("Dropping old extension entry...");
 				drop(ext);
+				trace!("Loading new extension entry...");
 				self.extensions.insert(i, ExtensionEntry::new(path)?);
 
 				// Load with new code
+				trace!("Loading into world...");
 				self.extensions[i].load(world)?;
 
 				// Replace storages
+				trace!("Overwriting storages...");
 				for (id, uss) in c {
 					warn!("Replacing component storage '{}' with raw persisted data", id);
 					let mut s = world.component_raw_mut(id);
@@ -535,40 +563,6 @@ impl ExtensionRegistry {
 
 		self.rebuild_systems()?;
 		
-		Ok(())
-	}
-
-	// Loads extensions in order 
-	fn load(&mut self, world: &mut World) -> anyhow::Result<()> {
-		trace!("Begin load");
-
-		// Find unload extension with met dependencies
-		while let Some((i, e)) = self.extensions.iter().enumerate().find(|(_, e)| {
-			!e.loaded() && e.load_dependencies.iter()
-				.map(|dep| self.extensions.iter().find(|e| e.name.eq(dep) && e.loaded()).is_some())
-				.fold(true, |a, v| a && v)
-		}) {
-			debug!("Load extension '{}'", e.name);
-			self.extensions[i].load(world)?;
-		}
-
-		trace!("Check load");
-
-		// Assert that all are loaded 
-		let unloaded = self.extensions.iter()
-			// Map to list of unmet dependencies
-			.map(|e| (e, e.load_dependencies.iter().filter(|d| self.extensions.iter().find(|e| e.name.eq(*d)).is_none()).collect::<Vec<_>>()))
-			.filter(|(_, d)| !d.is_empty())
-			.collect::<Vec<_>>();
-		if !unloaded.is_empty() {
-			for (e, unmet) in unloaded {
-				error!("Extension '{}' is missing dependencies {:?}", e.name, unmet);
-			}
-			return Err(anyhow::anyhow!("Failed to resolve dependencies"));
-		}
-
-		trace!("Everything seems to have loaded");
-
 		Ok(())
 	}
 
