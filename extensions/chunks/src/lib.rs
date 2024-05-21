@@ -138,14 +138,14 @@ fn player_chunk_loader(
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[info]
 pub fn dependencies() -> Vec<String> {
 	env_logger::init();
 	vec![]
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[systems]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	loader.system("client_init", "load_blocks", load_blocks);
 	
@@ -157,7 +157,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[load]
 pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
 	storages.resource(ChunksResource::new());
 	storages.resource(BlockResource::default());

@@ -1,4 +1,4 @@
-cargo-features = ["codegen-backend"] # Cranelift back-end
+# cargo-features = ["codegen-backend"] # Cranelift back-end
 
 [package]
 name = "kkraft"
@@ -6,15 +6,12 @@ version = "0.1.0"
 authors = ["Saskapult <“thekieransmith@gmail.com”>"]
 edition = "2021"
 
-[build]
-rustflags = ["-Z", "threads=8"] # Parallel front-end
+# [profile.dev.package."*"]
+# opt-level = 2
 
-[profile.dev.package."*"]
-opt-level = 2
-
-[profile.dev]
-codegen-backend = "cranelift" # Cranelift back-end
-debug = 1
+# [profile.dev]
+# codegen-backend = "cranelift" # Cranelift back-end
+# debug = 1
 
 [workspace]
 members = [

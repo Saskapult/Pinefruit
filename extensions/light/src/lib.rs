@@ -21,7 +21,7 @@ fn player_light_modifier(
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[info]
 pub fn dependencies() -> Vec<String> {
 	env_logger::init();
 	vec![
@@ -31,7 +31,7 @@ pub fn dependencies() -> Vec<String> {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[systems]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	loader.system("client_tick", "torchlight_chunk_init_system", torchlight_chunk_init_system)
 		.run_after("chunk_loading_system");
@@ -48,7 +48,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[load]
 pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
 	storages.resource(TorchLightChunksResource::default());
 	storages.component::<TorchLightModifierComponent>();

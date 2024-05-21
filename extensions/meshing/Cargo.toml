@@ -27,6 +27,3 @@ transform = { path = "../transform" }
 rayon = "1.10.0"
 thiserror = "1.0.60"
 parking_lot = "0.12.2"
-
-[features]
-extension = []

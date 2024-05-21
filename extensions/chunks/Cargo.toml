@@ -20,6 +20,3 @@ serde = "1.0.201"
 krender = { path = "../../krender" }
 anyhow = "1.0.83"
 ron = "0.8.1"
-
-[features]
-extension = []

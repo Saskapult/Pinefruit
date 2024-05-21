@@ -25,6 +25,3 @@ transform = { path = "../transform" }
 player = { path = "../player" }
 rayon = "1.10.0"
 controls = { path = "../controls" }
-
-[features]
-extension = []

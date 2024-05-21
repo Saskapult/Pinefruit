@@ -32,7 +32,7 @@ fn rename_fn_to(input: proc_macro::TokenStream, to: &str) -> proc_macro::TokenSt
 	match &mut item {
 		syn::Item::Fn(fn_item) => {
 			fn_item.sig.ident = ident;
-			println!("{:#?}", fn_item.attrs);
+			// println!("{:#?}", fn_item.attrs);
 		},
 		_ => panic!("non-function passed!"),
 	}

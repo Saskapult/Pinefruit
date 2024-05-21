@@ -574,6 +574,7 @@ impl WindowManager {
 			client.initialize();
 			info!("Extension setup thread done");
 		});
+		// client.lock().initialize();
 
 		// info!("Creating internal server");
 		// info!("Attaching client to internal server");

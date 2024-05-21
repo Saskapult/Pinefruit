@@ -2,7 +2,7 @@ pub mod generator;
 pub mod modification;
 pub mod terrain;
 
-use controls::{ControlComponent, ControlMap};
+use controls::ControlMap;
 use ekstensions::prelude::*;
 use modification::{terrain_modification_application, terrain_placement_queue, VoxelModifierComponent};
 use player::PlayerSpawnResource;
@@ -25,7 +25,7 @@ fn player_terrain_modifier(
 
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[info]
 pub fn dependencies() -> Vec<String> {
 	env_logger::init();
 	vec![
@@ -34,7 +34,7 @@ pub fn dependencies() -> Vec<String> {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[systems]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {	
 	loader.system("client_tick", "terrain_loading_system", terrain_loading_system)
 		.run_after("chunk_loading_system");
@@ -50,7 +50,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[load]
 pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
 	storages.component::<VoxelModifierComponent>();
 	storages.resource(TerrainLoadingResource::new(0));

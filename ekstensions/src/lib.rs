@@ -162,13 +162,16 @@ impl ExtensionEntry {
 		let cargo_toml_table = cargo_toml_content.parse::<toml::Table>()
 			.with_context(|| "failed to parse cargo.toml")?;
 
-		// Require dylib 
+		// Require dylib + rlib 
 		let is_dylib = cargo_toml_table.get("lib")
 			.and_then(|v| v.as_table())
 			.and_then(|t| t.get("crate-type"))
 			.and_then(|v| v.as_array())
-			.map(|v| v.contains(&toml::Value::String("dylib".to_string())))
-			.unwrap_or(false);
+			.map(|v| 
+				v.contains(&toml::Value::String("dylib".to_string()))
+				&&
+				v.contains(&toml::Value::String("rlib".to_string()))
+			).unwrap_or(false);
 		if !is_dylib {
 			error!("Not rlib dylib!");
 			panic!();
@@ -195,70 +198,81 @@ impl ExtensionEntry {
 			.find(|f| f.extension().map(|e| e == "so").unwrap_or(false)));
 		trace!("Previous extension file {:?}", ext_previous);
 
-		// If both are same then build is up-to-date 
+		// If cached file not up to date
 		if ext_previous.as_ref().map(|p| !p.eq(&ext_file)).unwrap_or(true) {
-			trace!("Either extension file does not exist or is outdated, rebuilding");
+			trace!("Either extension file does not exist or is outdated");
 
-			// Look for old build files
-			// If swap path is soem then unsawp after building
 			let out_path = Self::build_output_path(path.as_ref(), &name)?;
-			let lib_path = if out_path.exists() {
-				trace!("Library files exist, copying to library swap");
+			// If output not exists or is outdated
+			if out_path.canonicalize().ok().map(|p| p.metadata().unwrap().modified().unwrap() <= last_mod).unwrap_or(true) {
+				trace!("No/outdated output file, rebuilding");
 
-				let lib_path = Self::stored_library_file(&name);
-				trace!("{:?} -> {:?}", out_path, lib_path);
-				std::fs::create_dir_all(lib_path.parent().unwrap()).unwrap();
-				std::fs::copy(&out_path, &lib_path).unwrap();
-				std::fs::remove_file(&out_path).unwrap();
-
-				Some(lib_path)
+				let status = std::process::Command::new("cargo")
+					.arg("build")
+					// .env("RUSTC_WRAPPER", "/usr/bin/sccache")
+					.current_dir(path.as_ref())
+					.status()
+					.with_context(|| "cargo build failed")?;
+				if !status.success() {
+					error!("Failed to compile extension");
+					panic!();
+				}
 			} else {
-				trace!("No library build detected");
-				None
-			};
-
-			let status = std::process::Command::new("cargo")
-				.arg("build")
-				.arg("-F")
-				.arg("extension")
-				.current_dir(path.as_ref())
-				.status()
-				.with_context(|| "cargo build failed")?;
-			if !status.success() {
-				error!("Failed to compile extension");
-				panic!();
+				trace!("We have a fresh output file :)");
 			}
+
+			// Copy to extension storage 
+
+			// let lib_path = if out_path.exists() {
+			// 	trace!("Library files exist, copying to library swap");
+
+			// 	let lib_path = Self::stored_library_file(&name);
+			// 	trace!("{:?} -> {:?}", out_path, lib_path);
+			// 	std::fs::create_dir_all(lib_path.parent().unwrap()).unwrap();
+			// 	std::fs::copy(&out_path, &lib_path).unwrap();
+			// 	std::fs::remove_file(&out_path).unwrap();
+
+			// 	Some(lib_path)
+			// } else {
+			// 	trace!("No library build detected");
+			// 	None
+			// };
 
 			trace!("Moving output to extension storage");
 			trace!("{:?} -> {:?}", out_path, ext_file);
 			std::fs::create_dir_all(ext_file.parent().unwrap()).unwrap();
 			std::fs::copy(&out_path, &ext_file).unwrap();
-			std::fs::remove_file(&out_path).unwrap();
 
 			if let Some(pp) = ext_previous.as_ref() {
 				trace!("Deleting old extension file {:?}", pp);
 				std::fs::remove_file(&pp).unwrap();
 			}
 
-			if let Some(lib_path) = lib_path {
-				trace!("Restoring previous library files from library swap");
-				trace!("{:?} -> {:?}", lib_path, out_path);
-				std::fs::copy(&lib_path, &out_path).unwrap();
-				std::fs::remove_file(&lib_path).unwrap();
-			} 
+			// if let Some(lib_path) = lib_path {
+			// 	trace!("Restoring previous library files from library swap");
+			// 	trace!("{:?} -> {:?}", lib_path, out_path);
+			// 	std::fs::copy(&lib_path, &out_path).unwrap();
+			// 	std::fs::remove_file(&lib_path).unwrap();
+			// } 
 			// else {
 			// 	std::fs::remove_file(&out_path).unwrap();
 			// }
+		} else {
+			trace!("Cached file is up to date :D");
 		}
 
 		assert!(std::fs::canonicalize(&ext_file).is_ok(), "output path is bad");
 		trace!("Loading extension from {:?}", ext_file);
 		let library = unsafe { libloading::Library::new(&ext_file)? };
 		let library_ts = ext_file.metadata().unwrap().modified().unwrap();
+		trace!("Read success");
 
 		// Fetch load dependencies 
 		let load_dependencies = unsafe {
-			let f = library.get::<unsafe extern fn() -> Vec<String>>(b"dependencies")?;
+			let n = format!("{}_info", name);
+			trace!("Fetch {:?}", n);
+			let f = library.get::<unsafe extern fn() -> Vec<String>>(n.as_bytes())?;
+			trace!("Call {:?}", n);
 			f()
 		};
 		trace!("Depends on {:?}", load_dependencies);
@@ -269,7 +283,8 @@ impl ExtensionEntry {
 			systems: &mut systems,
 		};
 		unsafe {
-			let f = library.get::<unsafe extern fn(&mut ExtensionSystemsLoader)>(b"systems")?;
+			let n = format!("{}_systems", name);
+			let f = library.get::<unsafe extern fn(&mut ExtensionSystemsLoader)>(n.as_bytes())?;
 			f(&mut systems_loader);
 		}
 		trace!("Provides {} systems", systems.len());
@@ -296,10 +311,10 @@ impl ExtensionEntry {
 		   .join(format!("{}.so", epoch_dur.as_nanos()))
 	}
 
-	fn stored_library_file(extension_name: impl AsRef<str>) -> PathBuf {
-		PathBuf::from("target/tmp")
-		   .join(Self::out_name(extension_name))
-	}
+	// fn stored_library_file(extension_name: impl AsRef<str>) -> PathBuf {
+	// 	PathBuf::from("target/tmp")
+	// 	   .join(Self::out_name(extension_name))
+	// }
 
 	fn out_name(extension_name: impl AsRef<str>) -> PathBuf {
 		// File name varies by platform 
@@ -399,7 +414,8 @@ impl ExtensionEntry {
 		};
 
 		unsafe {
-			let f = self.library.get::<unsafe extern fn(&mut ExtensionStorageLoader) -> ()>(b"load")?;
+			let n = format!("{}_load", self.name);
+			let f = self.library.get::<unsafe extern fn(&mut ExtensionStorageLoader) -> ()>(n.as_bytes())?;
 			f(&mut loader);
 		}
 		

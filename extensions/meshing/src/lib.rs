@@ -19,14 +19,14 @@ fn player_meshing_component(
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[info]
 pub fn dependencies() -> Vec<String> {
 	env_logger::init();
 	vec![]
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[systems]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	loader.system("client_tick", "player_meshing_component", player_meshing_component)
 		.run_after("player_spawn")
@@ -42,7 +42,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[load]
 pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
 	storages.resource(MapModelResource::new(8));
 	storages.component::<MapMeshingComponent>();

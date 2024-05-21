@@ -367,19 +367,19 @@ pub fn local_control_system(
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[info]
 pub fn dependencies() -> Vec<String> {
 	vec![]
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[systems]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {	
 	loader.system("client_tick", "local_control_system", local_control_system);
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[load]
 pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
 	p.component::<ControlComponent>();
 	p.component::<LocalInputComponent>();

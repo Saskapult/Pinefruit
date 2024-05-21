@@ -13,7 +13,7 @@ use ekstensions::prelude::*;
 extern crate log;
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[info]
 pub fn dependencies() -> Vec<String> {
 	env_logger::init();
 	vec![
@@ -22,7 +22,7 @@ pub fn dependencies() -> Vec<String> {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[systems]
 pub fn systems(_loader: &mut ExtensionSystemsLoader) {
 	
 	// loader.system("client_init", "example0_client_init", init);
@@ -31,7 +31,7 @@ pub fn systems(_loader: &mut ExtensionSystemsLoader) {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[load]
 pub fn load(_storages: &mut ekstensions::ExtensionStorageLoader) {
 
 	// p.component::<ComponentA>();

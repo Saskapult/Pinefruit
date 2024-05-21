@@ -648,13 +648,13 @@ pub fn context_albedo_system(
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[info]
 pub fn dependencies() -> Vec<String> {
 	vec![]
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[systems]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	loader.system("render", "context_albedo_system", context_albedo_system);
 	loader.system("render", "context_camera_system", context_camera_system)
@@ -665,7 +665,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 }
 
 
-#[cfg_attr(feature = "extension", no_mangle)]
+#[load]
 pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
 	warn!("Note that wrapped wgpu things must be inserted by the main code");
 
