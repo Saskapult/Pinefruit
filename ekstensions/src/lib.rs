@@ -6,6 +6,7 @@ pub mod prelude {
 	pub use eks::prelude::*;
 	pub use crate::{ExtensionRegistry, ExtensionSystemsLoader};
 	pub use profiling;
+	pub use ekstensions_derive::*;
 }
 
 #[macro_use]

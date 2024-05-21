@@ -18,3 +18,4 @@ toml = "0.8.12"
 walkdir = "2.5.0"
 eks = { path = "eks" }
 profiling = { version = "1.0.10", features = ["profile-with-puffin"] }
+ekstensions-derive = { path = "ekstensions-derive" }

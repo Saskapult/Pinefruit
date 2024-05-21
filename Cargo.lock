@@ -1021,12 +1021,23 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "eks",
+ "ekstensions-derive",
  "env_logger 0.11.3",
  "libloading 0.8.3",
  "log",
  "profiling",
  "toml",
  "walkdir",
+]
+
+[[package]]
+name = "ekstensions-derive"
+version = "0.1.0"
+dependencies = [
+ "deluxe",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.60",
 ]
 
 [[package]]
