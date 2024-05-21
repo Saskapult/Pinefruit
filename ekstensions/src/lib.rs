@@ -210,7 +210,8 @@ impl ExtensionEntry {
 				let status = std::process::Command::new("cargo")
 					.arg("build")
 					// .env("RUSTC_WRAPPER", "/usr/bin/sccache")
-					.current_dir(path.as_ref())
+					.arg("-p")
+					.arg(name)
 					.status()
 					.with_context(|| "cargo build failed")?;
 				if !status.success() {
@@ -464,6 +465,7 @@ impl Drop for ExtensionEntry {
 		}
 		// Any references to the data in a library must be dropped before the library itself 
 		self.systems.clear();
+		warn!("Done that");
 	}
 }
 

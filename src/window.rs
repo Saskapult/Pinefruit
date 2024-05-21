@@ -1,4 +1,4 @@
-use controls::{InputEvent, KeyKey};
+use controls::{ControlMap, InputEvent, KeyKey};
 use egui::{Context, ViewportId};
 use egui_wgpu::{preferred_framebuffer_format, Renderer, ScreenDescriptor};
 use ekstensions::prelude::*;
@@ -105,6 +105,7 @@ struct GameWindow {
 	game_widget: Option<GameWidget>,
 	profiling_widget: ProfilingWidget, 
 	show_workloads: bool, 
+	show_controls: bool, 
 }
 impl GameWindow {
 	pub fn new(
@@ -164,6 +165,7 @@ impl GameWindow {
 			game_widget: None,
 			profiling_widget: ProfilingWidget::new(),
 			show_workloads: false,
+			show_controls: false,
 		}
 	}
 
@@ -217,16 +219,17 @@ impl GameWindow {
 						self.viewports.show_viewport_profiling(ui, graphics);
 
 						ui.toggle_value(&mut self.show_workloads, "Workloads");
+						ui.toggle_value(&mut self.show_controls, "Controls");
 
 						self.profiling_widget.show_options(ui);
 					});
 				});
-			egui::SidePanel::right("right panel")
-				.show(&self.context, |ui| {
-					ui.vertical(|ui| {
+			// egui::SidePanel::right("right panel")
+			// 	.show(&self.context, |ui| {
+			// 		ui.vertical(|ui| {
 						
-					});
-				});
+			// 		});
+			// 	});
 			egui::CentralPanel::default()
 				.show(&self.context, |ui| {
 					ui.vertical_centered_justified(|ui| {
@@ -242,6 +245,16 @@ impl GameWindow {
 				.open(&mut self.show_workloads)
 				.show(&self.context, |ui| {
 					show_workgroup_info(ui, &instance.extensions);
+				});
+			}
+
+			if self.show_controls {
+				egui::Window::new("Controls")
+				.open(&mut self.show_controls)
+				.show(&self.context, |ui| {
+					// ui.visuals_mut().panel_fill = egui::Color32::TRANSPARENT;
+					let mut cm = instance.world.query::<ResMut<ControlMap>>();
+					cm.show(ui);
 				});
 			}
 

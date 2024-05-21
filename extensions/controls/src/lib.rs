@@ -59,6 +59,17 @@ impl Into<KeyKey> for MouseButton {
 		KeyKey::MouseKey(self)
 	}
 }
+impl std::fmt::Display for KeyKey {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::BoardKey(b) => match b {
+				PhysicalKey::Code(c) => write!(f, "{:?}", c),
+				PhysicalKey::Unidentified(u) => write!(f, "{:?}", u),
+			}
+			Self::MouseKey(m) => write!(f, "{:?}", m),
+		}
+	}
+}
 
 
 /// An upgraded* [InputEvent]. 
@@ -179,7 +190,7 @@ impl ControlComponent {
 
 	fn check_active_controls(&mut self, when: Instant, map: &ControlMap) {
 		fn state_has_combo(combo: &KeyCombo, pressed: &HashSet<KeyKey>, modifiers: BitFlags<KeyModifiers>) -> bool {
-			modifiers == combo.modifiers && combo.keys.iter().all(|key| pressed.contains(key))
+			modifiers == combo.modifiers && !combo.keys.is_empty() && combo.keys.iter().all(|key| pressed.contains(key)) 
 		}
 
 		for (control, entry) in map.controls.iter() {
@@ -297,7 +308,7 @@ new_key_type! { pub struct ControlKey; }
 struct ControlMapEntry {
 	pub name: String,
 	pub description: String,
-	pub combos: ArrayVec<KeyCombo, 5>, // Each control can have 5 triggering key combinations
+	pub combos: ArrayVec<KeyCombo, 3>, // Each control can have 3 triggering key combinations
 }
 
 
@@ -334,6 +345,42 @@ impl ControlMap {
 			entry.combos.try_push(combo).unwrap();
 		} else {
 			panic!("Cid does not exist!")
+		}
+	}
+
+	pub fn show(&mut self, ui: &mut egui::Ui) {
+		for (k, e) in self.controls.iter_mut() {
+			ui.horizontal(|ui| {
+				ui.label(&e.name);
+				ui.label(" - ");
+				ui.label(&e.description);
+				egui::CollapsingHeader::new(format!("{} combos", e.combos.len())).id_source(k).show(ui, |ui| {
+					for combo in e.combos.iter_mut() {
+						let allmodifiers = [
+							KeyModifiers::LShift,
+							KeyModifiers::LCtrl,
+							KeyModifiers::LAlt,
+							KeyModifiers::RShift,
+							KeyModifiers::RCtrl,
+							KeyModifiers::RAlt,
+						];
+						let mods = allmodifiers.into_iter().filter_map(|m| combo.modifiers.contains(m).then(|| format!("{:?}+", m)));
+						let keys = combo.keys.iter().map(|k| format!("{}", k));
+						let r = mods.chain(keys).collect::<Vec<_>>().join("+");
+						if r == "" {
+							ui.label("Empty");
+						} else {
+							ui.label(r);
+						}
+					}
+					// If still have room for another combo, show a box to add it 
+					if e.combos.len() < 3 {
+						if ui.button("Add combo").clicked() {
+							e.combos.push(KeyCombo::new([], KeyModifiers::EMPTY));
+						}
+					}
+				});
+			});
 		}
 	}
 }

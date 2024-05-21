@@ -677,6 +677,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "crossbeam-channel",
+ "egui",
  "ekstensions",
  "enumflags2",
  "log",

@@ -81,6 +81,8 @@ impl Drop for GameInstance {
 	fn drop(&mut self) {
 		// Storage drop functions reference external library code
 		// Maybe we could fix this using an Arc, but that mgiht not help if the extension code file itself is overwritten 
+		warn!("Dropping world before extensions");
 		self.world.clear();
+		warn!("Now dropping extensions");
 	}
 }
