@@ -172,18 +172,6 @@ impl ExtensionEntry {
 			error!("Not rlib dylib!");
 			panic!();
 		}
-
-		// Require sccache 
-		let sccache_enabled = cargo_toml_table.get("build")
-			.and_then(|v| v.as_table())
-			.and_then(|t| t.get("rustc-wrapper"))
-			.and_then(|v| v.as_str())
-			.and_then(|v| Some(v.eq("/usr/bin/sccache")))
-			.unwrap_or(false);
-		if !sccache_enabled {
-			error!("Sccache is not enabled!");
-			panic!();
-		}
 		
 		let name = cargo_toml_table
 			.get("package").unwrap()

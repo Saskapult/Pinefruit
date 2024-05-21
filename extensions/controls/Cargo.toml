@@ -6,9 +6,6 @@ edition = "2021"
 [lib]
 crate-type = ["rlib", "dylib"]
 
-[build]
-rustc-wrapper = "/usr/bin/sccache"
-
 [dependencies]
 arrayvec = "0.7.4"
 crossbeam-channel = "0.5.12"

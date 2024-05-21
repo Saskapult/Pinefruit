@@ -6,9 +6,6 @@ edition = "2021"
 [lib]
 crate-type = ["rlib", "dylib"]
 
-[build]
-rustc-wrapper = "/usr/bin/sccache"
-
 [dependencies]
 ekstensions = { path = "../../ekstensions" }
 render = { path = "../render" }
