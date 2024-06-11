@@ -73,3 +73,13 @@ simdnoise = "3.1.6"
 rustc-hash = "1.1.0"
 smallvec = "1.11.2"
 variantly = "0.4.0"
+
+# # Static extensions 
+# render = { path = "../extensions/render", optional = true }
+# transform = { path = "../extensions/transform", optional = true }
+
+# [features]
+# static_extensions = [
+# 	"render",
+# 	# "transform",
+# ]

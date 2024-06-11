@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::{Path, PathBuf}, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use anyhow::{anyhow, Context};
 use eks::{prelude::*, resource::UntypedResource, sparseset::UntypedSparseSet, system::SystemFunction, WorldEntitySpawn};
 pub use eks;
@@ -69,10 +69,10 @@ impl<'a> ExtensionSystemsLoader<'a> {
 
 
 pub struct ExtensionSystem {
-	group: String,
-	id: String,
-	pointer: Box<dyn Fn(*const World)>,
-	run_after: Vec<String>,
+	group: String, 
+	id: String, 
+	pointer: Box<dyn Fn(*const World)>, 
+	run_after: Vec<String>, 
 	run_before: Vec<String>, 
 }
 impl ExtensionSystem {
@@ -85,6 +85,7 @@ impl ExtensionSystem {
 		// I hate SystemFuction
 		// I hate lifetimes
 		// I feel hate 
+		// TODO: can't we just get a pointer to S::run_system?
 		let closure = move |world: *const World| unsafe {
 			let world = &*world;
 			s.run_system((), world);
@@ -115,7 +116,7 @@ impl std::fmt::Debug for ExtensionSystem {
 			.field("group", &self.group)
 			.field("id", &self.id)
 			.field("run_after", &self.run_after)
-			// .field("run_before", &self.run_before)
+			.field("run_before", &self.run_before)
 			.finish()			
 	}
 }
@@ -128,6 +129,7 @@ pub enum DirtyLevel {
 	Clean,
 	Reload, // Load .so file again
 	Rebuild, // Rebuild whole project
+	Unloaded, // It's not loaded so we didn't test to see if it's dirty 
 }
 
 
@@ -138,134 +140,22 @@ pub struct ExtensionStorages {
 }
 
 
-pub struct ExtensionEntry {
-	pub name: String,
-	pub path: PathBuf,
-
-	// Load library
-	// Library must be dropped before overwiting .so file on disk? (like recompile)
-	// If so, please copy to another folder when loading
+pub struct ExtensionLibrary {
 	pub library: libloading::Library,
 	pub read_at: SystemTime, 
 	pub load_dependencies: Vec<String>,
 	pub systems: Vec<ExtensionSystem>,
-	pub provides: Option<ExtensionStorages>,
+	pub storages: Option<ExtensionStorages>,
 }
-impl ExtensionEntry {
-	// Reads extension from disk and compiles 
-	pub fn new(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-		trace!("Loading {:?}", path.as_ref());
+impl ExtensionLibrary {
+	// Name is needed becuase symbols for extension functions are unique (based on name)
+	pub fn new(name: impl AsRef<str>, path: impl AsRef<Path>) -> anyhow::Result<Self> {
+		let name = name.as_ref();
+		let path = path.as_ref();
 
-		let cargo_toml_path = path.as_ref().join("Cargo.toml");
-		let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
-			.with_context(|| "failed to read cargo.toml")?;
-		let cargo_toml_table = cargo_toml_content.parse::<toml::Table>()
-			.with_context(|| "failed to parse cargo.toml")?;
-
-		// Require dylib + rlib 
-		let is_dylib = cargo_toml_table.get("lib")
-			.and_then(|v| v.as_table())
-			.and_then(|t| t.get("crate-type"))
-			.and_then(|v| v.as_array())
-			.map(|v| 
-				v.contains(&toml::Value::String("dylib".to_string()))
-				&&
-				v.contains(&toml::Value::String("rlib".to_string()))
-			).unwrap_or(false);
-		if !is_dylib {
-			error!("Not rlib dylib!");
-			panic!();
-		}
-		
-		let name = cargo_toml_table
-			.get("package").unwrap()
-			.as_table().unwrap()
-			.get("name").unwrap()
-			.as_str().unwrap();
-
-		let last_mod = Self::src_files_last_modified(path.as_ref());
-		
-		let ext_file = Self::stored_extension_file(name, last_mod);
-		let ext_folder = ext_file.parent().unwrap();
-		std::fs::create_dir_all(ext_folder).unwrap();
-		trace!("Extension file should be {:?}", ext_file);
-
-		// Try to find an existing extension file
-		// There should only be one 
-		let ext_previous = std::fs::read_dir(ext_folder).ok().and_then(|rd| rd
-			.filter_map(|f| f.ok())
-			.map(|f| f.path())
-			.find(|f| f.extension().map(|e| e == "so").unwrap_or(false)));
-		trace!("Previous extension file {:?}", ext_previous);
-
-		// If cached file not up to date
-		if ext_previous.as_ref().map(|p| !p.eq(&ext_file)).unwrap_or(true) {
-			trace!("Either extension file does not exist or is outdated");
-
-			let out_path = Self::build_output_path(path.as_ref(), &name)?;
-			// If output not exists or is outdated
-			if out_path.canonicalize().ok().map(|p| p.metadata().unwrap().modified().unwrap() <= last_mod).unwrap_or(true) {
-				trace!("No/outdated output file, rebuilding");
-
-				let status = std::process::Command::new("cargo")
-					.arg("build")
-					// .env("RUSTC_WRAPPER", "/usr/bin/sccache")
-					.arg("-p")
-					.arg(name)
-					.status()
-					.with_context(|| "cargo build failed")?;
-				if !status.success() {
-					error!("Failed to compile extension");
-					panic!();
-				}
-			} else {
-				trace!("We have a fresh output file :)");
-			}
-
-			// Copy to extension storage 
-
-			// let lib_path = if out_path.exists() {
-			// 	trace!("Library files exist, copying to library swap");
-
-			// 	let lib_path = Self::stored_library_file(&name);
-			// 	trace!("{:?} -> {:?}", out_path, lib_path);
-			// 	std::fs::create_dir_all(lib_path.parent().unwrap()).unwrap();
-			// 	std::fs::copy(&out_path, &lib_path).unwrap();
-			// 	std::fs::remove_file(&out_path).unwrap();
-
-			// 	Some(lib_path)
-			// } else {
-			// 	trace!("No library build detected");
-			// 	None
-			// };
-
-			trace!("Moving output to extension storage");
-			trace!("{:?} -> {:?}", out_path, ext_file);
-			std::fs::create_dir_all(ext_file.parent().unwrap()).unwrap();
-			std::fs::copy(&out_path, &ext_file).unwrap();
-
-			if let Some(pp) = ext_previous.as_ref() {
-				trace!("Deleting old extension file {:?}", pp);
-				std::fs::remove_file(&pp).unwrap();
-			}
-
-			// if let Some(lib_path) = lib_path {
-			// 	trace!("Restoring previous library files from library swap");
-			// 	trace!("{:?} -> {:?}", lib_path, out_path);
-			// 	std::fs::copy(&lib_path, &out_path).unwrap();
-			// 	std::fs::remove_file(&lib_path).unwrap();
-			// } 
-			// else {
-			// 	std::fs::remove_file(&out_path).unwrap();
-			// }
-		} else {
-			trace!("Cached file is up to date :D");
-		}
-
-		assert!(std::fs::canonicalize(&ext_file).is_ok(), "output path is bad");
-		trace!("Loading extension from {:?}", ext_file);
-		let library = unsafe { libloading::Library::new(&ext_file)? };
-		let library_ts = ext_file.metadata().unwrap().modified().unwrap();
+		trace!("Loading extension library '{}' from {:?}", name, path);
+		let library = unsafe { libloading::Library::new(path)? };
+		let library_ts = path.metadata().unwrap().modified().unwrap();
 		trace!("Read success");
 
 		// Fetch load dependencies 
@@ -291,141 +181,33 @@ impl ExtensionEntry {
 		trace!("Provides {} systems", systems.len());
 
 		Ok(Self {
-			name: name.to_string(), 
-			path: path.as_ref().into(), 
 			library, 
 			read_at: library_ts, 
 			load_dependencies,
 			systems,
-			provides: None,
+			storages: None,
 		})
 	}
 
-	/// After being built, extension files are copied here for storage. 
-	/// This is becuase building one extension that depends on other extensions will rebuild its dependents becuase of the change in `no_export` flag. 
-	/// 
-	/// TODO: extensions on non-linux platforms
-	fn stored_extension_file(extension_name: impl AsRef<str>, last_mod: SystemTime) -> PathBuf {
-		let epoch_dur = last_mod.duration_since(UNIX_EPOCH).unwrap();
-		PathBuf::from("target/extensions")
-			.join(extension_name.as_ref())
-		   .join(format!("{}.so", epoch_dur.as_nanos()))
-	}
-
-	// fn stored_library_file(extension_name: impl AsRef<str>) -> PathBuf {
-	// 	PathBuf::from("target/tmp")
-	// 	   .join(Self::out_name(extension_name))
-	// }
-
-	fn out_name(extension_name: impl AsRef<str>) -> PathBuf {
-		// File name varies by platform 
-		#[cfg(target_os = "linux")]
-		let dylib_path = PathBuf::from(format!("lib{}", extension_name.as_ref())).with_extension("so");
-		#[cfg(target_os = "macos")]
-		let dylib_path = PathBuf::from(format!("lib{}", extension_name.as_ref())).with_extension("dylib");
-		#[cfg(target_os = "windows")]
-		let dylib_path = PathBuf::from(format!("{}", extension_name.as_ref())).with_extension("dll");
-
-		dylib_path
-	}
-
-	/// Where an extension will be after running `cargo build`. 
-	///
-	/// Retuns an error if: 
-	/// - the root Cargo.toml file cannot be read 
-	/// - the root Cargo.toml file cannot be parsed 
-	/// - the root Cargo.toml file does not contain an array of strings in workspace.members 
-	fn build_output_path(extension_path: impl AsRef<Path>, name: &str) -> anyhow::Result<PathBuf> {
-		let root_cargo_toml_table = std::fs::read_to_string("./Cargo.toml")
-			.with_context(|| "failed to read cargo.toml")?
-			.parse::<toml::Table>()
-			.with_context(|| "failed to parse cargo.toml")?;
-		let root_workspace = root_cargo_toml_table
-			.get("workspace").unwrap()
-			.as_table().unwrap()
-			.get("members").unwrap()
-			.as_array().unwrap()
-			.iter().map(|v| v.as_str())
-			.collect::<Option<Vec<_>>>().unwrap();
-		
-		// Output path differs if in workspace or not
-		let ws_name = extension_path.as_ref().file_name().unwrap().to_str().unwrap();
-		let dylib_output_dir = if root_workspace.contains(&"extensions/*") || root_workspace.contains(&&*format!("extensions/{}", ws_name)) {
-			Path::new("./target/debug").into()
-		} else {
-			extension_path.as_ref().join("target/debug")
-		};
-
-		let dylib_path = dylib_output_dir.join(Self::out_name(name));
-
-		Ok(dylib_path)
-	}
-
-	fn src_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
-		// We care about Cargo.toml and everthing in the src directiory
-		let src_files = walkdir::WalkDir::new(path.as_ref().join("src"))
-			.into_iter().filter_map(|e| e.ok())
-			.map(|d| d.into_path())
-			.chain(["Cargo.toml".into()]);
-		let last_modified = src_files
-			.map(|p| p.metadata().unwrap().modified().unwrap())
-			.max().unwrap();
-		last_modified
-	}
-	
-	// Checks if this extension has been modified since it was last loaded
-	pub fn dirty_level(&self) -> DirtyLevel {	
-		// If build exists, then look at the .d file to find all depenedent files
-		// Rebuld if any changed after the build file (not the .d file?)
-
-		let last_mod = Self::src_files_last_modified(&self.path);
-		if last_mod > self.read_at {
-			trace!("Source files modified, rebuild");
-			return DirtyLevel::Rebuild;
-		}
-
-		// If newer build file exists on disk 
-		let ext_path = Self::stored_extension_file(&self.name, last_mod);
-		if let Ok(p) = ext_path.canonicalize() {
-			// If modified after we last loaded
-			let mod_time = p.metadata().unwrap().modified().unwrap();
-			if mod_time > self.read_at {
-				let d = mod_time.duration_since(self.read_at).unwrap();
-				trace!("Extension file is newer, reload ({:?}, {:.2}s)", p, d.as_secs_f32());
-				return DirtyLevel::Reload;
-			} else {
-				return DirtyLevel::Clean;
-			}
-		} else {
-			trace!("Extension file does not exist, rebuild");
-			return DirtyLevel::Rebuild;
-		}
-	}
-
-	pub fn loaded(&self) -> bool {
-		self.provides.is_some()
-	}	
-
-	pub fn load(&mut self, world: &mut World) -> anyhow::Result<()> {
-		assert!(!self.loaded(), "Extension already loaded!");
+	pub fn load(&mut self, name: impl AsRef<str>, world: &mut World) -> anyhow::Result<()>  {
+		trace!("Loading extension '{}' into world", name.as_ref());
 
 		let mut loader = ExtensionStorageLoader {
-			world,
-			storages: ExtensionStorages::default(),
+			world, storages: ExtensionStorages::default(), 
 		};
 
 		unsafe {
-			let n = format!("{}_load", self.name);
-			let f = self.library.get::<unsafe extern fn(&mut ExtensionStorageLoader) -> ()>(n.as_bytes())?;
+			let n = format!("{}_load", name.as_ref());
+			let f = self.library.get::<unsafe extern fn(&mut ExtensionStorageLoader)>(n.as_bytes())?;
 			f(&mut loader);
 		}
-		
-		let _ = self.provides.insert(loader.storages);
-		
+
+		self.storages = Some(loader.storages);
+
 		Ok(())
 	}
 
-	// Extensions don't need much in their unlaod functions by default
+	// Extensions don't need much in their unload functions by default
 	// Systems and components and resources will be removed automatically
 	// In the future maybe we should be able to choose whether to serialize the data and try to reload it 
 	// This would use serde so that if the data format changed the restoration can fail 
@@ -435,14 +217,10 @@ impl ExtensionEntry {
 		Vec<(String, UntypedSparseSet)>,
 		Vec<(String, UntypedResource)>,
 	)> {
-		assert!(self.loaded(), "Extension is not loaded!");
+		trace!("Unloading extension 'TODO: NAME' from world");
 
-		// unsafe {
-		// 	let f = self.library.get::<unsafe extern fn() -> ()>(b"unload")?;
-		// 	f()
-		// }
-
-		let provisions = self.provides.take().unwrap();
+		let provisions = self.storages.take()
+			.expect("Extension was not loaded!");
 		let components = provisions.components.into_iter().map(|component| {
 			info!("Remove component '{}'", component);
 			let s = world.unregister_component(&component).expect("Component not found!");
@@ -458,19 +236,267 @@ impl ExtensionEntry {
 		Ok((components, resources))
 	}
 }
-impl Drop for ExtensionEntry {
+impl Drop for ExtensionLibrary {
 	fn drop(&mut self) {
-		if self.provides.is_some() {
-			warn!("Dropping extension '{}' with active provisions", self.name);
-		}
 		// Any references to the data in a library must be dropped before the library itself 
 		self.systems.clear();
-		warn!("Done that");
 	}
 }
 
 
+pub enum ExtensionPath {
+	// Library(PathBuf), // Future stuff, watch a file and reload if changed
+	Crate(PathBuf, bool), // Path, in workspace 
+}
+impl ExtensionPath {
+	// Checks if this extension has been modified since it was last loaded
+	
+
+	
+}
+
+
+fn extension_build_filename(extension_name: impl AsRef<str>) -> PathBuf {
+	// File name varies by platform 
+	#[cfg(target_os = "linux")]
+	let dylib_path = PathBuf::from(format!("lib{}", extension_name.as_ref())).with_extension("so");
+	#[cfg(target_os = "macos")]
+	let dylib_path = PathBuf::from(format!("lib{}", extension_name.as_ref())).with_extension("dylib");
+	#[cfg(target_os = "windows")]
+	let dylib_path = PathBuf::from(format!("{}", extension_name.as_ref())).with_extension("dll");
+
+	dylib_path
+}
+
+fn src_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
+	// We care about Cargo.toml and everthing in the src directiory
+	let src_files = walkdir::WalkDir::new(path.as_ref().join("src"))
+		.into_iter().filter_map(|e| e.ok())
+		.map(|d| d.into_path())
+		.chain(["Cargo.toml".into()]);
+	let last_modified = src_files
+		.map(|p| p.metadata().unwrap().modified().unwrap())
+		.max().unwrap();
+	last_modified
+}
+
+
+pub struct ExtensionEntry {
+	// Extracted from Cargo.toml or file name
+	pub name: String,
+	pub file_path: PathBuf, // The source file for this extension 
+	pub crate_path: Option<PathBuf>, // The crate used to build this extension file 
+	pub library: Option<ExtensionLibrary>,
+}
+impl ExtensionEntry {
+	// Reads extension from disk and compiles 
+	pub fn new_crate(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+		trace!("Loading extension (crate) {:?}", path.as_ref());
+
+		let cargo_toml_path = path.as_ref().join("Cargo.toml");
+		let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
+			.with_context(|| "failed to read cargo.toml")?;
+		let cargo_toml_table: toml::map::Map<String, toml::Value> = cargo_toml_content.parse::<toml::Table>()
+			.with_context(|| "failed to parse cargo.toml")?;
+
+		// Require dylib + rlib 
+		let is_dylib = cargo_toml_table.get("lib")
+			.and_then(|v| v.as_table())
+			.and_then(|t| t.get("crate-type"))
+			.and_then(|v| v.as_array())
+			.map(|v| 
+				v.contains(&toml::Value::String("dylib".to_string()))
+				&&
+				v.contains(&toml::Value::String("rlib".to_string()))
+			).unwrap_or(false);
+		if !is_dylib {
+			error!("Not rlib dylib!");
+			// panic!();
+		}
+		
+		let name = cargo_toml_table
+			.get("package").unwrap()
+			.as_table().unwrap()
+			.get("name").unwrap()
+			.as_str().unwrap();
+
+		let root_cargo_toml = std::fs::read_to_string("./Cargo.toml")
+			.with_context(|| "failed to read root Cargo.toml")?
+			.parse::<toml::Table>()
+			.with_context(|| "failed to parse root Cargo.toml")?;
+		let root_workspace_members = root_cargo_toml
+			.get("workspace").and_then(|v| v.as_table())
+			.expect("root Cargo.toml has no workspace")
+			.get("members").and_then(|v| v.as_array())
+			.expect("root Cargo.toml workspace has no members")
+			.iter().map(|v| v.as_str())
+			.collect::<Option<Vec<_>>>()
+			.expect("failed to read root Cargo.toml workspace members");
+		
+		// Output path differs if in workspace or not
+		let in_workspace = root_workspace_members.contains(&"extensions/*") 
+			|| root_workspace_members.contains(&&*format!("extensions/{}", name));
+
+		let file_path = if in_workspace {
+			PathBuf::from("target/debug")
+		} else {
+			path.as_ref().join("target/debug")
+		}.join(extension_build_filename(name));
+
+		Ok(Self {
+			name: name.to_string(),
+			file_path,
+			crate_path: Some(path.as_ref().to_path_buf()),
+			library: None,
+		})
+	}
+
+	/// Loads an extension libray into memory. 
+	/// If loading from a crate, this could rebuild the crate. 
+	pub fn activate(&mut self) -> anyhow::Result<()> {
+		assert!(!self.active(), "Cannot activate an active extension!");
+
+		// Try to find an existing extension file
+		// There should only be one file in the extension folder 
+		let ext_folder = Path::new("target/extensions").join(&self.name);
+		std::fs::create_dir_all(&ext_folder).unwrap();
+		let ext_previous = std::fs::read_dir(&ext_folder).ok().and_then(|rd| rd
+			.filter_map(|f| f.ok())
+			.map(|f| f.path())
+			.find(|f| f.extension().map(|e| e == "so").unwrap_or(false)));
+		if let Some(p) = ext_previous.as_ref() {
+			trace!("Previous extension file {:?}", p);
+		}
+
+		// Get timestamps
+		let stored_ts = ext_previous.as_ref()
+			.map(|v: &PathBuf| v.file_stem().unwrap().to_str().unwrap().parse::<u64>().unwrap())
+			.map(|v| UNIX_EPOCH.checked_add(Duration::from_nanos(v)).unwrap());
+		let build_ts = self.file_path.canonicalize().ok().map(|p| p.metadata().unwrap().modified().unwrap());
+		let src_ts = self.crate_path.as_ref().map(|p| src_files_last_modified(p));
+
+		// Find level of dirty 
+		let dirty_level = if let Some(stored_ts) = stored_ts {
+			if src_ts.map(|src_ts| src_ts > stored_ts).unwrap_or(false) {
+				// Stored exists and less updated than src
+				DirtyLevel::Rebuild
+			} else if build_ts.map(|build_ts| build_ts > stored_ts).unwrap_or(false) {
+				// Stored exists and less updated than build
+				DirtyLevel::Reload
+			} else {
+				// Stored exists and most updated
+				DirtyLevel::Clean
+			}
+		} else {
+			if let Some(build_ts) = build_ts {
+				if let Some(src_ts) = src_ts {
+					if src_ts > build_ts {
+						// Stored DNE and src most updated
+						DirtyLevel::Rebuild
+					} else {
+						// Stored DNE and build most updated
+						DirtyLevel::Reload
+					}
+				} else {
+					// Stored DNE and src not exist
+					DirtyLevel::Reload
+				}
+			} else {
+				// Stored DNE and build DNE
+				DirtyLevel::Rebuild
+			}
+		};
+
+		if dirty_level == DirtyLevel::Rebuild {
+			trace!("Rebuilding extension from crate");
+			assert!(self.crate_path.is_some());
+
+			// This assumes the crate is part of our workspace! 
+			let status = std::process::Command::new("cargo")
+				.arg("build")
+				// .env("RUSTC_WRAPPER", "/usr/bin/sccache")
+				.arg("-p")
+				.arg(&self.name)
+				.status()
+				.with_context(|| "cargo build failed")?;
+			if !status.success() {
+				error!("Failed to compile extension");
+				panic!();
+			}
+		}
+
+
+		let epoch_dur = self.file_path.metadata().unwrap().modified().unwrap().duration_since(UNIX_EPOCH).unwrap();
+		let ext_file = ext_folder.join(format!("{}.so", epoch_dur.as_nanos()));
+		if dirty_level == DirtyLevel::Reload || dirty_level == DirtyLevel::Rebuild {
+			trace!("Copying new extension build file to storage");
+			trace!("{:?} -> {:?}", self.file_path, ext_file);
+			std::fs::create_dir_all(ext_file.parent().unwrap()).unwrap();
+			std::fs::copy(&self.file_path, &ext_file).unwrap();
+
+			if let Some(pp) = ext_previous.as_ref() {
+				trace!("Deleting old extension file {:?}", pp);
+				std::fs::remove_file(&pp).unwrap();
+			}
+		}
+
+		self.library = Some(ExtensionLibrary::new(&self.name, ext_file)?);
+		Ok(())
+	}
+
+	pub fn active(&self) -> bool {
+		self.library.is_some()
+	}
+
+	pub fn dirty_level(&self) -> DirtyLevel {
+		if self.library.is_none() {
+			return DirtyLevel::Unloaded;
+		}
+		let last_read = self.library.as_ref().unwrap().read_at;
+
+		if let Some(path) = self.crate_path.as_ref() {
+			// Look at source files
+			let last_mod = src_files_last_modified(path);
+			if last_mod > last_read {
+				trace!("Source files modified, rebuild");
+				return DirtyLevel::Rebuild;
+			}
+		}
+
+		if let Ok(p) = self.file_path.canonicalize() {
+			let mod_time = p.metadata().unwrap().modified().unwrap();
+			if mod_time > last_read {
+				let d = mod_time.duration_since(last_read).unwrap();
+				trace!("Extension file is newer, reload ({:?}, {:.2}s)", p, d.as_secs_f32());
+				return DirtyLevel::Reload;
+			} else {
+				return DirtyLevel::Clean;
+			}
+		} else {
+			trace!("Extension file does not exist, rebuild");
+			assert!(self.crate_path.is_some(), "No crate path, cannot rebuild!");
+			return DirtyLevel::Rebuild;
+		}
+	}
+}
+
+
+/// A status update for extension loading. 
+pub struct LoadStatus {
+	pub to_load: Vec<(String, bool)>,
+	pub loaded: Vec<String>,
+}
+
+
 pub struct ExtensionRegistry {
+	// Extension entries build themselves upon being created
+	// This is bad 
+	// It should only know its path, and then build later if applicable (in the reload function)
+	// Because we can't rely on cargo.toml, extension name should only be known after the extension is loaded
+	// Probably with an external function implemented by a macro 
+	// Like setting profiling on or off 
+	// registration_queue: Vec<PathBuf>,
+
 	extensions: Vec<ExtensionEntry>,
 
 	// Rebuilt when anything changes
@@ -484,28 +510,39 @@ impl ExtensionRegistry {
 		}
 	}
 
-	pub fn reload(&mut self, world: &mut World) -> anyhow::Result<()> {
+	pub fn reload(&mut self, world: &mut World, updates: impl Fn(LoadStatus)) -> anyhow::Result<()> {
+		// Bool is for soft/hard reload 
+		// A soft reload occurs if the extension is clean but needs to be loaded again due to depending on something else
 		let mut load_queue = HashMap::new();
 
+		// Find dirty/unloaded extensions 
 		trace!("Look for rebuilds");
-
-		// Rebuild
 		for i in 0..self.extensions.len() {
-			if !self.extensions[i].loaded() {
-				load_queue.entry(i).or_insert(false);
-				continue
-			}
+			// if !self.extensions[i].active() {
+			// 	load_queue.entry(i).or_insert(false);
+			// 	continue
+			// }
 
 			match self.extensions[i].dirty_level() {
+				DirtyLevel::Unloaded => {
+					debug!("Load extension {}", self.extensions[i].name);
+					load_queue.insert(i, true);
+					// Push dependents to reload queue
+					// for (j, e) in self.extensions.iter().enumerate() {
+					// 	if e.load_dependencies.contains(&self.extensions[i].name) {
+					// 		load_queue.entry(j).or_insert(false);
+					// 	}
+					// }
+				}
 				DirtyLevel::Rebuild => {
 					debug!("Rebuild extension {}", self.extensions[i].name);
 					load_queue.insert(i, true);
 					// Push dependents to reload queue
-					for (j, e) in self.extensions.iter().enumerate() {
-						if e.load_dependencies.contains(&self.extensions[i].name) {
-							load_queue.entry(j).or_insert(false);
-						}
-					}
+					// for (j, e) in self.extensions.iter().enumerate() {
+					// 	if e.load_dependencies.contains(&self.extensions[i].name) {
+					// 		load_queue.entry(j).or_insert(false);
+					// 	}
+					// }
 				},
 				DirtyLevel::Reload => {
 					debug!("Reload extension {}", self.extensions[i].name);
@@ -517,55 +554,80 @@ impl ExtensionRegistry {
 			}
 		}
 
-		// TODO: Dependency load order
-		for (i, hard) in load_queue {
-			if hard {
-				let mut ext = self.extensions.remove(i);
-				debug!("Hard reload of {}", ext.name);
-				
-				// Unload from world
-				trace!("Unloading from world...");
-				let (c, r) = ext.unload(world)?;
+		// Send update
+		updates(LoadStatus {
+			to_load: load_queue.iter()
+				.map(|(&i, &h)| (self.extensions[i].name.clone(), h))
+				.collect::<Vec<_>>(),
+			loaded: (0..self.extensions.len())
+				.filter(|i| load_queue.get(i).is_none())
+				.map(|i| self.extensions[i].name.clone())
+				.collect::<Vec<_>>(),
+		});
+		error!("Update: {} in queue", load_queue.len());
 
+		// TODO: Dependency load order
+		for (&i, &hard) in load_queue.clone().iter() {
+			if hard {
+				let ext = self.extensions.get_mut(i).unwrap();				
+				debug!("Hard reload of {}", ext.name);
+
+				let mut lib = ext.library.take();
 				trace!("Removing storages...");
-				// Rip out references to data
-				let c = c.into_iter()
-					.map(|(n, c)| (n, unsafe { c.into_raw() }))
-					.collect::<Vec<_>>();
-				let r = r.into_iter()
-					.map(|(n, r)| (n, unsafe { r.into_raw() }))
-					.collect::<Vec<_>>();
+				let previous_storages = lib.as_mut().map(|lib| lib.unload(world))
+					.map(|r| r.map(|(c, r)| (
+						c.into_iter()
+							.map(|(n, c)| (n, unsafe { c.into_raw() }))
+							.collect::<Vec<_>>(),
+						r.into_iter()
+							.map(|(n, r)| (n, unsafe { r.into_raw() }))
+							.collect::<Vec<_>>(),
+					))).transpose()?;
 
 				// TODO: if serializable, use serialization
 				// Needs untypedsparseset to finish serialization feature 
 
-				// Reload code
-				let path = ext.path.clone();
 				trace!("Dropping old extension entry...");
-				drop(ext);
-				trace!("Loading new extension entry...");
-				self.extensions.insert(i, ExtensionEntry::new(path)?);
+				drop(lib);
+				ext.activate()?;
 
 				// Load with new code
 				trace!("Loading into world...");
-				self.extensions[i].load(world)?;
+				ext.library.as_mut().unwrap().load(&ext.name, world)?;
 
-				// Replace storages
-				trace!("Overwriting storages...");
-				for (id, uss) in c {
-					warn!("Replacing component storage '{}' with raw persisted data", id);
-					let mut s = world.component_raw_mut(id);
-					unsafe { s.load_raw(uss) };
-				}
-				for (id, uss) in r {
-					warn!("Replacing resource storage '{}' with raw persisted data", id);
-					let mut s = world.resource_raw_mut(id);
-					unsafe { s.load_raw(uss) };
+				if let Some((components, resources)) = previous_storages {
+					// Replace storages
+					trace!("Overwriting to restore previous storages...");
+					for (id, uss) in components {
+						warn!("Replacing component storage '{}' with raw persisted data", id);
+						let mut s = world.component_raw_mut(id);
+						unsafe { s.load_raw(uss) };
+					}
+					for (id, uss) in resources {
+						warn!("Replacing resource storage '{}' with raw persisted data", id);
+						let mut s = world.resource_raw_mut(id);
+						unsafe { s.load_raw(uss) };
+					}
 				}
 			} else {
 				debug!("Soft reload of {}", self.extensions[i].name);
-				self.extensions[i].load(world)?;
+				let e = self.extensions.get_mut(i).unwrap();
+				e.library.as_mut().unwrap().load(&e.name, world)?;
 			}
+
+			load_queue.remove(&i);
+
+			// Send update
+			updates(LoadStatus {
+				to_load: load_queue.iter()
+					.map(|(&i, &h)| (self.extensions[i].name.clone(), h))
+					.collect::<Vec<_>>(),
+				loaded: (0..self.extensions.len())
+					.filter(|i| load_queue.get(i).is_none())
+					.map(|i| self.extensions[i].name.clone())
+					.collect::<Vec<_>>(),
+			});
+			error!("Update: {} in queue", load_queue.len());
 		}
 
 		self.rebuild_systems()?;
@@ -574,7 +636,7 @@ impl ExtensionRegistry {
 	}
 
 	pub fn register(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-		let e = ExtensionEntry::new(path)?;
+		let e = ExtensionEntry::new_crate(path)?;
 		self.extensions.push(e);
 
 		Ok(())
@@ -597,13 +659,15 @@ impl ExtensionRegistry {
 	}
  
 	pub fn remove(&mut self, path: impl AsRef<Path>, world: &mut World) -> anyhow::Result<()> {
-		if let Some(i) = self.extensions.iter().position(|e| e.path.eq(path.as_ref())) {
-			let mut e = self.extensions.remove(i);
-			e.unload(world)?;
+		if let Some(i) = self.extensions.iter().position(|e| e.file_path.eq(path.as_ref())) {
+			let e = self.extensions.remove(i);
+			if let Some(mut lib) = e.library {
+				lib.unload(world);
+			}
 		} else {
 			return Err(anyhow!("Extension not found"));
 		}
-		self.reload(world)?;
+		self.reload(world, |_s| {})?;
 
 		Ok(())
 	}
@@ -613,7 +677,7 @@ impl ExtensionRegistry {
 	pub fn workgroup_info(&self) -> Vec<(&String, Vec<(&String, &Vec<usize>)>, &Vec<Vec<usize>>)> {
 		self.systems.iter().map(|(n, (s, o))| {
 			let systems = s.iter()
-				.map(|((ei, si), d)| (&self.extensions[*ei].systems[*si].id, d))
+				.map(|((ei, si), d)| (&self.extensions[*ei].library.as_ref().unwrap().systems[*si].id, d))
 				.collect::<Vec<_>>();
 			(n, systems, o)
 		}).collect::<Vec<_>>()
@@ -625,23 +689,23 @@ impl ExtensionRegistry {
 		// Vec of (extension index, system index in extension)
 		let systems = self.extensions.iter().enumerate()
 			.flat_map(|(i, e)| {
-				e.systems.iter().enumerate()
+				e.library.as_ref().unwrap().systems.iter().enumerate()
 					.filter(|(_, s)| s.group == group.as_ref())
 					.map(move |(j, _)| (i, j))
 			}).collect::<Vec<_>>();
 		
 		let deps = systems.iter().enumerate().map(|(i, &(ei, si))| {
-			let s = &self.extensions[ei].systems[si];
+			let s = &self.extensions[ei].library.as_ref().unwrap().systems[si];
 			// Find group system index of dependencies
 			let mut deps = s.run_after.iter()
 				.map(|id: &String| systems.iter()
-					.map(|&(ei, si)| &self.extensions[ei].systems[si])
+					.map(|&(ei, si)| &self.extensions[ei].library.as_ref().unwrap().systems[si])
 					.position(|s| s.id.eq(id)).expect("Failed to find dependent system"))
 				.collect::<Vec<_>>();
 			// Add others to dependencies if they want to be run before
 			for (j, &(ej, sj)) in systems.iter().enumerate() {
 				if i == j { continue }
-				let d = &self.extensions[ej].systems[sj];
+				let d = &self.extensions[ej].library.as_ref().unwrap().systems[sj];
 				if d.run_before.contains(&s.id) {
 					trace!("'{}' runs before '{}' so '{}' depends on '{}'", d.id, s.id, s.id, d.id);
 					deps.push(j);
@@ -681,18 +745,18 @@ impl ExtensionRegistry {
 						error!("{}:", i);
 						for j in stage {
 							let ((ei, si), _d) = &systems_deps[j];
-							let s = &self.extensions[*ei].systems[*si];
+							let s = &self.extensions[*ei].library.as_ref().unwrap().systems[*si];
 							error!("\t'{}'", s.id);
 						}
 					}
 					error!("Remaining items are:");
 					for i in queue {
 						let ((ei, si), d) = &systems_deps[i];
-						let s = &self.extensions[*ei].systems[*si];
+						let s = &self.extensions[*ei].library.as_ref().unwrap().systems[*si];
 						let n = &s.id;
 						let d = d.iter().copied().map(|i| {
 							let ((ei, si), _d) = &systems_deps[i];
-							let s = &self.extensions[*ei].systems[*si];
+							let s = &self.extensions[*ei].library.as_ref().unwrap().systems[*si];
 							&s.id
 						}).collect::<Vec<_>>();
 						error!("'{}' - {:?}", n, d);
@@ -713,7 +777,7 @@ impl ExtensionRegistry {
 		let mut groups2 = HashMap::new();
 
 		let mut groups = self.extensions.iter()
-			.flat_map(|e| e.systems.iter())
+			.flat_map(|e| e.library.as_ref().unwrap().systems.iter())
 			.map(|s| &s.group)
 			.collect::<Vec<_>>();
 		groups.sort_unstable();
@@ -747,7 +811,7 @@ impl ExtensionRegistry {
 			for &i in stage {
 				let ((ei, si), _) = &systems_deps[i];
 				let e = &self.extensions[*ei];
-				let s = &e.systems[*si];
+				let s = &e.library.as_ref().unwrap().systems[*si];
 				trace!("Extension '{}' system '{}'", e.name, s.id);
 				profiling::scope!(format!("{}::{}", e.name, s.id));
 				let w = world as *const World;

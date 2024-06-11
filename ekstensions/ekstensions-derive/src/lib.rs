@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 extern crate proc_macro;
 
 
@@ -45,4 +47,45 @@ fn rename_fn_to(input: proc_macro::TokenStream, to: &str) -> proc_macro::TokenSt
 		#pound [no_mangle]
 		#ts
 	}.into()
+}
+
+/// This is not a derive macro, and it should not be used by extensions. 
+/// This function runs setup code for static extensions. 
+#[proc_macro]
+pub fn load_static_extensions(
+	_: proc_macro::TokenStream, 
+) -> proc_macro::TokenStream {
+	let cargo_toml_path = Path::new("Cargo.toml");
+	let cargo_toml_content = std::fs::read_to_string(cargo_toml_path)
+		.expect("Failed to read Cargo.toml");
+	let cargo_toml: toml::Table = toml::from_str(&cargo_toml_content)
+		.expect("Failed to parse Cargo.toml");
+
+	let static_extensions = cargo_toml
+		.get("features").and_then(|v| v.as_table())
+		.expect("Cargo.toml is missing features section")
+		.get("static_extensions").and_then(|v| v.as_array())
+		.expect("static is missing from features section")
+		.iter().map(|v| v.as_str()).collect::<Option<Vec<_>>>().unwrap();
+
+	let dependencies = cargo_toml.get("dependencies").expect("no dependecies?!").as_table().unwrap();
+	let static_extension_paths = static_extensions.iter()
+		.map(|name| dependencies.get(*name).unwrap().get("path").and_then(|g| g.as_str()).unwrap())
+		.collect::<Vec<_>>();
+
+	let static_extension_loads = static_extensions.into_iter().zip(static_extension_paths.into_iter()).map(|(n, p)| {
+		let g: proc_macro::TokenStream = quote::quote! {
+			info!("Loading static extension #n");
+			{
+				use #n;
+				#n::#n _load(&mut world)
+			}
+		}.into();
+		g
+	});
+
+	let mut all_loads = proc_macro::TokenStream::new();
+	all_loads.extend(static_extension_loads);
+
+	all_loads
 }

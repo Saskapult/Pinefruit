@@ -48,9 +48,9 @@ impl GameInstance {
 	/// Used to be part of new but I wanted a loading screen.
 	/// 
 	/// Maybe have a progress callback option. 
-	pub fn initialize(&mut self) {
+	pub fn initialize(&mut self, updates: impl Fn(ekstensions::LoadStatus)) {
 		self.extensions.register_all_in("extensions").unwrap();
-		self.extensions.reload(&mut self.world).unwrap();
+		self.extensions.reload(&mut self.world, updates).unwrap();
 
 		if let Err(e) = self.extensions.run(&mut self.world, "client_init") {
 			warn!("Error running 'client_init': {}", e);
@@ -67,7 +67,7 @@ impl GameInstance {
 
 	// Borrow checker is angry if we try to do this outside of self
 	pub fn reload_extensions(&mut self) {
-		self.extensions.reload(&mut self.world).unwrap();
+		self.extensions.reload(&mut self.world, |_| {}).unwrap();
 	}
 
 	pub fn connect_server(&mut self) {

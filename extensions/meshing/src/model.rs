@@ -48,6 +48,7 @@ impl MapModelState {
 }
 
 
+
 #[derive(Debug, Resource)]
 pub struct MapModelResource {
 	// bool for if modelling job is active

@@ -14,14 +14,14 @@ fn main() {
 
 	// Load exerything in ./extensions 
 	registry.register("extensions/example0").unwrap();
-	registry.reload(&mut world).unwrap();
+	registry.reload(&mut world, |_| {}).unwrap();
 	
 	for line in std::io::stdin().lines() {
 		let line = line.unwrap();
 		let parts = line.split(" ").collect::<Vec<_>>();
 		match parts[0] {
 			"reload" => {
-				registry.reload(&mut world).unwrap();
+				registry.reload(&mut world, |_| {}).unwrap();
 			},
 			"run" => {
 				// registry.test_run(&mut world);

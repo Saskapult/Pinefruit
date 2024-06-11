@@ -87,6 +87,8 @@ struct GameWindow {
 	settings: WindowSettings,
 	profiler: wgpu_profiler::GpuProfiler, // For egui renders
 
+	extension_load_status: Arc<Mutex<Option<ekstensions::LoadStatus>>>,
+
 	// Winit doesn't support locking the cursor on x11, only confining it
 	// We need to do this manually (brings needless mess)
 	manual_cursor_lock_last_position: Option<PhysicalPosition<f64>>,
@@ -114,10 +116,11 @@ impl GameWindow {
 		window_builder: WindowBuilder,
 		event_loop: &EventLoopWindowTarget::<WindowCommand>,
 		client: &Arc<Mutex<GameInstance>>,
+		extension_load_status: Arc<Mutex<Option<ekstensions::LoadStatus>>>,
 	) -> Self {
 		let window = window_builder.build(event_loop).unwrap();
 		let window_surface = WindowSurface::new(instance, window);
-		Self::new_from_window_surface(adapter, window_surface, client)
+		Self::new_from_window_surface(adapter, window_surface, client, extension_load_status)
 	}
 
 	// Used when creating the first window because the GraphicsHandle needs to know the compatible surface 
@@ -125,6 +128,7 @@ impl GameWindow {
 		adapter: &wgpu::Adapter, 
 		window_surface: WindowSurface, 
 		client: &Arc<Mutex<GameInstance>>,
+		extension_load_status: Arc<Mutex<Option<ekstensions::LoadStatus>>>,
 	) -> Self {
 		let client = client.clone();
 
@@ -151,6 +155,8 @@ impl GameWindow {
 			properties: WindowProperties::new(),
 			settings: WindowSettings::new(),
 			profiler: GpuProfiler::new(GpuProfilerSettings::default()).unwrap(),
+
+			extension_load_status,
 
 			manual_cursor_lock_last_position: None,
 			
@@ -267,7 +273,36 @@ impl GameWindow {
 			egui::CentralPanel::default().show(&self.context, |ui| {
 				ui.centered_and_justified(|ui| {
 					ui.spinner();
-				})
+				});
+			});
+			egui::SidePanel::left("loading status")
+				.min_width((self.window_surface.window.inner_size().width / 4) as f32)
+				.show(&self.context, |ui| {
+				let status = self.extension_load_status.lock();
+				if let Some(status) = status.as_ref() {
+					let total = status.loaded.len() + status.to_load.len();
+					ui.label(format!("{}/{}", status.loaded.len(), total));
+					if status.to_load.len() != 0 {
+						ui.label(format!("Loading '{}'", status.to_load[0].0));
+					}
+
+					ui.horizontal(|ui| {
+						ui.vertical(|ui| {
+							ui.heading("Loading:");
+							for (n, _) in status.to_load.iter() {
+								ui.label(n);
+							}
+						});
+						ui.vertical(|ui| {
+							ui.heading("Loaded:");
+							for n in status.loaded.iter() {
+								ui.label(n);
+							}
+						});
+					});
+				} else {
+					ui.label("Loading...");
+				}
 			});
 			(vec![], vec![])
 		};
@@ -580,11 +615,18 @@ impl WindowManager {
 		info!("Creating client");
 		let client = Arc::new(Mutex::new(GameInstance::new(&graphics.device, &graphics.queue)));
 
+		let extension_load_status = Arc::new(Mutex::new(None));
+		let extension_load_status_2 = extension_load_status.clone();
+
 		let client2 = client.clone();
 		std::thread::spawn(move || {
 			info!("Extension setup thread start");
 			let mut client = client2.lock();
-			client.initialize();
+			client.initialize(move |status| {
+				let mut s = extension_load_status_2.lock();
+				*s = Some(status);
+				drop(s);
+			});
 			info!("Extension setup thread done");
 		});
 		// client.lock().initialize();
@@ -602,7 +644,7 @@ impl WindowManager {
 			server: Arc::new(None),
 		};
 		
-		let gw = GameWindow::new_from_window_surface(&s.graphics.adapter, window_surface, &s.client);
+		let gw = GameWindow::new_from_window_surface(&s.graphics.adapter, window_surface, &s.client, extension_load_status);
 		s.register_gamewindow(gw);
 
 		event_loop.run(move |event, event_loop| {
