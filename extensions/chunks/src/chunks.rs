@@ -135,8 +135,6 @@ pub fn chunk_loading_system(
 	map_loaders: Comp<ChunkLoadingComponent>,
 	transforms: Comp<TransformComponent>,
 ) { 
-	// info!("Chunk loading system");
-
 	let loading_volumes = (&map_loaders, &transforms).iter()
 		.map(|(loader, transform)| loader.loading_volume(transform.translation))
 		.collect::<Vec<_>>();
@@ -174,7 +172,6 @@ pub fn chunk_loading_system(
 	drop(chunks_read);
 	let mut chunks_write = chunks.write();
 
-	// Todo: save data
 	{ // Prune chunks that should not be loaded
 		// profiling::scope!("Prune chunks");
 		if chunks_to_prune.len() != 0 {

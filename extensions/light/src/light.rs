@@ -9,6 +9,56 @@ use terrain::terrain::TerrainResource;
 use transform::TransformComponent;
 
 
+// pub struct LightRGB5 {
+// 	pub r: u16,
+// 	pub g: u16,
+// 	pub b: u16,
+// }
+// impl LightRGB5 {
+// 	fn check_bounds(&self) {
+// 		assert!(self.r <= 2_u16.pow(5)-1, "Red channel outside of u5 max!");
+// 		assert!(self.g <= 2_u16.pow(5)-1, "Green channel outside of u5 max!");
+// 		assert!(self.b <= 2_u16.pow(5)-1, "Blue channel outside of u5 max!");
+// 	}
+
+// 	#[inline]
+// 	fn to_simd_repr(&self) -> u32 {
+// 		((self.r as u32) << 12) | ((self.g as u32) << 6) | ((self.b as u32) << 0)
+// 	}
+
+// 	#[inline]
+// 	fn from_simd_repr(value: u32) -> Self {
+// 		let r = (value & 0xF000) >> 10;
+// 		let g = (value & 0x0F00) >> 5;
+// 		let b = (value & 0x00F0) >> 0;
+// 		LightRGB5 { r, g, b, }
+// 	}
+
+// 	pub fn add_simd(&self, other: Self) -> Self {
+// 		let a = self.to_simd_repr();
+// 		let b = other.to_simd_repr();
+// 		Self::from_simd_repr(a.saturating_add(b))
+// 	}
+
+// 	pub fn sub_simd(&self, other: Self) -> Self {
+// 		let a = self.to_simd_repr();
+// 		let b = other.to_simd_repr();
+// 		Self::from_simd_repr(a.saturating_sub(b))
+// 	}
+
+// 	pub fn to_u16(&self) -> u16 {
+// 		self.r << 10 | self.g << 5 | self.b << 0
+// 	}
+
+// 	pub fn from_u16(value: u16) -> Self {
+// 		let r = (value & 0xF000) >> 10;
+// 		let g = (value & 0x0F00) >> 5;
+// 		let b = (value & 0x00F0) >> 0;
+// 		LightRGB5 { r, g, b, }
+// 	}
+// }
+
+
 
 const U4_MAX_U16: u16 = 2_u16.pow(4) - 1;
 const U4_MAX_F32: f32 = U4_MAX_U16 as f32;
@@ -117,8 +167,8 @@ impl std::ops::DerefMut for LightChunk {
 #[derive(Debug, Default, Resource)]
 pub struct TorchLightChunksResource {
 	pub chunks: Arc<RwLock<SecondaryMap<ChunkKey, LightChunk>>>,
-	pub new_lights: Vec<(IVec3, LightRGBA)>,
-	pub old_lights: Vec<(IVec3, LightRGBA)>,
+	pub add_lights: Vec<(IVec3, LightRGBA)>,
+	pub del_lights: Vec<IVec3>, 
 }
 
 
@@ -152,89 +202,129 @@ pub fn torchlight_update_system(
 	terrain: Res<TerrainResource>,
 	mut torchlight: ResMut<TorchLightChunksResource>,
 ) {
-	let mut torchlight_chunks = torchlight.chunks.write();
-	let terrain_chunks = terrain.chunks.read();	
+	// Idea: only do a few of these each frame, inserion sorted by distance to player
 
-	for (pos, light) in torchlight.new_lights.iter().copied() {
-		let mut queue = VecDeque::new();
-		queue.push_back((pos, light));
+	// I've set it up this way because I may wish to parallelize it later
+	let mut to_remove = Vec::new();
+	let mut to_propagate = Vec::new();
+	for pos in torchlight.del_lights.iter().copied() {
+		debug!("Remove light at {:?}", pos);
+		let torchlight_chunks = torchlight.chunks.read();
+		let terrain_chunks = terrain.chunks.read();
+		let mut queue = Vec::new();
 
-		let mut n = 0;
+		let chunk_pos = chunk_of_voxel(pos);
+		let pos_in_chunk = voxel_relative_to_chunk(pos, chunk_pos).as_uvec3();
+		let chunk = chunks.read().get_position(chunk_pos).unwrap();
+		let torch = torchlight_chunks.get(chunk).unwrap();
+		let light: LightRGBA = torch.get(pos_in_chunk).copied().into();
+		queue.push((pos, light));
+		to_remove.push((chunk, pos_in_chunk));
 
-		while let Some((pos, light)) = queue.pop_front() {
-			n += 1;
-
-			let cpos = chunk_of_voxel(pos);
-			let vpos = voxel_relative_to_chunk(pos, cpos).as_uvec3();
-			// Todo: Cache these things so we don't hash as much
-			let ck = chunks.read().get_position(cpos)
-				.expect("Todo: Skip/Queue if chunk unloaded");
-			let lc = torchlight_chunks.get_mut(ck)
-				.expect("Todo: Skip/Queue if chunk unloaded");
-			
-			// Set light level
-			trace!("Set {} to {}", pos, light.r);
-			let packed: Option<PackedLightRGBA> = light.into();
-			if let Some(packed) = packed {
-				lc.insert(vpos, packed);
-			}
-			lc.generation.increment();
-
-			let nlight = light.dec();
+		while let Some((this_pos, this_light)) = queue.pop() {
 			for offs in [
 				IVec3::X, IVec3::NEG_X, 
 				// IVec3::Y, IVec3::NEG_Y, 
 				IVec3::Z, IVec3::NEG_Z, 
 			] {
-				let npos = pos + offs;
-				let ncpos = chunk_of_voxel(npos);
-				let nvpos = voxel_relative_to_chunk(npos, ncpos).as_uvec3();
-				// Again, please cache these
-				// AND ALSO benchmark it so I can have pretty data!
-				let nck = chunks.read().get_position(ncpos)
-					.expect("Todo: Skip/Queue if chunk unloaded");
-				let nlc = torchlight_chunks.get_mut(nck)
-					.expect("Todo: Skip/Queue if chunk unloaded");
-				let ntc = terrain_chunks.get(nck)
-					.expect("Unreachable, light chunk always has a corresponding terrain chunk");
+				let neighbour_pos = this_pos + offs;
+				let neighbour_chunk_pos = chunk_of_voxel(neighbour_pos);
+				let neighbour_pos_in_chunk = voxel_relative_to_chunk(neighbour_pos, neighbour_chunk_pos).as_uvec3();
 
-				// If solid, continue
-				// Todo: Test for opacity
-				if ntc.complete_ref().unwrap().get(nvpos).is_some() {
-					warn!("Skip due to solid");
-					continue;
+				let neighbour_chunk = chunks.read().get_position(neighbour_chunk_pos).unwrap();
+				let neighbour_torch = torchlight_chunks.get(neighbour_chunk).unwrap();
+				let neighbour_terrain = terrain_chunks.get(neighbour_chunk).unwrap().complete_ref().unwrap();
+				
+				if neighbour_terrain.get(neighbour_pos_in_chunk).is_some() {
+					continue
 				}
 
-				// If greater than or equal to self level, continue
-				// This might be wrong, needs testing
-				let nl: LightRGBA = nlc.get(nvpos).copied().into();
-				if nl.r >= nlight.r {
-					// warn!("Skip due to ge light value");
-					continue;
+				let neighbour_light: LightRGBA = neighbour_torch.get(neighbour_pos_in_chunk).copied().into();
+				if neighbour_light.r >= this_light.r {
+					if neighbour_light.r != 0 {
+						to_propagate.push((neighbour_pos, neighbour_light));
+					}
+				} else {
+					to_remove.push((neighbour_chunk, neighbour_pos_in_chunk));
+					queue.push((neighbour_pos, neighbour_light));
 				}
-
-				// Add to BFS queue
-				queue.push_back((npos, nlight));
 			}
 		}
-
-		info!("Set {n} light values");
-		// panic!()
-		// std::thread::sleep(Duration::from_secs(5));
 	}
-	drop(torchlight_chunks);
-	torchlight.new_lights.clear();
-
-	for (pos, _) in torchlight.old_lights.iter().copied() {
-		let mut queue = VecDeque::new();
-		queue.push_back(pos);
-
-		// Set light to zero
-		// For each neighbour
-		// If level less than, add to queue
-		// Else mark for propagation
-
+	// This is where one would deduplicate (if one wanted to bother)
+	{
+		if to_remove.len() > 0 {
+			let n = to_remove.len();
+			debug!("Removed {} lights", n);
+			to_remove.sort_unstable_by_key(|&(k, p)| (k, p.x, p.y, p.z));
+			to_remove.dedup();
+			if n != to_remove.len() {
+				warn!("Deduplicated to {} lights", to_remove.len());
+			}
+		}
+		let mut torchlight_chunks = torchlight.chunks.write();
+		for (key, pos) in to_remove {
+			let torch = torchlight_chunks.get_mut(key).unwrap();
+			torch.remove(pos);
+			torch.generation.increment();
+		}
 	}
+	// torchlight.add_lights.extend(to_propagate);
+
+	// We cannot delay setting here, because otherwise we can loop infinitely 
+	// Maybe we could track what was set, but it's more work so no 
+	for (pos, light) in torchlight.add_lights.iter().copied() {
+		debug!("Create light at {:?}", pos);
+		let mut torchlight_chunks = torchlight.chunks.write();
+		let terrain_chunks = terrain.chunks.read();
+		let mut queue = Vec::new();
+
+		let chunk_pos = chunk_of_voxel(pos);
+		let pos_in_chunk = voxel_relative_to_chunk(pos, chunk_pos).as_uvec3();
+		let chunk = chunks.read().get_position(chunk_pos).unwrap();
+		queue.push((pos, light));
+		let torch = torchlight_chunks.get_mut(chunk).unwrap();
+		let packed: Option<PackedLightRGBA> = light.into();
+		if let Some(packed) = packed {
+			torch.insert(pos_in_chunk, packed);
+			torch.generation.increment();
+		}
+
+		while let Some((this_pos, this_light)) = queue.pop() {
+			let this_light_dec = this_light.dec();
+
+			for offs in [
+				IVec3::X, IVec3::NEG_X, 
+				// IVec3::Y, IVec3::NEG_Y, 
+				IVec3::Z, IVec3::NEG_Z, 
+			] {
+				let neighbour_pos = this_pos + offs;
+				let neighbour_chunk_pos = chunk_of_voxel(neighbour_pos);
+				let neighbour_pos_in_chunk = voxel_relative_to_chunk(neighbour_pos, neighbour_chunk_pos).as_uvec3();
+
+				let neighbour_chunk = chunks.read().get_position(neighbour_chunk_pos).unwrap();
+				let neighbour_torch = torchlight_chunks.get(neighbour_chunk).unwrap();
+				let neighbour_terrain = terrain_chunks.get(neighbour_chunk).unwrap().complete_ref().unwrap();
+
+				if neighbour_terrain.get(neighbour_pos_in_chunk).is_some() {
+					continue
+				}
+				let neighbour_light: LightRGBA = neighbour_torch.get(neighbour_pos_in_chunk).copied().into();
+				if neighbour_light.r >= this_light_dec.r {
+					continue
+				}
+				queue.push((neighbour_pos, this_light_dec));
+				let torch = torchlight_chunks.get_mut(neighbour_chunk).unwrap();
+				let packed: Option<PackedLightRGBA> = this_light_dec.into();
+				if let Some(packed) = packed {
+					torch.insert(neighbour_pos_in_chunk, packed);
+					torch.generation.increment();
+				}
+			}
+		}
+	}
+	torchlight.add_lights.clear();
+	torchlight.del_lights.clear();
 }
 
 
@@ -351,7 +441,7 @@ pub fn torchlight_debug_place_system(
 					b: 4,
 					a: 4,
 				};
-				torchlight.new_lights.push((position, l));
+				torchlight.add_lights.push((position, l));
 			}
 		}
 
@@ -365,14 +455,10 @@ pub fn torchlight_debug_place_system(
 				0.0, 10.0, 1.0,
 			).find(|r| terrain.get_voxel(&chunks, r.voxel).is_some());
 
-			if let Some(_) = v {
-				// debug!("Remove voxel at {}", v.voxel);
-				// map.modify_voxel(VoxelModification {
-				// 	position: v.voxel,
-				// 	set_to: None,
-				// 	priority: 0,
-				// });
-				todo!()
+			if let Some(v) = v {
+				let position = v.voxel + v.normal;
+				debug!("Remove torchlight at {position}");
+				torchlight.del_lights.push(position);
 			}
 		}
 	}

@@ -15,7 +15,7 @@ extern crate log;
 
 /// Use sccache rather than workspace directory. 
 /// TODO: Test whether this helps with anything. 
-const USE_SCCACHE: bool = true;
+const USE_SCCACHE: bool = false;
 /// When testing to see if an extension is outdated, should we look in the .d file? 
 /// If false, we will miss some rebuilds. 
 /// When working on ekstensions, however, we will need to rebuild every extension. 
@@ -24,7 +24,9 @@ const DEEP_CHECKING: bool = false;
 /// If many packages must be hard-reloaded, run cargo build -p \<packages\>. 
 /// It should (untested!) lead to faster startup times. 
 /// This will cause the loading udpates to be sent non-smoothly. 
-const BATCHED_COMPILATION: bool = true;
+/// Oh also it turns out that the command doesn't work this way. 
+/// I'm leaving this here out of spite. 
+const BATCHED_COMPILATION: bool = false;
 
 
 /// Used by load functions to register and describe storages. 
@@ -391,7 +393,7 @@ impl ExtensionEntry {
 			trace!("Previous extension file {:?}", p);
 		}
 
-		if stored_ts.map(|stored_ts| stored_ts <= mod_time).unwrap_or(false) {
+		if stored_ts.map(|stored_ts| stored_ts >= mod_time).unwrap_or(false) {
 			trace!("Loading from stored extension file");
 			dirty_level = DirtyLevel::Clean;
 		}
@@ -577,7 +579,9 @@ impl ExtensionRegistry {
 				debug!("Reload '{}' (hard)", ext.name);
 
 				let mut lib = ext.library.take();
-				trace!("Removing storages...");
+				if lib.is_some() {
+					trace!("Removing storages...");
+				}
 				let previous_storages = lib.as_mut().map(|lib| lib.unload(world))
 					.map(|r| r.map(|(c, r)| (
 						c.into_iter()
@@ -591,7 +595,9 @@ impl ExtensionRegistry {
 				// TODO: if serializable, use serialization
 				// Needs untypedsparseset to finish serialization feature 
 
-				trace!("Dropping old extension entry...");
+				if lib.is_some() {
+					trace!("Dropping old extension entry...");
+				}
 				drop(lib);
 				ext.activate()?;
 

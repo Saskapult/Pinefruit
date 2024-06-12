@@ -4,8 +4,8 @@ use krender::{prelude::*, MaterialKey, MeshKey};
 use render::{MaterialResource, MeshResource, RenderInputResource};
 use transform::TransformComponent;
 
-#[macro_use]
-extern crate log;
+// #[macro_use]
+// extern crate log;
 
 
 
