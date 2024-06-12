@@ -13,12 +13,18 @@ pub mod prelude {
 extern crate log;
 
 
+/// Use sccache rather than workspace directory. 
+/// TODO: Test whether this helps with anything. 
 const USE_SCCACHE: bool = true;
 /// When testing to see if an extension is outdated, should we look in the .d file? 
 /// If false, we will miss some rebuilds. 
 /// When working on ekstensions, however, we will need to rebuild every extension. 
 /// This takes a long time so this option sacrifices safety for better iteration time. 
 const DEEP_CHECKING: bool = false;
+/// If many packages must be hard-reloaded, run cargo build -p \<packages\>. 
+/// It should (untested!) lead to faster startup times. 
+/// This will cause the loading udpates to be sent non-smoothly. 
+const BATCHED_COMPILATION: bool = true;
 
 
 /// Used by load functions to register and describe storages. 
@@ -502,8 +508,11 @@ impl ExtensionRegistry {
 	// The update_function receives status updates for the loading
 	pub fn reload(&mut self, world: &mut World, update_function: impl Fn(LoadStatus)) -> anyhow::Result<()> {
 		// Bool is for soft/hard reload 
-		// A soft reload occurs if the extension is clean but needs to be loaded again due to depending on something else
+		// A soft reload entails calling the extension's load function again
+		// A hard relaod involves dropping the extension library and loading it again
 		let mut load_queue = HashMap::new();
+
+		let mut rebuilds = Vec::new();
 
 		// Find dirty/unloaded extensions 
 		trace!("Look for rebuilds");
@@ -512,6 +521,7 @@ impl ExtensionRegistry {
 				DirtyLevel::Rebuild => {
 					trace!("Queue rebuild extension '{}'", self.extensions[i].name);
 					load_queue.insert(i, true);
+					rebuilds.push(i);
 					// Push dependents to reload queue
 					// for (j, e) in self.extensions.iter().enumerate() {
 					// 	if e.load_dependencies.contains(&self.extensions[i].name) {
@@ -521,7 +531,13 @@ impl ExtensionRegistry {
 				},
 				DirtyLevel::Reload => {
 					trace!("Queue reload extension '{}'", self.extensions[i].name);
-					load_queue.entry(i).or_insert(false);
+					load_queue.insert(i, true);
+					// Push dependents to reload queue
+					// for (j, e) in self.extensions.iter().enumerate() {
+					// 	if e.load_dependencies.contains(&self.extensions[i].name) {
+					// 		load_queue.entry(j).or_insert(false);
+					// 	}
+					// }
 				},
 				DirtyLevel::Clean => {
 					trace!("Extension '{}' is clean", self.extensions[i].name);
@@ -538,6 +554,21 @@ impl ExtensionRegistry {
 				.map(|i| self.extensions[i].name.clone())
 				.collect::<Vec<_>>(),
 		});
+
+		if BATCHED_COMPILATION {
+			if rebuilds.len() > 1 {
+				warn!("Found rebuilds for {} crate extensions, using batch compilation", rebuilds.len());
+				let mut command = std::process::Command::new("cargo");
+				command.arg("build").arg("-p");
+				for i in rebuilds {
+					command.arg(&self.extensions[i].name);
+				}
+				let status = command.status().unwrap();
+				if !status.success() {
+					panic!("Batch compilation failed: {status}");
+				}
+			}
+		}
 
 		// TODO: Dependency load order
 		for (&i, &hard) in load_queue.clone().iter() {
