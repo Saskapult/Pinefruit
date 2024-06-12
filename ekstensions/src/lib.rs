@@ -287,12 +287,13 @@ fn src_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
 // Panics if dep files does not exist or if it is empty of dependent files (should not be possible)
 // You will also want to look at the cargo toml file
 fn dep_file_last_modified(dep_file_path: impl AsRef<Path>) -> SystemTime {
-	let contents = std::fs::read_to_string(dep_file_path.as_ref()).unwrap();
+	let contents = std::fs::read_to_string(dep_file_path.as_ref())
+		.expect(&*format!("Cannot open {:?}", dep_file_path.as_ref()));
 	let (_, after_colon) = contents.split_once(": ").unwrap();
-	let deps = after_colon.split(" ").map(|p| Path::new(p));
-	let deps_modified = deps.map(|p| p.metadata().unwrap().modified().unwrap());
-	let most_recent = deps_modified.max().unwrap();
-	most_recent
+	let deps_modified = after_colon.strip_suffix("\n").unwrap().split(" ").map(|p| {
+		Path::new(p).metadata().unwrap().modified().unwrap()
+	});
+	deps_modified.max().unwrap()
 }
 
 
@@ -476,7 +477,7 @@ impl ExtensionEntry {
 			let last_mod = src_files_last_modified(path);
 
 			// Also look at deps file (adds redundancy but whatever)
-			let dep_file_path = Path::new(self.file_path.file_stem().unwrap()).with_extension("d");
+			let dep_file_path = Path::new("target/debug").join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
 			let deps = dep_file_last_modified(dep_file_path);
 
 			let last_mod = last_mod.max(deps);
@@ -588,7 +589,6 @@ impl ExtensionRegistry {
 				.map(|i| self.extensions[i].name.clone())
 				.collect::<Vec<_>>(),
 		});
-		error!("Update: {} in queue", load_queue.len());
 
 		// TODO: Dependency load order
 		for (&i, &hard) in load_queue.clone().iter() {
