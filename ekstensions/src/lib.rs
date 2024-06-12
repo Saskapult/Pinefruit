@@ -13,6 +13,9 @@ pub mod prelude {
 extern crate log;
 
 
+const USE_SCCACHE: bool = true;
+
+
 /// Used by load functions to register and describe storages. 
 pub struct ExtensionStorageLoader<'a> {
 	world: &'a mut World, 
@@ -412,12 +415,14 @@ impl ExtensionEntry {
 			assert!(self.crate_path.is_some());
 
 			// This assumes the crate is part of our workspace! 
-			let status = std::process::Command::new("cargo")
-				.arg("build")
-				// .env("RUSTC_WRAPPER", "/usr/bin/sccache")
-				.arg("-p")
-				.arg(&self.name)
-				.status()
+			let mut command = std::process::Command::new("cargo");
+			command.arg("build").arg("-p").arg(&self.name);
+
+			if USE_SCCACHE {
+				command.env("RUSTC_WRAPPER", "/usr/bin/sccache");
+			}
+
+			let status = command.status()
 				.with_context(|| "cargo build failed")?;
 			if !status.success() {
 				error!("Failed to compile extension");
