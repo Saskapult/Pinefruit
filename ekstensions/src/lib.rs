@@ -137,7 +137,6 @@ pub enum DirtyLevel {
 	Clean,
 	Reload, // Load .so file again
 	Rebuild, // Rebuild whole project, more severe form of Reload
-	Unloaded, // It's not loaded so we didn't test to see if it's dirty 
 }
 
 
@@ -366,6 +365,11 @@ impl ExtensionEntry {
 	pub fn activate(&mut self) -> anyhow::Result<()> {
 		assert!(!self.active(), "Cannot activate an active extension!");
 
+		// Dirty level will be only be rebuild or reload, but we need the mod 
+		// time in order to compare it with the stored file's timestamp 
+		let (mut dirty_level, mod_time) = self.dirty_level();
+		assert!(dirty_level == DirtyLevel::Rebuild || dirty_level == DirtyLevel::Reload);
+
 		// Try to find an existing extension file
 		// There should only be one file in the extension folder 
 		let ext_folder = Path::new("target/extensions").join(&self.name);
@@ -374,58 +378,17 @@ impl ExtensionEntry {
 			.filter_map(|f| f.ok())
 			.map(|f| f.path())
 			.find(|f| f.extension().map(|e| e == "so").unwrap_or(false)));
+		let stored_ts = ext_previous.as_ref()
+			.map(|v: &PathBuf| v.file_stem().unwrap().to_str().unwrap().parse::<u64>().unwrap())
+			.map(|v| UNIX_EPOCH.checked_add(Duration::from_nanos(v)).unwrap());
 		if let Some(p) = ext_previous.as_ref() {
 			trace!("Previous extension file {:?}", p);
 		}
 
-		// Get timestamps
-		let stored_ts = ext_previous.as_ref()
-			.map(|v: &PathBuf| v.file_stem().unwrap().to_str().unwrap().parse::<u64>().unwrap())
-			.map(|v| UNIX_EPOCH.checked_add(Duration::from_nanos(v)).unwrap());
-		let build_ts = self.file_path.canonicalize().ok().map(|p| p.metadata().unwrap().modified().unwrap());
-		let src_ts = self.crate_path.as_ref().map(|p| {
-			let mut last_mod = src_files_last_modified(p);
-			if DEEP_CHECKING {
-				let dep_file_path = Path::new("target/debug").join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
-				if let Ok(p) = dep_file_path.canonicalize() {
-					let deps = dep_file_last_modified(p);
-					last_mod = last_mod.max(deps);
-				}
-			}
-			last_mod
-		});
-
-		// Find level of dirty 
-		let dirty_level = if let Some(stored_ts) = stored_ts {
-			if src_ts.map(|src_ts| src_ts > stored_ts).unwrap_or(false) {
-				// Stored exists and less updated than src
-				DirtyLevel::Rebuild
-			} else if build_ts.map(|build_ts| build_ts > stored_ts).unwrap_or(false) {
-				// Stored exists and less updated than build
-				DirtyLevel::Reload
-			} else {
-				// Stored exists and most updated
-				DirtyLevel::Clean
-			}
-		} else {
-			if let Some(build_ts) = build_ts {
-				if let Some(src_ts) = src_ts {
-					if src_ts > build_ts {
-						// Stored DNE and src most updated
-						DirtyLevel::Rebuild
-					} else {
-						// Stored DNE and build most updated
-						DirtyLevel::Reload
-					}
-				} else {
-					// Stored DNE and src not exist
-					DirtyLevel::Reload
-				}
-			} else {
-				// Stored DNE and build DNE
-				DirtyLevel::Rebuild
-			}
-		};
+		if stored_ts.map(|stored_ts| stored_ts <= mod_time).unwrap_or(false) {
+			trace!("Loading from stored extension file");
+			dirty_level = DirtyLevel::Clean;
+		}
 
 		if dirty_level == DirtyLevel::Rebuild {
 			trace!("Rebuilding extension from crate");
@@ -469,15 +432,9 @@ impl ExtensionEntry {
 		self.library.is_some()
 	}
 
-	pub fn dirty_level(&self) -> DirtyLevel {
-		if self.library.is_none() {
-			return DirtyLevel::Unloaded;
-		}
-		let last_read = self.library.as_ref().unwrap().read_at;
-
-		if let Some(path) = self.crate_path.as_ref() {
+	pub fn dirty_level(&self) -> (DirtyLevel, SystemTime) {
+		let src_mod = self.crate_path.as_ref().map(|path| {
 			let mut last_mod = src_files_last_modified(path);
-
 			if DEEP_CHECKING {
 				let dep_file_path = Path::new("target/debug").join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
 				if let Ok(p) = dep_file_path.canonicalize() {
@@ -485,27 +442,30 @@ impl ExtensionEntry {
 					last_mod = last_mod.max(deps);
 				}
 			}
+			last_mod
+		});
 
-			if last_mod > last_read {
-				trace!("Source files modified ({last_mod:?} > {last_read:?}), rebuild");
-				return DirtyLevel::Rebuild;
-			}
-		}
+		let build_mod = self.file_path.canonicalize().ok().map(|path| {
+			path.metadata().unwrap().modified().unwrap()
+		});
 
-		if let Ok(p) = self.file_path.canonicalize() {
-			let mod_time = p.metadata().unwrap().modified().unwrap();
-			if mod_time > last_read {
-				let d = mod_time.duration_since(last_read).unwrap();
-				trace!("Extension file is newer, reload ({:?}, {:.2}s)", p, d.as_secs_f32());
-				return DirtyLevel::Reload;
+		let (most_recent_mod, dirty_level) = match (src_mod, build_mod) {
+			(Some(src_mod), Some(build_mod)) => if src_mod > build_mod {
+				(src_mod, DirtyLevel::Rebuild)
 			} else {
-				return DirtyLevel::Clean;
+				(build_mod, DirtyLevel::Reload)
+			},
+			(Some(src_mod), None) => (src_mod, DirtyLevel::Rebuild),
+			(None, Some(build_mod)) => (build_mod, DirtyLevel::Reload),
+			(None, None) => panic!("Extension has no crate or build files!"),
+		};
+
+		if let Some(lib) = self.library.as_ref() {
+			if most_recent_mod < lib.read_at {
+				return (DirtyLevel::Clean, lib.read_at);
 			}
-		} else {
-			trace!("Extension file does not exist, rebuild");
-			assert!(self.crate_path.is_some(), "No crate path, cannot rebuild!");
-			return DirtyLevel::Rebuild;
 		}
+		return (dirty_level, most_recent_mod);
 	}
 }
 
@@ -539,7 +499,8 @@ impl ExtensionRegistry {
 		}
 	}
 
-	pub fn reload(&mut self, world: &mut World, updates: impl Fn(LoadStatus)) -> anyhow::Result<()> {
+	// The update_function receives status updates for the loading
+	pub fn reload(&mut self, world: &mut World, update_function: impl Fn(LoadStatus)) -> anyhow::Result<()> {
 		// Bool is for soft/hard reload 
 		// A soft reload occurs if the extension is clean but needs to be loaded again due to depending on something else
 		let mut load_queue = HashMap::new();
@@ -547,24 +508,9 @@ impl ExtensionRegistry {
 		// Find dirty/unloaded extensions 
 		trace!("Look for rebuilds");
 		for i in 0..self.extensions.len() {
-			// if !self.extensions[i].active() {
-			// 	load_queue.entry(i).or_insert(false);
-			// 	continue
-			// }
-
-			match self.extensions[i].dirty_level() {
-				DirtyLevel::Unloaded => {
-					debug!("Load extension {}", self.extensions[i].name);
-					load_queue.insert(i, true);
-					// Push dependents to reload queue
-					// for (j, e) in self.extensions.iter().enumerate() {
-					// 	if e.load_dependencies.contains(&self.extensions[i].name) {
-					// 		load_queue.entry(j).or_insert(false);
-					// 	}
-					// }
-				}
+			match self.extensions[i].dirty_level().0 {
 				DirtyLevel::Rebuild => {
-					debug!("Rebuild extension {}", self.extensions[i].name);
+					trace!("Queue rebuild extension '{}'", self.extensions[i].name);
 					load_queue.insert(i, true);
 					// Push dependents to reload queue
 					// for (j, e) in self.extensions.iter().enumerate() {
@@ -574,17 +520,16 @@ impl ExtensionRegistry {
 					// }
 				},
 				DirtyLevel::Reload => {
-					debug!("Reload extension {}", self.extensions[i].name);
+					trace!("Queue reload extension '{}'", self.extensions[i].name);
 					load_queue.entry(i).or_insert(false);
 				},
 				DirtyLevel::Clean => {
-					debug!("Extension {} is clean", self.extensions[i].name);
+					trace!("Extension '{}' is clean", self.extensions[i].name);
 				},
 			}
 		}
 
-		// Send update
-		updates(LoadStatus {
+		update_function(LoadStatus {
 			to_load: load_queue.iter()
 				.map(|(&i, &h)| (self.extensions[i].name.clone(), h))
 				.collect::<Vec<_>>(),
@@ -598,7 +543,7 @@ impl ExtensionRegistry {
 		for (&i, &hard) in load_queue.clone().iter() {
 			if hard {
 				let ext = self.extensions.get_mut(i).unwrap();				
-				debug!("Hard reload of {}", ext.name);
+				debug!("Reload '{}' (hard)", ext.name);
 
 				let mut lib = ext.library.take();
 				trace!("Removing storages...");
@@ -638,15 +583,20 @@ impl ExtensionRegistry {
 					}
 				}
 			} else {
-				debug!("Soft reload of {}", self.extensions[i].name);
 				let e = self.extensions.get_mut(i).unwrap();
-				e.library.as_mut().unwrap().load(&e.name, world)?;
+				if let Some(lib) = e.library.as_mut() {
+					debug!("Reload '{}' (soft)", e.name);
+					lib.load(&e.name, world)?;
+				} else {
+					debug!("Load '{}'", e.name);
+					e.activate()?;
+					e.library.as_mut().unwrap().load(&e.name, world)?;
+				}
 			}
 
 			load_queue.remove(&i);
 
-			// Send update
-			updates(LoadStatus {
+			update_function(LoadStatus {
 				to_load: load_queue.iter()
 					.map(|(&i, &h)| (self.extensions[i].name.clone(), h))
 					.collect::<Vec<_>>(),
