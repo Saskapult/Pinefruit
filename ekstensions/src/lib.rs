@@ -14,6 +14,11 @@ extern crate log;
 
 
 const USE_SCCACHE: bool = true;
+/// When testing to see if an extension is outdated, should we look in the .d file? 
+/// If false, we will miss some rebuilds. 
+/// When working on ekstensions, however, we will need to rebuild every extension. 
+/// This takes a long time so this option sacrifices safety for better iteration time. 
+const DEEP_CHECKING: bool = false;
 
 
 /// Used by load functions to register and describe storages. 
@@ -247,18 +252,6 @@ impl Drop for ExtensionLibrary {
 }
 
 
-pub enum ExtensionPath {
-	// Library(PathBuf), // Future stuff, watch a file and reload if changed
-	Crate(PathBuf, bool), // Path, in workspace 
-}
-impl ExtensionPath {
-	// Checks if this extension has been modified since it was last loaded
-	
-
-	
-}
-
-
 fn extension_build_filename(extension_name: impl AsRef<str>) -> PathBuf {
 	// File name varies by platform 
 	#[cfg(target_os = "linux")]
@@ -270,6 +263,7 @@ fn extension_build_filename(extension_name: impl AsRef<str>) -> PathBuf {
 
 	dylib_path
 }
+
 
 fn src_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
 	// We care about Cargo.toml and everthing in the src directiory
@@ -389,7 +383,17 @@ impl ExtensionEntry {
 			.map(|v: &PathBuf| v.file_stem().unwrap().to_str().unwrap().parse::<u64>().unwrap())
 			.map(|v| UNIX_EPOCH.checked_add(Duration::from_nanos(v)).unwrap());
 		let build_ts = self.file_path.canonicalize().ok().map(|p| p.metadata().unwrap().modified().unwrap());
-		let src_ts = self.crate_path.as_ref().map(|p| src_files_last_modified(p));
+		let src_ts = self.crate_path.as_ref().map(|p| {
+			let mut last_mod = src_files_last_modified(p);
+			if DEEP_CHECKING {
+				let dep_file_path = Path::new("target/debug").join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
+				if let Ok(p) = dep_file_path.canonicalize() {
+					let deps = dep_file_last_modified(p);
+					last_mod = last_mod.max(deps);
+				}
+			}
+			last_mod
+		});
 
 		// Find level of dirty 
 		let dirty_level = if let Some(stored_ts) = stored_ts {
@@ -443,7 +447,6 @@ impl ExtensionEntry {
 			}
 		}
 
-
 		let epoch_dur = self.file_path.metadata().unwrap().modified().unwrap().duration_since(UNIX_EPOCH).unwrap();
 		let ext_file = ext_folder.join(format!("{}.so", epoch_dur.as_nanos()));
 		if dirty_level == DirtyLevel::Reload || dirty_level == DirtyLevel::Rebuild {
@@ -473,17 +476,18 @@ impl ExtensionEntry {
 		let last_read = self.library.as_ref().unwrap().read_at;
 
 		if let Some(path) = self.crate_path.as_ref() {
-			// Look at source files
-			let last_mod = src_files_last_modified(path);
+			let mut last_mod = src_files_last_modified(path);
 
-			// Also look at deps file (adds redundancy but whatever)
-			let dep_file_path = Path::new("target/debug").join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
-			let deps = dep_file_last_modified(dep_file_path);
-
-			let last_mod = last_mod.max(deps);
+			if DEEP_CHECKING {
+				let dep_file_path = Path::new("target/debug").join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
+				if let Ok(p) = dep_file_path.canonicalize() {
+					let deps = dep_file_last_modified(p);
+					last_mod = last_mod.max(deps);
+				}
+			}
 
 			if last_mod > last_read {
-				trace!("Source files modified, rebuild");
+				trace!("Source files modified ({last_mod:?} > {last_read:?}), rebuild");
 				return DirtyLevel::Rebuild;
 			}
 		}
@@ -651,7 +655,6 @@ impl ExtensionRegistry {
 					.map(|i| self.extensions[i].name.clone())
 					.collect::<Vec<_>>(),
 			});
-			error!("Update: {} in queue", load_queue.len());
 		}
 
 		self.rebuild_systems()?;
