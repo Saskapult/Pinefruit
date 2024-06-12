@@ -131,7 +131,7 @@ unsafe impl Sync for ExtensionSystem {}
 pub enum DirtyLevel {
 	Clean,
 	Reload, // Load .so file again
-	Rebuild, // Rebuild whole project
+	Rebuild, // Rebuild whole project, more severe form of Reload
 	Unloaded, // It's not loaded so we didn't test to see if it's dirty 
 }
 
@@ -281,6 +281,18 @@ fn src_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
 		.map(|p| p.metadata().unwrap().modified().unwrap())
 		.max().unwrap();
 	last_modified
+}
+
+
+// Panics if dep files does not exist or if it is empty of dependent files (should not be possible)
+// You will also want to look at the cargo toml file
+fn dep_file_last_modified(dep_file_path: impl AsRef<Path>) -> SystemTime {
+	let contents = std::fs::read_to_string(dep_file_path.as_ref()).unwrap();
+	let (_, after_colon) = contents.split_once(": ").unwrap();
+	let deps = after_colon.split(" ").map(|p| Path::new(p));
+	let deps_modified = deps.map(|p| p.metadata().unwrap().modified().unwrap());
+	let most_recent = deps_modified.max().unwrap();
+	most_recent
 }
 
 
@@ -462,6 +474,13 @@ impl ExtensionEntry {
 		if let Some(path) = self.crate_path.as_ref() {
 			// Look at source files
 			let last_mod = src_files_last_modified(path);
+
+			// Also look at deps file (adds redundancy but whatever)
+			let dep_file_path = Path::new(self.file_path.file_stem().unwrap()).with_extension("d");
+			let deps = dep_file_last_modified(dep_file_path);
+
+			let last_mod = last_mod.max(deps);
+
 			if last_mod > last_read {
 				trace!("Source files modified, rebuild");
 				return DirtyLevel::Rebuild;
