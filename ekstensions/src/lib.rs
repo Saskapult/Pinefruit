@@ -689,7 +689,7 @@ impl ExtensionRegistry {
 		if let Some(i) = self.extensions.iter().position(|e| e.file_path.eq(path.as_ref())) {
 			let e = self.extensions.remove(i);
 			if let Some(mut lib) = e.library {
-				lib.unload(world);
+				lib.unload(world)?;
 			}
 		} else {
 			return Err(anyhow!("Extension not found"));
