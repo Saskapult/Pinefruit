@@ -299,26 +299,26 @@ impl ExtensionEntry {
 		let cargo_toml_table: toml::map::Map<String, toml::Value> = cargo_toml_content.parse::<toml::Table>()
 			.with_context(|| "failed to parse cargo.toml")?;
 
-		// Require dylib + rlib 
-		let is_dylib = cargo_toml_table.get("lib")
-			.and_then(|v| v.as_table())
-			.and_then(|t| t.get("crate-type"))
-			.and_then(|v| v.as_array())
-			.map(|v| 
-				v.contains(&toml::Value::String("dylib".to_string()))
-				&&
-				v.contains(&toml::Value::String("rlib".to_string()))
-			).unwrap_or(false);
-		if !is_dylib {
-			error!("Not rlib dylib!");
-			// panic!();
-		}
-		
 		let name = cargo_toml_table
 			.get("package").unwrap()
 			.as_table().unwrap()
 			.get("name").unwrap()
 			.as_str().unwrap();
+
+		// Require cdylib + rlib 
+		let is_dylib = cargo_toml_table.get("lib")
+			.and_then(|v| v.as_table())
+			.and_then(|t| t.get("crate-type"))
+			.and_then(|v| v.as_array())
+			.map(|v| 
+				v.contains(&toml::Value::String("cdylib".to_string()))
+				&&
+				v.contains(&toml::Value::String("rlib".to_string()))
+			).unwrap_or(false);
+		if !is_dylib {
+			error!("Extension '{}' is not rlib cdylib, this is probably terminal!", name);
+			// panic!();
+		}
 
 		let root_cargo_toml = std::fs::read_to_string("./Cargo.toml")
 			.with_context(|| "failed to read root Cargo.toml")?
