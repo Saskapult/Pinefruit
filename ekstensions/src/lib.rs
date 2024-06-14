@@ -21,11 +21,9 @@ const USE_SCCACHE: bool = false;
 /// When working on ekstensions, however, we will need to rebuild every extension. 
 /// This takes a long time so this option sacrifices safety for better iteration time. 
 const DEEP_CHECKING: bool = false;
-/// If many packages must be hard-reloaded, run cargo build -p \<packages\>. 
+/// If many packages must be hard-reloaded, run cargo build --all. 
 /// It should (untested!) lead to faster startup times. 
 /// This will cause the loading udpates to be sent non-smoothly. 
-/// Oh also it turns out that the command doesn't work this way. 
-/// I'm leaving this here out of spite. 
 const BATCHED_COMPILATION: bool = false;
 
 
@@ -561,10 +559,11 @@ impl ExtensionRegistry {
 			if rebuilds.len() > 1 {
 				warn!("Found rebuilds for {} crate extensions, using batch compilation", rebuilds.len());
 				let mut command = std::process::Command::new("cargo");
-				command.arg("build").arg("-p");
-				for i in rebuilds {
-					command.arg(&self.extensions[i].name);
-				}
+				command.arg("build").arg("--all");
+				// command.arg("build").arg("-p");
+				// for i in rebuilds {
+				// 	command.arg(&self.extensions[i].name);
+				// }
 				let status = command.status().unwrap();
 				if !status.success() {
 					panic!("Batch compilation failed: {status}");
