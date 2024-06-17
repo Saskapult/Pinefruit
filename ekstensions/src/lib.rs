@@ -5,7 +5,6 @@ pub use eks;
 pub mod prelude {
 	pub use eks::prelude::*;
 	pub use crate::{ExtensionRegistry, ExtensionSystemsLoader};
-	pub use profiling;
 	pub use ekstensions_derive::*;
 }
 
@@ -15,6 +14,7 @@ extern crate log;
 
 /// Use sccache rather than workspace directory. 
 /// TODO: Test whether this helps with anything. 
+/// Or maybe use this for things not in workspace? 
 const USE_SCCACHE: bool = false;
 /// When testing to see if an extension is outdated, should we look in the .d file? 
 /// If false, we will miss some rebuilds. 
@@ -24,7 +24,7 @@ const DEEP_CHECKING: bool = false;
 /// If many packages must be hard-reloaded, run cargo build --all. 
 /// It should (untested!) lead to faster startup times. 
 /// This will cause the loading udpates to be sent non-smoothly. 
-const BATCHED_COMPILATION: bool = false;
+const BATCHED_COMPILATION: bool = true;
 
 
 /// Used by load functions to register and describe storages. 

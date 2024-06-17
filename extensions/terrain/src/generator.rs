@@ -125,76 +125,76 @@ impl NewTerrainGenerator {
 		world_position: IVec3,
 		extent: UVec3,
 	) -> Vec<bool> {
-		// let [x_offset, y_offset, z_offset] = world_position.to_array();
-		// let [x_extent, y_extent, z_extent] = extent.to_array();
+		let [x_offset, y_offset, z_offset] = world_position.to_array();
+		let [x_extent, y_extent, z_extent] = extent.to_array();
 
-		// // Sample height (2d fbm -> height spline)
-		// // Outputs in yx order
-		// let height_scale = self.height_noise.compute_scale();
-		// let heights = simdnoise::NoiseBuilder::fbm_2d_offset(
-		// 	x_offset as f32 + 0.5, x_extent as usize, 
-		// 	z_offset as f32 + 0.5, z_extent as usize,
-		// ).apply_raw_settings(self.height_noise).generate().0.into_iter()
-		// 	.map(|d| (d * height_scale + 1.0) / 2.0) // Normalize
-		// 	.map(|height_noise| {
-		// 		self.height_spline.clamped_sample(height_noise).unwrap()
-		// 	})
-		// 	.collect::<Vec<_>>();
+		// Sample height (2d fbm -> height spline)
+		// Outputs in yx order
+		let height_scale = self.height_noise.compute_scale();
+		let heights = simdnoise::NoiseBuilder::fbm_2d_offset(
+			x_offset as f32 + 0.5, x_extent as usize, 
+			z_offset as f32 + 0.5, z_extent as usize,
+		).apply_raw_settings(self.height_noise).generate().0.into_iter()
+			.map(|d| (d * height_scale + 1.0) / 2.0) // Normalize
+			.map(|height_noise| {
+				self.height_spline.clamped_sample(height_noise).unwrap()
+			})
+			.collect::<Vec<_>>();
 
-		// let height_difference_scale = self.height_difference_noise.compute_scale();
-		// let height_differences = simdnoise::NoiseBuilder::fbm_2d_offset(
-		// 	x_offset as f32 + 0.5, x_extent as usize, 
-		// 	z_offset as f32 + 0.5, z_extent as usize,
-		// ).apply_raw_settings(self.height_difference_noise).generate().0.into_iter()
-		// 	.map(|d| (d * height_difference_scale + 1.0) / 2.0) // Normalize
-		// 	.map(|noise| {
-		// 		self.height_difference_spline.clamped_sample(noise).unwrap()
-		// 	})
-		// 	.collect::<Vec<_>>();
+		let height_difference_scale = self.height_difference_noise.compute_scale();
+		let height_differences = simdnoise::NoiseBuilder::fbm_2d_offset(
+			x_offset as f32 + 0.5, x_extent as usize, 
+			z_offset as f32 + 0.5, z_extent as usize,
+		).apply_raw_settings(self.height_difference_noise).generate().0.into_iter()
+			.map(|d| (d * height_difference_scale + 1.0) / 2.0) // Normalize
+			.map(|noise| {
+				self.height_difference_spline.clamped_sample(noise).unwrap()
+			})
+			.collect::<Vec<_>>();
 
-		// // This information can be used to know if we should skip (fill or leave empty) this chunk
-		// // If it's below the density = 1.0 cutoff (or the -1.0 one) then it can be filled 
-		// // Problem with that: it assumes that our spline ends with 1.0 and -1.0
-		// // We might not do that! (floating islands, caves)
-		// // Given the speed of my benchmarks, it should not be needed either
+		// This information can be used to know if we should skip (fill or leave empty) this chunk
+		// If it's below the density = 1.0 cutoff (or the -1.0 one) then it can be filled 
+		// Problem with that: it assumes that our spline ends with 1.0 and -1.0
+		// We might not do that! (floating islands, caves)
+		// Given the speed of my benchmarks, it should not be needed either
 
-		// // Outputs in zyx order
-		// let density_scale = self.density_noise.compute_scale();
-		// let densities = simdnoise::NoiseBuilder::fbm_3d_offset(
-		// 	x_offset as f32 + 0.5, x_extent as usize, 
-		// 	y_offset as f32 + 0.5, y_extent as usize, 
-		// 	z_offset as f32 + 0.5, z_extent as usize,
-		// ).apply_raw_settings(self.density_noise).generate().0.into_iter()
-		// 	.map(|d| (d * density_scale + 1.0) / 2.0) // Normalize
-		// 	.collect::<Vec<_>>();
+		// Outputs in zyx order
+		let density_scale = self.density_noise.compute_scale();
+		let densities = simdnoise::NoiseBuilder::fbm_3d_offset(
+			x_offset as f32 + 0.5, x_extent as usize, 
+			y_offset as f32 + 0.5, y_extent as usize, 
+			z_offset as f32 + 0.5, z_extent as usize,
+		).apply_raw_settings(self.density_noise).generate().0.into_iter()
+			.map(|d| (d * density_scale + 1.0) / 2.0) // Normalize
+			.collect::<Vec<_>>();
 
-		// // Because simd_noise outputs in zyx/yx order, we can't just zip() here
-		// cube_iterator_xyz_uvec(extent)
-		// 	.map(|p| (p, p.as_ivec3() + world_position))
-		// 	.map(|(p, world_pos)| {
-		// 		let density = densities[(
-		// 			p.z * y_extent * x_extent +
-		// 			p.y * x_extent +
-		// 			p.x
-		// 		) as usize];
-		// 		let height = heights[(
-		// 			p.z * x_extent +
-		// 			p.x
-		// 		) as usize];
-		// 		let height_difference = height_differences[(
-		// 			p.z * x_extent +
-		// 			p.x
-		// 		) as usize];
+		// Because simd_noise outputs in zyx/yx order, we can't just zip() here
+		cube_iterator_xyz_uvec(extent)
+			.map(|p| (p, p.as_ivec3() + world_position))
+			.map(|(p, world_pos)| {
+				let density = densities[(
+					p.z * y_extent * x_extent +
+					p.y * x_extent +
+					p.x
+				) as usize];
+				let height = heights[(
+					p.z * x_extent +
+					p.x
+				) as usize];
+				let height_difference = height_differences[(
+					p.z * x_extent +
+					p.x
+				) as usize];
 
-		// 		let height_diff = (height - world_pos.y as f32) * height_difference;
-		// 		let density_adjustment = self.density_spline.clamped_sample(height_diff).unwrap();
-		// 		density + density_adjustment
-		// 	})
-		// 	.map(|d| d >= self.density_threshold).collect()
+				let height_diff = (height - world_pos.y as f32) * height_difference;
+				let density_adjustment = self.density_spline.clamped_sample(height_diff).unwrap();
+				density + density_adjustment
+			})
+			.map(|d| d >= self.density_threshold).collect()
 
-		cube_iterator_xyz_uvec(extent).map(|p| {
-			(p.as_ivec3() + world_position).y < 0
-		}).collect()
+		// cube_iterator_xyz_uvec(extent).map(|p| {
+		// 	(p.as_ivec3() + world_position).y < 0
+		// }).collect()
 	}
 
 	// Generates the base solid blocks for a chunk

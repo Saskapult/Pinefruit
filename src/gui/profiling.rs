@@ -1,3 +1,8 @@
+
+// Should be a config option? That way we can remove puffin_http dependency
+const PUFFIN_SERVER: bool = true;
+
+
 // This could be bitflags, but that would allow for server with other flags and that would be bad
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, variantly::Variantly)]
 pub enum ProfilingMode {
@@ -5,46 +10,44 @@ pub enum ProfilingMode {
 	Disabled,
 	Server,
 	Client,
-	Render,
-	ClientRender,
-}
-impl ProfilingMode {
-	pub fn enable_server(&self) -> bool {
-		self.is_server()
-	}
-	
-	pub fn enable_client(&self) -> bool {
-		self.is_client() || self.is_client_render()
-	}
-
-	pub fn enable_render(&self) -> bool {
-		self.is_render() || self.is_client_render()
-	}
-
-	pub fn frame_post_client(&self) -> bool {
-		self.is_client()
-	}
-
-	pub fn frame_post_render(&self) -> bool {
-		self.is_render() || self.is_client_render()
-	}
-
-	pub fn frame_post_server(&self) -> bool {
-		self.is_server()
-	}
 }
 
 
 pub struct ProfilingWidget {
 	pub profiling_mode: ProfilingMode,
 	pub show_profiling: bool,
-	// puffin_thread: Option<>
+
+	puffin_server: Option<puffin_http::Server>,
+
+	display_bug_workaround_done: bool,
 }
 impl ProfilingWidget {
 	pub fn new() -> Self {
 		Self {
 			profiling_mode: ProfilingMode::Client,
 			show_profiling: false,
+			puffin_server: None,
+			display_bug_workaround_done: false,
+		}
+	}
+
+	/// puffin_egui and puffin_http will not display scopes that were in frames finished before puffin_egui and puffin_http were started. 
+	/// This was a horrible thing to debug. 
+	/// We can get around this by starting both things before the first frame is finished, which is what this function does. 
+	pub fn display_bug_workaround(&mut self, ctx: &egui::Context) {
+		if !self.display_bug_workaround_done {
+			if PUFFIN_SERVER {
+				let server_addr = format!("0.0.0.0:{}", puffin_http::DEFAULT_PORT);
+				debug!("Start puffin server on {}", server_addr);
+				self.puffin_server = Some(puffin_http::Server::new(&server_addr).unwrap());
+			}
+
+			let temp = self.show_profiling;
+			self.show_profiling = true;
+			self.show_profiler(ctx);
+			self.show_profiling = temp;
+
+			self.display_bug_workaround_done = true;
 		}
 	}
 
@@ -55,9 +58,7 @@ impl ProfilingWidget {
 				let clicked = [
 					ProfilingMode::Disabled,
 					ProfilingMode::Server,
-					ProfilingMode::Render,
 					ProfilingMode::Client,
-					ProfilingMode::ClientRender,
 				].into_iter().map(|mode| {
 					ui.selectable_value(&mut self.profiling_mode, mode, format!("{:?}", mode)).clicked()
 				}).any(|b| b);
@@ -74,9 +75,9 @@ impl ProfilingWidget {
 			.id(egui::Id::new("Profiling"))
 			.open(&mut self.show_profiling)
 			.show(ctx, |ui| {
-				profiling::puffin::set_scopes_on(true);
+				// profiling::puffin::set_scopes_on(true);
 				puffin_egui::profiler_ui(ui);
-				profiling::puffin::set_scopes_on(false);
+				// profiling::puffin::set_scopes_on(false);
 			});
 		}
 	}

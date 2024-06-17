@@ -67,8 +67,10 @@ pub fn run_server(
 ) -> (crossbeam_channel::Sender<ServerCommand>, JoinHandle<anyhow::Result<()>>) {
 	let (s, r) = crossbeam_channel::unbounded();
 
-	let h = std::thread::spawn(move || {
-		profiling::register_thread!("server thread");
+	let h = std::thread::Builder::new()
+	.name("Server Thread".into())
+	.spawn(move || {
+		profiling::register_thread!("Server Thread");
 
 		let mut tick_thing = TickThing::new(Duration::from_secs_f32(1.0 / 30.0));
 		let mut exit = false;
@@ -85,7 +87,7 @@ pub fn run_server(
 			}
 		}
 		Ok(())
-	});
+	}).unwrap();
 
 	(s, h)
 }

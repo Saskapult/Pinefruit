@@ -107,7 +107,8 @@ struct GameWindow {
 	game_widget: Option<GameWidget>,
 	profiling_widget: ProfilingWidget, 
 	show_workloads: bool, 
-	show_controls: bool, 
+	show_controls: bool,
+	whatever: bool, 
 }
 impl GameWindow {
 	pub fn new(
@@ -172,6 +173,7 @@ impl GameWindow {
 			profiling_widget: ProfilingWidget::new(),
 			show_workloads: false,
 			show_controls: false,
+			whatever: false,
 		}
 	}
 
@@ -200,6 +202,8 @@ impl GameWindow {
 		// This never occurs due to gamewidget creation requiring a lock immediately after spawning the setup thread
 		// I've left it this way so that you can find a way to make it work later
 		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = if let Some(mut instance) = self.client.try_lock() {
+			self.profiling_widget.display_bug_workaround(&self.context);
+
 			// profiling::scope!("Window Update");
 			// Do egui frame
 			// I can't put this in its own function beucase of the borrow checker 
@@ -226,6 +230,8 @@ impl GameWindow {
 
 						ui.toggle_value(&mut self.show_workloads, "Workloads");
 						ui.toggle_value(&mut self.show_controls, "Controls");
+
+						ui.toggle_value(&mut self.whatever, "Whatever");
 
 						self.profiling_widget.show_options(ui);
 					});
@@ -264,10 +270,47 @@ impl GameWindow {
 				});
 			}
 
-			self.profiling_widget.show_profiler(&self.context);			
+			let should_tick = self.viewports.is_tick_needed(); 
+
+			profiling::puffin::set_scopes_on(self.profiling_widget.profiling_mode.is_client());
+			if self.profiling_widget.profiling_mode.is_client() {
+				profiling::finish_frame!();
+				// puffin::GlobalProfiler::lock().new_frame();
+			}
+
+			// // {
+			// // 	// profiling::scope!("Wait time (profiler)");
+			// // 	puffin::profile_scope!("Wait time 10");
+			// // 	std::thread::sleep(std::time::Duration::from_millis(10));
+			// // }
+			// // {
+			// // 	// profiling::scope!("Wait time (profiler)");
+			// // 	puffin::profile_scope!("Wait time 5");
+			// // 	std::thread::sleep(std::time::Duration::from_millis(5));
+			// // }
+			// if self.whatever {
+			// 	// profiling::scope!("Shithead");
+			// 	puffin::profile_scope!("Whatever man");
+			// 	std::thread::sleep(std::time::Duration::from_millis(5));
+			// }
+
+			if should_tick {
+				profiling::scope!("Tick");
+				let instance: &mut GameInstance = &mut instance;
+				let extensions = &mut instance.extensions;
+				let world = &mut instance.world;
+				extensions.run(world, "client_tick").unwrap();
+			}
+
+			let out = self.viewports.update_viewports(graphics, &mut instance).into_iter().unzip();
+
+			self.profiling_widget.show_profiler(&self.context);
+
+			profiling::puffin::set_scopes_on(false);
 			
-			// Create command buffers for any viewports
-			self.viewports.update_viewports(graphics, &mut instance, self.profiling_widget.profiling_mode).into_iter().unzip()
+			// let v: Vec<&mut GpuProfiler> = vec![];
+			// (vec![], v)
+			out
 		} else {
 			// Loading screen! 
 			egui::CentralPanel::default().show(&self.context, |ui| {

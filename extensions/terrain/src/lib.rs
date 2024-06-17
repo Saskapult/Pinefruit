@@ -7,6 +7,7 @@ use ekstensions::prelude::*;
 use modification::{terrain_modification_application, terrain_placement_queue, VoxelModifierComponent};
 use player::PlayerSpawnResource;
 use terrain::{terrain_loading_system, TerrainLoadingResource, TerrainResource};
+use transform::TransformComponent;
 
 #[macro_use]
 extern crate log;
@@ -20,6 +21,18 @@ fn player_terrain_modifier(
 ) {
 	for entity in psr.entities.iter().copied() {
 		vm.insert(entity, VoxelModifierComponent::new(&mut controls));
+	}
+}
+
+
+fn place_player_at_terrain_height(
+	psr: Res<PlayerSpawnResource>,
+	mut transforms: CompMut<TransformComponent>,
+) {
+	for entity in psr.entities.iter().copied() {
+		let t = transforms.get_mut(entity).unwrap();
+		warn!("TODO: set player y to terrain height");
+		t.translation.y = 42.0;
 	}
 }
 
@@ -45,6 +58,10 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 		.run_after("terrain_placement_queue");
 
 	loader.system("client_tick", "player_terrain_modifier", player_terrain_modifier)
+		.run_after("player_spawn")
+		.run_before("player_spawned");
+	loader.system("client_tick", "place_player_at_terrain_height", place_player_at_terrain_height)
+		.run_after("player_spawn_components")
 		.run_after("player_spawn")
 		.run_before("player_spawned");
 }

@@ -17,5 +17,5 @@ log = "0.4.21"
 toml = "0.8.12"
 walkdir = "2.5.0"
 eks = { path = "eks" }
-profiling = { version = "1.0.10", features = ["profile-with-puffin"] }
+profiling = { version = "1.0.10" }
 ekstensions-derive = { path = "ekstensions-derive" }

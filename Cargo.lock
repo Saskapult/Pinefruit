@@ -1709,6 +1709,7 @@ dependencies = [
  "pollster",
  "profiling",
  "puffin_egui",
+ "puffin_http",
  "rand 0.8.5",
  "rand_xoshiro",
  "rayon",
@@ -2621,9 +2622,9 @@ dependencies = [
 
 [[package]]
 name = "puffin_egui"
-version = "0.27.0"
+version = "0.27.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0fb409a5d8c82c27b0ae884409c03e3d30ac053a89b4316663f63377ba02ae"
+checksum = "0bf67bdfe1838de5d81df11eb5d3bce78ae9cb7c2c8e172c3a3d768ae61a404a"
 dependencies = [
  "egui",
  "indexmap",
@@ -2634,6 +2635,19 @@ dependencies = [
  "time 0.3.36",
  "vec1",
  "web-time",
+]
+
+[[package]]
+name = "puffin_http"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4936c085e48efc86f6d96609dc5086d1d236afe3ec4676f09b157a4f4be83ff6"
+dependencies = [
+ "anyhow",
+ "crossbeam-channel",
+ "log",
+ "parking_lot",
+ "puffin",
 ]
 
 [[package]]

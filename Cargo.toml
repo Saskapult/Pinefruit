@@ -67,7 +67,8 @@ glam = { version = "0.27.0", features = ["bytemuck", "rand"] }
 atomic_refcell = "0.1.10"
 
 profiling = { version = "1.0.10", features = ["profile-with-puffin"] }
-puffin_egui = "0.27.0"
+puffin_egui = "0.27.1"
+puffin_http = "0.16.0"
 
 simdnoise = "3.1.6"
 rustc-hash = "1.1.0"
