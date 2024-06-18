@@ -18,3 +18,5 @@ player = { path = "../player" }
 slotmap = "1.0.7"
 glam = "0.27.0"
 parking_lot = "0.12.2"
+
+[workspace]

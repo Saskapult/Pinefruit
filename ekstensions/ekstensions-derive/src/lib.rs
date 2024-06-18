@@ -84,7 +84,7 @@ pub fn load_core_extensions(
 		let load_function_name = quote::format_ident!("{}_load", n);
 		let systems_function_name = quote::format_ident!("{}_systems", n);
 		quote::quote! {
-			info!("Loading core extension {}", #n);
+			debug!("Loading core extension {}", #n);
 			{
 				use #crate_name;
 				#crate_name::#load_function_name(&mut esl);

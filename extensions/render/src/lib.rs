@@ -406,12 +406,11 @@ pub fn ssao_system(
 ) {
 	let context = contexts.get_mut(context.key).unwrap();
 
-	info!("SSAO system");
 	if let Some(ssao) = context.entity.and_then(|entity| ssaos.get_mut(entity)) {
 		let kernel_dirty = ssao.kernel.is_none();
 
 		if kernel_dirty {
-			warn!("Rebuilding SSAO kernel");
+			debug!("Rebuilding SSAO kernel");
 
 			let data = make_ssao_kernel().iter().copied()
 				.map(|v| [v.x, v.y, v.z, 0.0])
@@ -437,7 +436,7 @@ pub fn ssao_system(
 		let noise_dirty = ssao.noise.is_none() || ssao.noise_settings != ssao.old_noise_settings;
 		
 		if noise_dirty {
-			warn!("Rebuilding SSAO noise");
+			debug!("Rebuilding SSAO noise");
 			ssao.old_noise_settings = ssao.noise_settings;
 
 			let key = *ssao.noise.get_or_insert_with(|| {
@@ -468,7 +467,7 @@ pub fn ssao_system(
 		let render_dirty = ssao.render_settings_buffer.is_none() || ssao.render_settings != ssao.old_render_settings;
 
 		if render_dirty {
-			warn!("Rebuilding SSAO settings");
+			debug!("Rebuilding SSAO settings");
 			ssao.old_render_settings = ssao.render_settings;
 
 			let key = *ssao.render_settings_buffer.get_or_insert_with(|| {
@@ -500,7 +499,7 @@ pub fn ssao_system(
 			.unwrap_or(true);
 
 		if output_dirty {
-			warn!("Rebuilding SSAO output");
+			debug!("Rebuilding SSAO output");
 			let output_size = context.textures.get("output_texture").copied()
 					.and_then(|k| textures.get(k))
 					.unwrap().size;

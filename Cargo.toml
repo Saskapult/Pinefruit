@@ -18,7 +18,9 @@ members = [
 	"krender", 
 	"oktree",
 	"ekstensions",
-	"extensions/*",
+	"extensions/render",
+	"extensions/controls",
+	"extensions/player",
 ]
 
 [dependencies]
@@ -28,6 +30,7 @@ ekstensions = { path = "ekstensions" }
 render = { path = "extensions/render"}
 controls = { path = "extensions/controls" }
 player = { path = "extensions/player" }
+transform = { path = "extensions/transform" }
 
 env_logger = "0.11.3"
 log = "0.4"

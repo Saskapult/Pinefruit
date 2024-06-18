@@ -141,7 +141,7 @@ impl ViewportEntry {
 			let context = contexts.get(self.context).unwrap();
 			// let storage_provider = &;
 			let bundle = {
-				// profiling::scope!("Render Bundle");
+				profiling::scope!("Render Bundle");
 				input.bundle(
 					&device, 
 					&textures, 
@@ -150,7 +150,7 @@ impl ViewportEntry {
 					&instance.shaders, 
 					&instance.world, 
 					&context, 
-					false,
+					true,
 				)
 			};
 
@@ -161,7 +161,7 @@ impl ViewportEntry {
 			});
 
 			{
-				// profiling::scope!("Render Execute");
+				profiling::scope!("Render Execute");
 				bundle.execute(
 					&device, 
 					&mut instance.shaders, 

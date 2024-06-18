@@ -899,7 +899,7 @@ impl ExtensionRegistry {
 	}
 
 	pub fn run(&self, world: &mut World, group: impl AsRef<str>) -> anyhow::Result<()> {
-		debug!("Running '{}'", group.as_ref());
+		trace!("Running '{}'", group.as_ref());
 		let (systems_deps, run_order) = self.workloads.get(&group.as_ref().to_string())
 			.with_context(|| "Failed to locate workload")?;
 
@@ -911,14 +911,14 @@ impl ExtensionRegistry {
 						let e = &self.extensions[*ei];
 						let s = &e.library.as_ref().unwrap().systems[*si];
 						trace!("Extension '{}' system '{}'", e.name, s.id);
-						profiling::scope!(format!("{}::{}", e.name, s.id));
+						profiling::scope!("System", format!("{}::{}", e.name, s.id));
 						let w = world as *const World;
 						(s.pointer)(w);
 					},
 					SystemIndex::Core(i) => {
 						let s = &self.core_systems[*i];
 						trace!("Core system '{}'", s.id);
-						profiling::scope!(format!("core::{}", s.id));
+						profiling::scope!("System", format!("core::{}", s.id));
 						let w = world as *const World;
 						(s.pointer)(w);
 					}
