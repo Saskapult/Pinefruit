@@ -49,43 +49,62 @@ fn rename_fn_to(input: proc_macro::TokenStream, to: &str) -> proc_macro::TokenSt
 	}.into()
 }
 
-// /// This is not a derive macro, and it should not be used by extensions. 
-// /// This function runs setup code for static extensions. 
-// #[proc_macro]
-// pub fn load_static_extensions(
-// 	_: proc_macro::TokenStream, 
-// ) -> proc_macro::TokenStream {
-// 	let cargo_toml_path = Path::new("Cargo.toml");
-// 	let cargo_toml_content = std::fs::read_to_string(cargo_toml_path)
-// 		.expect("Failed to read Cargo.toml");
-// 	let cargo_toml: toml::Table = toml::from_str(&cargo_toml_content)
-// 		.expect("Failed to parse Cargo.toml");
+/// This is not a derive macro, and it should not be used by extensions. 
+/// Looks for core extensions (those used by the main crate) and loads them. 
+/// Outputs an exclude list of core extension paths. 
+#[proc_macro]
+pub fn load_core_extensions(
+	_: proc_macro::TokenStream, 
+) -> proc_macro::TokenStream {
+	let extension_directory = Path::new("extensions");
 
-// 	let static_extensions = cargo_toml
-// 		.get("features").and_then(|v| v.as_table())
-// 		.expect("Cargo.toml is missing features section")
-// 		.get("static_extensions").and_then(|v| v.as_array())
-// 		.expect("static is missing from features section")
-// 		.iter().map(|v| v.as_str()).collect::<Option<Vec<_>>>().unwrap();
+	let cargo_toml_path = Path::new("Cargo.toml");
+	let cargo_toml_content = std::fs::read_to_string(cargo_toml_path)
+		.expect("Failed to read Cargo.toml");
+	let cargo_toml: toml::Table = toml::from_str(&cargo_toml_content)
+		.expect("Failed to parse Cargo.toml");
 
-// 	let dependencies = cargo_toml.get("dependencies").expect("no dependecies?!").as_table().unwrap();
-// 	let static_extension_paths = static_extensions.iter()
-// 		.map(|name| dependencies.get(*name).unwrap().get("path").and_then(|g| g.as_str()).unwrap())
-// 		.collect::<Vec<_>>();
+	let (
+		core_extension_names, 
+		core_extension_paths,
+	): (Vec<_>, Vec<_>) = cargo_toml
+		.get("dependencies").and_then(|v| v.as_table())
+		.expect("Cargo.toml is missing dependencies table")
+		// Core extensions have "path = '{extensions_directory}/blah'"
+		.iter().filter_map(|(name, v)| {
+			let path = Path::new(v.as_table()?.get("path")?.as_str()?);
+			let parent = Path::new(path.parent()?.file_name()?
+				.to_str().expect("No string?"));
+			(extension_directory == parent).then_some((name, path))
+		})
+		.unzip();
 
-// 	let static_extension_loads = static_extensions.into_iter().zip(static_extension_paths.into_iter()).map(|(n, p)| {
-// 		let g: proc_macro::TokenStream = quote::quote! {
-// 			info!("Loading static extension #n");
-// 			{
-// 				use #n;
-// 				#n::#n _load(&mut world)
-// 			}
-// 		}.into();
-// 		g
-// 	});
+	let core_extension_loads = core_extension_names.into_iter().map(|n| {
+		let crate_name = quote::format_ident!("{}", n);
+		let load_function_name = quote::format_ident!("{}_load", n);
+		let systems_function_name = quote::format_ident!("{}_systems", n);
+		quote::quote! {
+			info!("Loading core extension {}", #n);
+			{
+				use #crate_name;
+				#crate_name::#load_function_name(&mut esl);
+				#crate_name::#systems_function_name(&mut ess);
+			}
+		}
+	}).collect::<Vec<_>>();
 
-// 	let mut all_loads = proc_macro::TokenStream::new();
-// 	all_loads.extend(static_extension_loads);
+	let exclude_list = core_extension_paths.into_iter().map(|p| {
+		let s = p.to_str().expect("unexpected");
+		quote::quote! {
+			Path::new(#s)
+		}
+	}).collect::<Vec<_>>();
 
-// 	all_loads
-// }
+	quote::quote! {		
+		{
+			#( #core_extension_loads )*
+			use std::path::Path;
+			vec![#( #exclude_list ),*]
+		}
+	}.into()
+}

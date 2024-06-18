@@ -98,7 +98,7 @@ impl GameWidget {
 
 
 pub fn show_workgroup_info(ui: &mut egui::Ui, registry: &ExtensionRegistry) {
-	let wg_info = registry.workgroup_info();
+	let wg_info = registry.workload_info();
 
 	for (name, systems, order) in wg_info {
 		ui.collapsing(name, |ui| {

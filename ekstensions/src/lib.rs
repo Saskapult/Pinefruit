@@ -12,10 +12,8 @@ pub mod prelude {
 extern crate log;
 
 
-/// Use sccache rather than workspace directory. 
-/// TODO: Test whether this helps with anything. 
-/// Or maybe use this for things not in workspace? 
-const USE_SCCACHE: bool = false;
+/// Use sccache for crate extensions outside of the root workspace. 
+const USE_SCCACHE: bool = true;
 /// When testing to see if an extension is outdated, should we look in the .d file? 
 /// If false, we will miss some rebuilds. 
 /// When working on ekstensions, however, we will need to rebuild every extension. 
@@ -27,12 +25,31 @@ const DEEP_CHECKING: bool = false;
 const BATCHED_COMPILATION: bool = true;
 
 
+/// A macro which statically loads core extensions and registers dynamic extensions. 
+#[macro_export]
+macro_rules! load_extensions {
+	($world:expr, $extensions:expr) => {
+		{
+			let mut esl = ekstensions::ExtensionStorageLoader::new(&mut $world);
+			let mut systems = Vec::new();
+			let mut ess = ExtensionSystemsLoader::new(&mut systems);
+			let excludes = load_core_extensions!();
+
+			$extensions.init_directory("extensions", excludes.as_slice(), systems)
+		}
+	};
+}
+
 /// Used by load functions to register and describe storages. 
 pub struct ExtensionStorageLoader<'a> {
 	world: &'a mut World, 
 	storages: ExtensionStorages,
 }
 impl<'a> ExtensionStorageLoader<'a> {
+	pub fn new(world: &'a mut World) -> Self {
+		Self { world, storages: ExtensionStorages::default(), }
+	}
+
 	pub fn component<C: Component>(&mut self) -> &mut Self {
 		self.world.register_component::<C>();
 		self.storages.components.push(C::STORAGE_ID.to_string());
@@ -69,6 +86,10 @@ pub struct ExtensionSystemsLoader<'a> {
 	systems: &'a mut Vec<ExtensionSystem>,
 }
 impl<'a> ExtensionSystemsLoader<'a> {
+	pub fn new(systems: &'a mut Vec<ExtensionSystem>) -> Self {
+		Self { systems }
+	}
+
 	pub fn system<S: SystemFunction<'static, (), Q, R> + Copy + 'static, R, Q: Queriable<'static>>(
 		&mut self, 
 		group: impl AsRef<str>,
@@ -300,7 +321,7 @@ pub struct ExtensionEntry {
 	// Extracted from Cargo.toml or file name
 	pub name: String,
 	pub file_path: PathBuf, // The source file for this extension 
-	pub crate_path: Option<PathBuf>, // The crate used to build this extension file 
+	pub crate_path: Option<(PathBuf, bool)>, // The crate used to build this extension file, a bool for is in root workspace
 	pub library: Option<ExtensionLibrary>,
 }
 impl ExtensionEntry {
@@ -361,7 +382,7 @@ impl ExtensionEntry {
 		Ok(Self {
 			name: name.to_string(),
 			file_path,
-			crate_path: Some(path.as_ref().to_path_buf()),
+			crate_path: Some((path.as_ref().to_path_buf(), in_workspace)),
 			library: None,
 		})
 	}
@@ -400,12 +421,16 @@ impl ExtensionEntry {
 			trace!("Rebuilding extension from crate");
 			assert!(self.crate_path.is_some());
 
-			// This assumes the crate is part of our workspace! 
+			let (path, in_ws) = self.crate_path.as_ref().unwrap();
 			let mut command = std::process::Command::new("cargo");
-			command.arg("build").arg("-p").arg(&self.name);
-
-			if USE_SCCACHE {
-				command.env("RUSTC_WRAPPER", "/usr/bin/sccache");
+			command.arg("build");
+			if *in_ws {
+				command.arg("-p").arg(&self.name);
+			} else {
+				command.current_dir(path.canonicalize().unwrap());
+				if USE_SCCACHE {
+					command.env("RUSTC_WRAPPER", "/usr/bin/sccache");
+				}
 			}
 
 			let status = command.status()
@@ -439,7 +464,7 @@ impl ExtensionEntry {
 	}
 
 	pub fn dirty_level(&self) -> (DirtyLevel, SystemTime) {
-		let src_mod = self.crate_path.as_ref().map(|path| {
+		let src_mod = self.crate_path.as_ref().map(|(path, _)| {
 			let mut last_mod = src_files_last_modified(path);
 			if DEEP_CHECKING {
 				let dep_file_path = Path::new("target/debug").join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
@@ -483,6 +508,12 @@ pub struct LoadStatus {
 }
 
 
+enum SystemIndex {
+	Core(usize),
+	External((usize, usize)),
+}
+
+
 pub struct ExtensionRegistry {
 	// Extension entries build themselves upon being created
 	// This is bad 
@@ -493,15 +524,23 @@ pub struct ExtensionRegistry {
 	// registration_queue: Vec<PathBuf>,
 
 	extensions: Vec<ExtensionEntry>,
+	// The paths to core systems
+	// These will be excluded from loading and reloads (TODO)
+	core_paths: Vec<PathBuf>,
+	core_systems: Vec<ExtensionSystem>,
 
 	// Rebuilt when anything changes
-	systems: HashMap<String, (Vec<((usize, usize), Vec<usize>)>, Vec<Vec<usize>>)>,
+	// workloads 
+	// name -> (stages((extension index, system index), depends on (index within this vec)), stages)
+	workloads: HashMap<String, (Vec<(SystemIndex, Vec<usize>)>, Vec<Vec<usize>>)>,
 }
 impl ExtensionRegistry {
 	pub fn new() -> Self {
 		Self {
 			extensions: Vec::new(),
-			systems: HashMap::new(),
+			core_paths: Vec::new(),
+			core_systems: Vec::new(),
+			workloads: HashMap::new(),
 		}
 	}
 
@@ -512,7 +551,7 @@ impl ExtensionRegistry {
 		// A hard relaod involves dropping the extension library and loading it again
 		let mut load_queue = HashMap::new();
 
-		let mut rebuilds = Vec::new();
+		let mut batchable_rebuilds = Vec::new();
 
 		// Find dirty/unloaded extensions 
 		trace!("Look for rebuilds");
@@ -521,7 +560,10 @@ impl ExtensionRegistry {
 				DirtyLevel::Rebuild => {
 					trace!("Queue rebuild extension '{}'", self.extensions[i].name);
 					load_queue.insert(i, true);
-					rebuilds.push(i);
+					// If crate and in root workspace
+					if self.extensions[i].crate_path.as_ref().map(|(_, b)| *b).unwrap_or(false) {
+						batchable_rebuilds.push(i);
+					}
 					// Push dependents to reload queue
 					// for (j, e) in self.extensions.iter().enumerate() {
 					// 	if e.load_dependencies.contains(&self.extensions[i].name) {
@@ -556,8 +598,8 @@ impl ExtensionRegistry {
 		});
 
 		if BATCHED_COMPILATION {
-			if rebuilds.len() > 1 {
-				warn!("Found rebuilds for {} crate extensions, using batch compilation", rebuilds.len());
+			if batchable_rebuilds.len() > 1 {
+				warn!("Found rebuilds for {} core extensions, using batch compilation", batchable_rebuilds.len());
 				let mut command = std::process::Command::new("cargo");
 				command.arg("build").arg("--all");
 				// command.arg("build").arg("-p");
@@ -643,29 +685,35 @@ impl ExtensionRegistry {
 			});
 		}
 
-		self.rebuild_systems()?;
+		self.rebuild_workloads()?;
 		
-		Ok(())
-	}
-
-	pub fn register(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-		let e = ExtensionEntry::new_crate(path)?;
-		self.extensions.push(e);
-
 		Ok(())
 	}
 
 	/// Registers all folders in a path as extensions. 
 	/// Should registration fail, the path is skipped. 
-	pub fn register_all_in(&mut self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-		let dirs = std::fs::read_dir(path)?
+	pub fn init_directory(
+		&mut self, 
+		path: impl AsRef<Path>,
+		core_extensions: &[impl AsRef<Path>],
+		core_systems: Vec<ExtensionSystem>,
+	) -> anyhow::Result<()> {
+		debug!("{} core systems: {:?}", core_systems.len(), core_systems.iter().map(|s| (&s.group, &s.id)).collect::<Vec<_>>());
+		self.core_systems = core_systems;
+		self.core_paths = core_extensions.iter().map(|v| v.as_ref().canonicalize().expect("Core extension path DNE")).collect();
+
+		let dirs = std::fs::read_dir(path.as_ref())?
 			.filter_map(|d| d.ok())
-			.map(|d| d.path())
-			.filter(|d| d.is_dir());
-		for d in dirs {
-			if let Err(e) = self.register(&d) {
-				error!("Failed to register {:?} - {:?}", d, e);
-			}
+			.map(|d| d.path().canonicalize().unwrap())
+			.filter(|d| d.is_dir())
+			.filter(|d| !self.core_paths.iter().any(|p| p == d))
+			.collect::<Vec<_>>();
+
+		debug!("Found {} extensions in {:?}: {:?}", dirs.len(), path.as_ref(), dirs);
+
+		for path in dirs {
+			let e = ExtensionEntry::new_crate(path)?;
+			self.extensions.push(e);
 		}
 
 		Ok(())
@@ -687,10 +735,13 @@ impl ExtensionRegistry {
 
 	/// Returns work group name, contents, and run order. 
 	/// Used for displaying visually. 
-	pub fn workgroup_info(&self) -> Vec<(&String, Vec<(&String, &Vec<usize>)>, &Vec<Vec<usize>>)> {
-		self.systems.iter().map(|(n, (s, o))| {
+	pub fn workload_info(&self) -> Vec<(&String, Vec<(&String, &Vec<usize>)>, &Vec<Vec<usize>>)> {
+		self.workloads.iter().map(|(n, (s, o))| {
 			let systems = s.iter()
-				.map(|((ei, si), d)| (&self.extensions[*ei].library.as_ref().unwrap().systems[*si].id, d))
+				.map(|(si, d)| match si {
+					SystemIndex::External((ei, si)) => (&self.extensions[*ei].library.as_ref().unwrap().systems[*si].id, d),
+					SystemIndex::Core(i) => (&self.core_systems[*i].id, d),
+				})
 				.collect::<Vec<_>>();
 			(n, systems, o)
 		}).collect::<Vec<_>>()
@@ -698,27 +749,41 @@ impl ExtensionRegistry {
 
 	/// Creates a list of systems and their dependencies. 
 	// (Vec<(usize, usize)>, Vec<Vec<usize>>)
-	fn get_systems_and_deps(&self, group: impl AsRef<str>) -> Vec<((usize, usize), Vec<usize>)> {
+	fn get_systems_and_deps(&self, group: impl AsRef<str>) -> Vec<(SystemIndex, Vec<usize>)> {
 		// Vec of (extension index, system index in extension)
 		let systems = self.extensions.iter().enumerate()
 			.flat_map(|(i, e)| {
 				e.library.as_ref().unwrap().systems.iter().enumerate()
 					.filter(|(_, s)| s.group == group.as_ref())
-					.map(move |(j, _)| (i, j))
-			}).collect::<Vec<_>>();
+					.map(move |(j, _)| SystemIndex::External((i, j)))
+			})
+			.chain((0..self.core_systems.len())
+				.filter(|i| self.core_systems[*i].group == group.as_ref())
+				.map(|i| SystemIndex::Core(i))
+			)
+			.collect::<Vec<_>>();
 		
-		let deps = systems.iter().enumerate().map(|(i, &(ei, si))| {
-			let s = &self.extensions[ei].library.as_ref().unwrap().systems[si];
+		let deps = systems.iter().enumerate().map(|(i, si)| {
+			let s = match si {
+				SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
+				SystemIndex::Core(i) => &self.core_systems[*i],
+			};
 			// Find group system index of dependencies
 			let mut deps = s.run_after.iter()
 				.map(|id: &String| systems.iter()
-					.map(|&(ei, si)| &self.extensions[ei].library.as_ref().unwrap().systems[si])
+					.map(|si| match si {
+						SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
+						SystemIndex::Core(i) => &self.core_systems[*i],
+					})
 					.position(|s| s.id.eq(id)).expect("Failed to find dependent system"))
 				.collect::<Vec<_>>();
 			// Add others to dependencies if they want to be run before
-			for (j, &(ej, sj)) in systems.iter().enumerate() {
+			for (j, si) in systems.iter().enumerate() {
 				if i == j { continue }
-				let d = &self.extensions[ej].library.as_ref().unwrap().systems[sj];
+				let d = match si {
+					SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
+					SystemIndex::Core(i) => &self.core_systems[*i],
+				};
 				if d.run_before.contains(&s.id) {
 					trace!("'{}' runs before '{}' so '{}' depends on '{}'", d.id, s.id, s.id, d.id);
 					deps.push(j);
@@ -731,7 +796,7 @@ impl ExtensionRegistry {
 	}
 
 	/// Constructs a run order from a list of systems and their dependencies. 
-	fn construct_run_order(&self, systems_deps: &Vec<((usize, usize), Vec<usize>)>) -> Vec<Vec<usize>> {
+	fn construct_run_order(&self, systems_deps: &Vec<(SystemIndex, Vec<usize>)>) -> Vec<Vec<usize>> {
 		// let systems_deps = self.get_systems_and_deps(group.as_ref());
 		let mut queue = (0..systems_deps.len()).collect::<Vec<_>>();
 
@@ -757,19 +822,28 @@ impl ExtensionRegistry {
 					for (i, stage) in stages.into_iter().enumerate() {
 						error!("{}:", i);
 						for j in stage {
-							let ((ei, si), _d) = &systems_deps[j];
-							let s = &self.extensions[*ei].library.as_ref().unwrap().systems[*si];
+							let (si, _d) = &systems_deps[j];
+							let s = match si {
+								SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
+								SystemIndex::Core(i) => &self.core_systems[*i],
+							};
 							error!("\t'{}'", s.id);
 						}
 					}
 					error!("Remaining items are:");
 					for i in queue {
-						let ((ei, si), d) = &systems_deps[i];
-						let s = &self.extensions[*ei].library.as_ref().unwrap().systems[*si];
+						let (si, d) = &systems_deps[i];
+						let s = match si {
+							SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
+							SystemIndex::Core(i) => &self.core_systems[*i],
+						};
 						let n = &s.id;
 						let d = d.iter().copied().map(|i| {
-							let ((ei, si), _d) = &systems_deps[i];
-							let s = &self.extensions[*ei].library.as_ref().unwrap().systems[*si];
+							let (si, _d) = &systems_deps[i];
+							let s = match si {
+								SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
+								SystemIndex::Core(i) => &self.core_systems[*i],
+							};
 							&s.id
 						}).collect::<Vec<_>>();
 						error!("'{}' - {:?}", n, d);
@@ -784,7 +858,7 @@ impl ExtensionRegistry {
 		stages
 	}
 
-	fn rebuild_systems(&mut self) -> anyhow::Result<()> {
+	fn rebuild_workloads(&mut self) -> anyhow::Result<()> {
 		info!("Rebuilding workloads");
 
 		let mut groups2 = HashMap::new();
@@ -810,25 +884,45 @@ impl ExtensionRegistry {
 			groups2.insert(group.clone(), (systems_deps, run_order));
 		}
 
-		self.systems = groups2;
+		self.workloads = groups2;
+
+		let wi = self.workload_info();
+		debug!("Created {} workloads:", wi.len());
+		for (name, systems, _) in wi {
+			debug!("\t{}: ", name);
+			for (system_name, _) in systems {
+				debug!("\t\t{}", system_name);
+			}
+		}
 
 		Ok(())
 	}
 
 	pub fn run(&self, world: &mut World, group: impl AsRef<str>) -> anyhow::Result<()> {
 		debug!("Running '{}'", group.as_ref());
-		let (systems_deps, run_order) = self.systems.get(&group.as_ref().to_string())
+		let (systems_deps, run_order) = self.workloads.get(&group.as_ref().to_string())
 			.with_context(|| "Failed to locate workload")?;
 
 		for stage in run_order {
 			for &i in stage {
-				let ((ei, si), _) = &systems_deps[i];
-				let e = &self.extensions[*ei];
-				let s = &e.library.as_ref().unwrap().systems[*si];
-				trace!("Extension '{}' system '{}'", e.name, s.id);
-				profiling::scope!(format!("{}::{}", e.name, s.id));
-				let w = world as *const World;
-				(s.pointer)(w);
+				let (si, _) = &systems_deps[i];
+				match si {
+					SystemIndex::External((ei, si)) => {
+						let e = &self.extensions[*ei];
+						let s = &e.library.as_ref().unwrap().systems[*si];
+						trace!("Extension '{}' system '{}'", e.name, s.id);
+						profiling::scope!(format!("{}::{}", e.name, s.id));
+						let w = world as *const World;
+						(s.pointer)(w);
+					},
+					SystemIndex::Core(i) => {
+						let s = &self.core_systems[*i];
+						trace!("Core system '{}'", s.id);
+						profiling::scope!(format!("core::{}", s.id));
+						let w = world as *const World;
+						(s.pointer)(w);
+					}
+				}
 			}
 		} 
 

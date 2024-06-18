@@ -403,9 +403,6 @@ pub fn local_control_system(
 	mut controls: CompMut<ControlComponent>,
 	map: Res<ControlMap>,
 ) {
-	info!("{} entities have a local input component", inputs.len());
-	info!("{} entities have a control component", controls.len());
-
 	for (input, control) in (&mut inputs, &mut controls).iter() {
 		let events = input.receiver.try_iter().collect::<Vec<_>>();
 		control.next_tick(Instant::now());
