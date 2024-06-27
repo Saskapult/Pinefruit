@@ -299,20 +299,20 @@ pub fn output_texture_system(
 				let d = textures.get_mut(k).unwrap();
 				d.set_size(resolution.width, resolution.height, 1);
 			} else {
-				let t = Texture::new(
+				let t = Texture::new_d2(
 					"output_texture", 
 					wgpu::TextureFormat::Rgba8UnormSrgb.into(), 
 					resolution.width, resolution.height, 
-					1, false, false, 
+					1, false, false, false, 
 				).with_usages(wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT);
 				let key = textures.insert(t);
 				context.insert_texture("output_texture", key);
 
-				let d = textures.insert(Texture::new(
+				let d = textures.insert(Texture::new_d2(
 					"depth", 
 					wgpu::TextureFormat::Depth32Float.into(), 
 					resolution.width, resolution.height, 
-					1, false, false, 
+					1, false, false, false, 
 				).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
 				context.insert_texture("depth", d);
 			}
@@ -441,7 +441,7 @@ pub fn ssao_system(
 
 			let key = *ssao.noise.get_or_insert_with(|| {
 				trace!("Initialize SSAO noise");
-				let key = textures.insert(Texture::new(
+				let key = textures.insert(Texture::new_d2(
 					"ssao noise", 
 					TextureFormat::Rgba32Float, 
 					ssao.noise_settings.width, 
@@ -449,6 +449,7 @@ pub fn ssao_system(
 					1, 
 					false,
 					true,
+					false, 
 				));
 				context.insert_texture("ssao noise", key);
 				key
@@ -508,7 +509,7 @@ pub fn ssao_system(
 
 			let key = *ssao.output.get_or_insert_with(|| {
 				trace!("Initialize SSAO output");
-				let key = textures.insert(Texture::new(
+				let key = textures.insert(Texture::new_d2(
 					"ssao output", 
 					TextureFormat::Rgba8Unorm, 
 					width, 
@@ -516,6 +517,7 @@ pub fn ssao_system(
 					1, 
 					false,
 					false,
+					false, 
 				).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
 				context.insert_texture("ssao output", key);
 				key
@@ -625,7 +627,7 @@ pub fn context_albedo_system(
 
 					let key = *albedo.texture.get_or_insert_with(|| {
 						trace!("Initialize albedo texture");
-						let key = textures.insert(Texture::new(
+						let key = textures.insert(Texture::new_d2(
 							"ssao output", 
 							TextureFormat::Rgba8Unorm, 
 							albedo.width, 
@@ -633,6 +635,7 @@ pub fn context_albedo_system(
 							1, 
 							false,
 							false,
+							false, 
 						).with_usages(wgpu::TextureUsages::RENDER_ATTACHMENT));
 						context.insert_texture("albedo", key);
 						key

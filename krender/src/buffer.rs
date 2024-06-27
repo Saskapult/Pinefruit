@@ -38,10 +38,10 @@ impl BufferManager {
 	}
 	
 	/// Bind unbound and dirty buffers.
-	pub(crate) fn bind(&mut self, device: &wgpu::Device, bind_groups: &BindGroupManager) {
+	pub(crate) fn update_bindings(&mut self, device: &wgpu::Device, bind_groups: &BindGroupManager) {
 		for (_, b) in self.buffers.iter_mut() {
 			if b.dirty.load(Ordering::Relaxed) {
-				b.rebuild(device, bind_groups);
+				b.rebind(device, bind_groups);
 			}
 		}
 	}
@@ -215,11 +215,7 @@ impl Buffer {
 		}
 	}
 
-	// Wipes buffer contents.
-	// We could keep an old buffer and use copy_buffer_to_buffer to move the stuff over.
-	// Then we can drop the old one.
-	// We will need an encoder for that though. 
-	pub(crate) fn rebuild(
+	pub(crate) fn rebind(
 		&mut self, 
 		device: &wgpu::Device, 
 		bind_groups: &BindGroupManager,

@@ -129,12 +129,10 @@ pub fn prepare_for_render(
 	info!("Bind textures");
 	// Textures are bound
 	textures.update_bindings(device, queue, bind_groups);
-	// Queued work is done
-	textures.do_queued_writes(queue);
 
 	info!("Bind buffers");
 	// Buffers are bound
-	buffers.bind(device, bind_groups);
+	buffers.update_bindings(device, bind_groups);
 	
 
 	info!("Bind the bind groups");

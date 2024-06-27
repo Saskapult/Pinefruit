@@ -96,14 +96,14 @@ impl<'a> RenderBundle<'a> {
 				profiling::scope!("target");
 				let color_attachments = target.colour_attachments.iter().map(|&(attachment, resolve, ops)| {
 					Some(wgpu::RenderPassColorAttachment {
-						view: &textures.get(attachment)
+						view: textures.get(attachment)
 							.expect("texture not found")
-							.binding()
-							.expect("texture not bound").view,
-						resolve_target: resolve.and_then(|r| Some(&textures.get(r)
-							.unwrap()
-							.binding()
-							.unwrap().view)),
+							.view()
+							.expect("texture not bound"),
+						resolve_target: resolve.and_then(|r| Some(textures.get(r)
+							.expect("texture not found")
+							.view()
+							.expect("texture not bound"))),
 						ops,
 					})
 				}).collect::<Vec<_>>();
@@ -113,10 +113,10 @@ impl<'a> RenderBundle<'a> {
 					color_attachments: color_attachments.as_slice(), 
 					depth_stencil_attachment: target.depth_attachment.and_then(|(d, depth_ops)| {
 						Some(wgpu::RenderPassDepthStencilAttachment {
-							view: &textures.get(d)
+							view: textures.get(d)
 								.unwrap()
-								.binding()
-								.unwrap().view,
+								.view()
+								.unwrap(),
 							depth_ops: Some(depth_ops),
 							stencil_ops: None,
 						})

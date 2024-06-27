@@ -161,6 +161,7 @@ impl ViewportEntry {
 			});
 
 			buffers.do_writes(&queue, &mut encoder);
+			textures.do_writes(&queue, &mut encoder);
 
 			{
 				profiling::scope!("Render Execute");
@@ -190,14 +191,14 @@ impl ViewportEntry {
 		if let Some(id) = self.display_texture {
 			graphics.egui_renderer.update_egui_texture_from_wgpu_texture(
 				&graphics.device, 
-				&texture.binding().unwrap().view, 
+				texture.view().unwrap(), 
 				wgpu::FilterMode::Linear, 
 				id,
 			);
 		} else {
 			let id = graphics.egui_renderer.register_native_texture(
 				&graphics.device, 
-				&texture.binding().unwrap().view,
+				texture.view().unwrap(),
 				wgpu::FilterMode::Linear,
 			);
 			self.display_texture = Some(id);

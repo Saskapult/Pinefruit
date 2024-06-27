@@ -47,7 +47,7 @@ impl BindGroupDescriptor {
 				let resource = match slot {
 					BindGroupEntryContentDescriptor::Buffer(key) => buffers.get(*key).unwrap().binding.as_ref().unwrap().as_entire_binding(),
 					BindGroupEntryContentDescriptor::Texture(key) => wgpu::BindingResource::TextureView({
-						let t= &textures.get(*key).unwrap().binding().unwrap().view;
+						let t = textures.get(*key).unwrap().view().unwrap();
 						info!("{}", textures.get(*key).unwrap().label);
 						t
 					}),

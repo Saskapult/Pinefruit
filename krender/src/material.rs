@@ -153,12 +153,12 @@ impl MaterialEntry {
 								trace!("extension is {:?}", path.extension());
 								if path.extension().and_then(|e| Some(e.eq(OsStr::new("ron")))).unwrap_or(false) {
 									trace!("That is a texture specification!");
-									let texture = Texture::read_specification(path).unwrap();
+									let texture = Texture::from_specification_path(path).unwrap();
 									textures.insert(texture);
 
 								} else {
 									let name = path.file_name().unwrap().to_str().unwrap();
-									let texture = Texture::new_from_path(name, path, *format, false);
+									let texture = Texture::from_d2_path(name, path, *format, false);
 									textures.insert(texture);
 								}								
 							}
