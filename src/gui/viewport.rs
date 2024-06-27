@@ -155,10 +155,12 @@ impl ViewportEntry {
 			};
 
 			meshes.bind_unbound(&device);
-
+			
 			let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 				label: None,
 			});
+
+			buffers.do_writes(&queue, &mut encoder);
 
 			{
 				profiling::scope!("Render Execute");
