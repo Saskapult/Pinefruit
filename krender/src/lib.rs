@@ -134,9 +134,7 @@ pub fn prepare_for_render(
 
 	info!("Bind buffers");
 	// Buffers are bound
-	buffers.update_bindings(device, bind_groups);
-	// Queued work is done
-	buffers.do_queued_writes(queue);
+	buffers.bind(device, bind_groups);
 	
 
 	info!("Bind the bind groups");

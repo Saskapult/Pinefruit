@@ -518,11 +518,11 @@ impl Texture {
 		}
 	}
 
-	fn add_dependent_bind_group(&self, bind_group: BindGroupKey) {
+	pub(crate) fn add_dependent_bind_group(&self, bind_group: BindGroupKey) {
 		self.bind_groups.write().insert(bind_group);
 	}
 
-	fn remove_dependent_bind_group(&self, bind_group: BindGroupKey) {
+	pub(crate) fn remove_dependent_bind_group(&self, bind_group: BindGroupKey) {
 		self.bind_groups.write().remove(&bind_group);
 	}
 

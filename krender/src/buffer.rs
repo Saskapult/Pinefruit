@@ -1,22 +1,8 @@
-//! I've decided that if we ever need to know the contents of a buffer, it will have to be mapped.
-//! 
-//! A buffer entry is created when a buffer is requested.
-//! This allows us to collect buffer usages.
-//! When it is written to we create it.
-//! I haven't fully thought this through.
-//! Rebinding (with new usages) is the same thing?
-//! What about the size thingy, how do we know that?
-//! 
-//! If we try to write to the buffer before it is created, we can just queue that write!
-//! 
-//! Does `Queue::write_buffer` require the buffer to be `CPY_DST`? 
-//! 
-
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use std::{collections::{HashMap, HashSet}, sync::atomic::{AtomicBool, Ordering}};
-
 use crate::{BufferKey, MaterialKey, RenderContextKey, BindGroupKey, prelude::BindGroupManager};
+
 
 
 #[derive(Debug)]
@@ -47,42 +33,12 @@ impl BufferManager {
 		self.buffers.get_mut(key)
 	}
 	
-	pub fn key(&self, id: impl Into<String>) -> Option<BufferKey> {
+	pub fn key_of(&self, id: impl Into<String>) -> Option<BufferKey> {
 		self.buffers_by_id.get(&id.into()).cloned()
 	}
-
-	pub fn add_usages(&self, key: BufferKey, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
-		if let Some(b) = self.buffers.get(key) {
-			b.add_usages(material, context, usages);
-		} else {
-			warn!("Tried to add dependent material to nonexistent buffer");
-		}
-	}
-	pub fn remove_usages(&self, key: BufferKey, material: MaterialKey, context: RenderContextKey) {
-		if let Some(b) = self.buffers.get(key) {
-			b.remove_usages(material, context);
-		} else {
-			warn!("Tried to remove dependent material from nonexistent buffer");
-		}
-	}
-
-	pub fn add_dependent_bind_group(&self, key: BufferKey, bind_group: BindGroupKey) {
-		if let Some(b) = self.buffers.get(key) {
-			b.add_dependent_bind_group(bind_group);
-		} else {
-			warn!("Tried to add dependent bind group to nonexistent buffer");
-		}
-	}
-	pub fn remove_dependent_bind_group(&self, key: BufferKey, bind_group: BindGroupKey) {
-		if let Some(b) = self.buffers.get(key) {
-			b.remove_dependent_bind_group(bind_group);
-		} else {
-			warn!("Tried to remove dependent bind group from nonexistent buffer");
-		}
-	}
 	
-	/// Bind or rebind buffers 
-	pub fn update_bindings(&mut self, device: &wgpu::Device, bind_groups: &BindGroupManager) {
+	/// Bind unbound and dirty buffers.
+	pub(crate) fn bind(&mut self, device: &wgpu::Device, bind_groups: &BindGroupManager) {
 		for (_, b) in self.buffers.iter_mut() {
 			if b.dirty.load(Ordering::Relaxed) {
 				b.rebuild(device, bind_groups);
@@ -90,10 +46,10 @@ impl BufferManager {
 		}
 	}
 
-	pub fn do_queued_writes(&mut self, queue: &wgpu::Queue) {
-		info!("Doing queued writes");
+	/// Copy data from queued writes and previous bindings.
+	pub fn do_writes(&mut self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder) {
 		for (_, b) in self.buffers.iter_mut() {
-			b.update(queue);
+			b.do_writes(queue, encoder);
 		}
 	}
 }
@@ -102,23 +58,24 @@ impl BufferManager {
 #[derive(Debug)]
 pub struct Buffer {
 	pub name: String,
-	pub size: u64,
+	size: u64,
 	
-	readable: bool, 
+	readable: bool, // Currently unused  
 	writable: bool,
-	persistent: bool,
+	persistent: bool, // Should buffer contents be persisted when rebinding? 
 	queued_writes: Vec<(wgpu::BufferAddress, Vec<u8>)>, // This is used when trying to write to a buffer that is not yet bound
 
-	// Some iff the buffer is meant to be read from
-	staging: Option<Option<(wgpu::Buffer, AtomicBool)>>, // Bool is if mapped
-	// Some iff the buffer is meant to be resized
-	// previous: Option<Option<wgpu::Buffer>>,
-
-	pub base_usages: wgpu::BufferUsages,
+	base_usages: wgpu::BufferUsages,
 	derived_usages: RwLock<Vec<(MaterialKey, RenderContextKey, wgpu::BufferUsages)>>,
+	// Set when Self::add_usages or Self::remove_usages detects a change in usages
+	dirty: AtomicBool, 
 
-	dirty: AtomicBool, // true iff needs to be rebound
-	pub binding: Option<wgpu::Buffer>,
+	pub(crate) binding: Option<wgpu::Buffer>,
+	// If this is Some, then we need to copy the buffer's contents into the current binding
+	binding_previous: Option<wgpu::Buffer>,
+
+	// Tracks what bind groups include this buffer 
+	// If this is empty, then we can unload the buffer (TODO: that)
 	bind_groups: RwLock<HashSet<BindGroupKey>>,
 }
 impl Buffer {
@@ -127,12 +84,12 @@ impl Buffer {
 		size: u64, 
 		readable: bool, 
 		writable: bool,
-		persistent: bool, // Retain data when rebound
+		persistent: bool, 
 	) -> Self {
 		let mut base_usages = wgpu::BufferUsages::empty();
 		if writable { base_usages |= wgpu::BufferUsages::COPY_DST; }
 		if readable { base_usages |= wgpu::BufferUsages::COPY_SRC; }
-		if persistent { base_usages |= wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_DST; }
+		if persistent { base_usages |= wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC; }
 
 		Self {
 			name: name.into(),
@@ -142,10 +99,10 @@ impl Buffer {
 			writable,
 			persistent,
 			queued_writes: Vec::new(),
-			staging: readable.then(|| None),
 			derived_usages: RwLock::new(Vec::new()),
 			dirty: AtomicBool::new(true),
 			binding: None,
+			binding_previous: None,
 			bind_groups: RwLock::new(HashSet::new()),
 		}
 	}
@@ -176,17 +133,20 @@ impl Buffer {
 		self
 	}
 
-	pub fn read(&self) -> (wgpu::BufferSlice, crossbeam_channel::Receiver<Result<(), wgpu::BufferAsyncError>>) {
-		assert!(self.readable, "Buffer '{}' is not readable!", self.name);
-		if let Some(binding) = self.binding.as_ref() {
-			let slice = binding.slice(..);
-			let (sender, receiver) = crossbeam_channel::unbounded();
-			slice.map_async(wgpu::MapMode::Read, move |v: Result<(), wgpu::BufferAsyncError>| sender.send(v).unwrap());
-			(slice, receiver)
-		} else {
-			todo!()
-		}
-	}
+	// TODO: this will not work becuase wgpu::BufferSlice has the liftime of this buffer reference 
+	// Perhaps we can create a new buffer, queue a copy to it, and then return it for mapping? 
+	// Can we find a way to make this work for read-write mappings? 
+	// pub fn read(&self) -> (wgpu::BufferSlice, crossbeam_channel::Receiver<Result<(), wgpu::BufferAsyncError>>) {
+	// 	assert!(self.readable, "Buffer '{}' is not readable!", self.name);
+	// 	if let Some(binding) = self.binding.as_ref() {
+	// 		let slice = binding.slice(..);
+	// 		let (sender, receiver) = crossbeam_channel::unbounded();
+	// 		slice.map_async(wgpu::MapMode::Read, move |v: Result<(), wgpu::BufferAsyncError>| sender.send(v).unwrap());
+	// 		(slice, receiver)
+	// 	} else {
+	// 		todo!()
+	// 	}
+	// }
 
 	pub fn write(&mut self, queue: &wgpu::Queue, offset: wgpu::BufferAddress, data: &[u8]) {
 		assert!(self.writable, "Buffer '{}' is not writable!", self.name);
@@ -212,7 +172,7 @@ impl Buffer {
 			.fold(self.base_usages, |a, u| a | u)
 	}
 
-	fn add_usages(&self, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
+	pub(crate) fn add_usages(&self, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
 		let current_usages = self.usages();
 		if current_usages | usages != current_usages {
 			trace!("Buffer '{}' is made invalid by an added material", self.name);
@@ -221,7 +181,7 @@ impl Buffer {
 		self.derived_usages.write().push((material, context, usages));
 	}
 
-	fn remove_usages(&self, material: MaterialKey, context: RenderContextKey) {
+	pub(crate) fn remove_usages(&self, material: MaterialKey, context: RenderContextKey) {
 		let old_usages = self.usages();
 		self.derived_usages.write().retain(|&(m, c, _)| (m, c) != (material, context));
 		let new_usages = self.usages();
@@ -231,39 +191,35 @@ impl Buffer {
 		}
 	}
 
-	fn add_dependent_bind_group(&self, bind_group: BindGroupKey) {
+	pub(crate) fn add_dependent_bind_group(&self, bind_group: BindGroupKey) {
 		self.bind_groups.write().insert(bind_group);
 	}
 
-	fn remove_dependent_bind_group(&self, bind_group: BindGroupKey) {
+	pub(crate) fn remove_dependent_bind_group(&self, bind_group: BindGroupKey) {
 		self.bind_groups.write().remove(&bind_group);
 	}
 
-	pub fn update(&mut self, queue: &wgpu::Queue) {
-		if let Some(Some((b, mapped))) = self.staging.as_ref() {
-			if mapped.swap(false, Ordering::Relaxed) {
-				debug!("Unmapping '{}' staging buffer", self.name);
-				b.unmap();
-			}
-		}
+	pub(crate) fn do_writes(&mut self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder) {
 		if let Some(binding) = self.binding.as_ref() {
+			if let Some(b) = self.binding_previous.take() {
+				warn!("Copy buffer '{}' previous binding to new", self.name);
+				encoder.copy_buffer_to_buffer(&b, 0, binding, 0, b.size());
+			}
+
 			for (i, (offset, data)) in self.queued_writes.drain(..).enumerate() {
 				debug!("Writing queued write {i} for buffer '{}'", self.name);
 				queue.write_buffer(binding, offset, data.as_slice());
 			}
 		} else {
-			warn!("Skipping queued writes for buffer '{}' because binding does not exist", self.name);
+			warn!("Skipping update for buffer '{}' because binding does not exist", self.name);
 		}
-		
-		// If settings differ then rebind idk
-		// Pass signal to rebuild dependents if you do that
 	}
 
 	// Wipes buffer contents.
 	// We could keep an old buffer and use copy_buffer_to_buffer to move the stuff over.
 	// Then we can drop the old one.
 	// We will need an encoder for that though. 
-	pub fn rebuild(
+	pub(crate) fn rebuild(
 		&mut self, 
 		device: &wgpu::Device, 
 		bind_groups: &BindGroupManager,
@@ -272,25 +228,11 @@ impl Buffer {
 			return;
 		}
 
-		let mut usages = self.usages();
+		let usages = self.usages();
 		debug!("Buffer '{}' binds with usages {:?}", self.name, usages);
 
-		// If we have a staging buffer then add CPY_SRC to usages and create staging buffer
-		if let Some(staging) = self.staging.as_mut() {
-			let mapped_at_creation = true;
-			let _ = staging.insert((device.create_buffer(&wgpu::BufferDescriptor {
-				label: Some(&*format!("{} staging buffer", self.name)), 
-				size: self.size, 
-				usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-				mapped_at_creation,
-			}), AtomicBool::new(mapped_at_creation)));
-
-			usages = usages | wgpu::BufferUsages::COPY_SRC
-		}
-		
-
 		if self.binding.is_some() {
-			trace!("Marking {} dependent bind groups as invalid", self.bind_groups.read().len());
+			trace!("Rebind marks {} dependent bind groups as invalid", self.bind_groups.read().len());
 			self.bind_groups.read().iter().for_each(|&key| bind_groups.mark_dirty(key));
 		}
 
@@ -301,16 +243,15 @@ impl Buffer {
 			mapped_at_creation: false,
 		});
 
+		let old_binding = self.binding.replace(new_binding);
 		if self.persistent {
-			if let Some(_) = self.binding.as_ref() {
-				warn!("Copy buffer contents to new binding");
-				println!("old usages {:?}", self.binding.as_ref().unwrap().usage());
-				todo!("Oh no that needs a command encoder!");
+			self.binding_previous = old_binding;
+			if self.binding_previous.is_some() {
+				warn!("Storing old binding for copy");
 			}
 		}
 
 		self.dirty.store(false, Ordering::Relaxed);
-		self.binding = Some(new_binding);
 	}
 }
 

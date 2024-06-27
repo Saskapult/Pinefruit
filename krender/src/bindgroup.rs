@@ -238,21 +238,36 @@ impl BindGroupManager {
 		} else {
 			let binding_config = e.0.clone();
 			
-			let key = self.bind_groups.insert(e.clone().into());
-			self.bind_group_by_slots.insert(e, key);
+			let bg_key = self.bind_groups.insert(e.clone().into());
+			self.bind_group_by_slots.insert(e, bg_key);
 
 			// Register as dependent
 			for bgecd in binding_config.iter().filter_map(|e| e.as_ref()) {
+				let buffer_add_dependent_bind_group = |k| {
+					if let Some(b) = buffers.get(k) {
+						b.add_dependent_bind_group(bg_key);
+					} else {
+						warn!("Tried to remove dependent bind group from nonexistent buffer");
+					}
+				};
+				let texture_add_dependent_bind_group = |k| {
+					if let Some(t) = textures.get(k) {
+						t.add_dependent_bind_group(bg_key);
+					} else {
+						warn!("Tried to remove dependent bind group from nonexistent texture");
+					}
+				};
+
 				match bgecd {
-					&BindGroupEntryContentDescriptor::Buffer(b) => buffers.add_dependent_bind_group(b, key),
-					BindGroupEntryContentDescriptor::Buffers(b) => b.iter().for_each(|&b| buffers.add_dependent_bind_group(b, key)),
-					&BindGroupEntryContentDescriptor::Texture(t) => textures.add_dependent_bind_group(t, key),
-					BindGroupEntryContentDescriptor::Textures(t) => t.iter().for_each(|&t| textures.add_dependent_bind_group(t, key)),
+					&BindGroupEntryContentDescriptor::Buffer(b) => buffer_add_dependent_bind_group(b),
+					BindGroupEntryContentDescriptor::Buffers(b) => b.iter().for_each(|&b| buffer_add_dependent_bind_group(b)),
+					&BindGroupEntryContentDescriptor::Texture(t) => texture_add_dependent_bind_group(t),
+					BindGroupEntryContentDescriptor::Textures(t) => t.iter().for_each(|&t| texture_add_dependent_bind_group(t)),
 					BindGroupEntryContentDescriptor::Sampler(_) => {},
 				}
 			}
 
-			key
+			bg_key
 		};
 		self.increment_counter(key);
 

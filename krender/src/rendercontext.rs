@@ -115,8 +115,12 @@ impl RenderContext {
 					for (texture, _) in binding.texture_usages {
 						textures.remove_dependent_material(texture, material_key, self.key);
 					}
-					for (buffer, _) in binding.buffer_usages {
-						buffers.remove_usages(buffer, material_key, self.key);
+					for (key, _) in binding.buffer_usages {
+						if let Some(b) = buffers.get(key) {
+							b.remove_usages(material_key, self.key);
+						} else {
+							warn!("Tried to remove dependent material from nonexistent buffer");
+						}
 					}
 
 					warn!("Todo: Decrement bind groups' usage counters");
@@ -143,7 +147,7 @@ impl RenderContext {
 									.ok_or(MaterialError::MaterialMappingMissingError(id.clone()))?;
 								let key = match data {
 									MaterialResourceLocation::Global(id) => match id {
-										GlobalResourceIdentifier::Label(label) => buffers.key(label),
+										GlobalResourceIdentifier::Label(label) => buffers.key_of(label),
 										GlobalResourceIdentifier::Path(_) => todo!("Buffers currently cannot be read! You must decide what format to use for this feature!"),
 									},
 									MaterialResourceLocation::Context(label) => self.buffers.get(label).cloned(),
@@ -159,7 +163,7 @@ impl RenderContext {
 									.iter()
 									.map(|&data| match data {
 										MaterialResourceLocation::Global(id) => match id {
-											GlobalResourceIdentifier::Label(label) => buffers.key(label),
+											GlobalResourceIdentifier::Label(label) => buffers.key_of(label),
 											GlobalResourceIdentifier::Path(_) => todo!("Buffers currently cannot be read! You must decide what format to use for this feature!"),
 										},
 										MaterialResourceLocation::Context(label) => self.buffers.get(label).cloned(),
@@ -174,7 +178,7 @@ impl RenderContext {
 								let keys = ids.iter()
 									.map(|data| match data {
 										MaterialResourceLocation::Global(id) => match id {
-											GlobalResourceIdentifier::Label(label) => buffers.key(label),
+											GlobalResourceIdentifier::Label(label) => buffers.key_of(label),
 											GlobalResourceIdentifier::Path(_) => todo!("Buffers currently cannot be read! You must decide what format to use for this feature!"),
 										},
 										MaterialResourceLocation::Context(label) => self.buffers.get(label).cloned(),
@@ -214,7 +218,7 @@ impl RenderContext {
 									.ok_or(MaterialError::MaterialMappingMissingError(id.clone()))?;
 								let key = match data {
 									MaterialResourceLocation::Global(id) => match id {
-										GlobalResourceIdentifier::Label(label) => buffers.key(label),
+										GlobalResourceIdentifier::Label(label) => buffers.key_of(label),
 										GlobalResourceIdentifier::Path(_) => todo!("Buffers currently cannot be read! You must decide what format to use for this feature!"),
 									},
 									MaterialResourceLocation::Context(label) => self.buffers.get(label).cloned(),
@@ -238,7 +242,11 @@ impl RenderContext {
 					textures.add_dependent_material(key, material_key, self.key, usages);
 				}
 				for &(key, usages) in buffer_usages.iter() {
-					buffers.add_usages(key, material_key, self.key, usages);
+					if let Some(b) = buffers.get(key) {
+						b.add_usages(material_key, self.key, usages);
+					} else {
+						warn!("Tried to add dependent material to nonexistent buffer");
+					}
 				}
 
 				self.material_bindings.insert(material_key, MaterialBinding { 

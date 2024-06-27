@@ -32,7 +32,7 @@ impl RRID {
 
 	pub fn buffer(&self, context: &RenderContext, buffers: &BufferManager) -> Option<BufferKey> {
 		match self {
-			RRID::Global(id) => buffers.key(id),
+			RRID::Global(id) => buffers.key_of(id),
 			RRID::Context(id) => todo!(),
 		}
 	}
