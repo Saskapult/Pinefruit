@@ -66,7 +66,7 @@ pub struct Buffer {
 	queued_writes: Vec<(wgpu::BufferAddress, Vec<u8>)>, // This is used when trying to write to a buffer that is not yet bound
 
 	base_usages: wgpu::BufferUsages,
-	derived_usages: RwLock<Vec<(MaterialKey, RenderContextKey, wgpu::BufferUsages)>>,
+	used_by_materials: RwLock<Vec<(MaterialKey, RenderContextKey, wgpu::BufferUsages)>>,
 	// Set when Self::add_usages or Self::remove_usages detects a change in usages
 	dirty: AtomicBool, 
 
@@ -99,7 +99,7 @@ impl Buffer {
 			writable,
 			persistent,
 			queued_writes: Vec::new(),
-			derived_usages: RwLock::new(Vec::new()),
+			used_by_materials: RwLock::new(Vec::new()),
 			dirty: AtomicBool::new(true),
 			binding: None,
 			binding_previous: None,
@@ -165,25 +165,25 @@ impl Buffer {
 	}
 
 	pub fn usages(&self) -> wgpu::BufferUsages {
-		self.derived_usages.read()
+		self.used_by_materials.read()
 			.iter()
 			.map(|(_, _, u)| u)
 			.copied()
 			.fold(self.base_usages, |a, u| a | u)
 	}
 
-	pub(crate) fn add_usages(&self, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
+	pub(crate) fn add_material_usage(&self, material: MaterialKey, context: RenderContextKey, usages: wgpu::BufferUsages) {
 		let current_usages = self.usages();
 		if current_usages | usages != current_usages {
 			trace!("Buffer '{}' is made invalid by an added material", self.name);
 			self.dirty.store(true, Ordering::Relaxed);
 		}
-		self.derived_usages.write().push((material, context, usages));
+		self.used_by_materials.write().push((material, context, usages));
 	}
 
-	pub(crate) fn remove_usages(&self, material: MaterialKey, context: RenderContextKey) {
+	pub(crate) fn remove_material_usage(&self, material: MaterialKey, context: RenderContextKey) {
 		let old_usages = self.usages();
-		self.derived_usages.write().retain(|&(m, c, _)| (m, c) != (material, context));
+		self.used_by_materials.write().retain(|&(m, c, _)| (m, c) != (material, context));
 		let new_usages = self.usages();
 		if old_usages != new_usages {
 			trace!("Buffer '{}' is made invalid by a removed material", self.name);
@@ -220,7 +220,7 @@ impl Buffer {
 		device: &wgpu::Device, 
 		bind_groups: &BindGroupManager,
 	) {
-		if self.derived_usages.read().is_empty() {
+		if self.used_by_materials.read().is_empty() {
 			return;
 		}
 
@@ -229,7 +229,13 @@ impl Buffer {
 
 		if self.binding.is_some() {
 			trace!("Rebind marks {} dependent bind groups as invalid", self.bind_groups.read().len());
-			self.bind_groups.read().iter().for_each(|&key| bind_groups.mark_dirty(key));
+			self.bind_groups.read().iter().for_each(|&key| {
+				if let Some(e) = bind_groups.get(key) {
+					e.mark_dirty();
+				} else {
+					warn!("Tried to mark a nonexistent bind group as dirty");
+				}
+			});
 		}
 
 		let new_binding = device.create_buffer(&wgpu::BufferDescriptor {

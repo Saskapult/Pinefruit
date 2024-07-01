@@ -1,7 +1,8 @@
 use std::{collections::HashMap, sync::atomic::{AtomicBool, Ordering}};
 use arrayvec::ArrayVec;
+use parking_lot::RwLock;
 use slotmap::SlotMap;
-use crate::{BindGroupKey, BindGroupLayoutKey, BufferKey, TextureKey, texture::TextureManager, buffer::BufferManager, SamplerKey};
+use crate::{buffer::BufferManager, texture::TextureManager, BindGroupKey, BindGroupLayoutKey, BufferKey, MaterialKey, RenderContextKey, SamplerKey, TextureKey};
 
 
 
@@ -113,17 +114,36 @@ impl From<ArrayVec::<wgpu::BindGroupLayoutEntry, 4>> for BindGroupLayoutEntry {
 
 
 #[derive(Debug)]
-struct BindGroupEntry {
+pub struct BindGroupEntry {
 	pub descriptor: BindGroupDescriptor,
 	pub binding: Option<wgpu::BindGroup>,
-	// Incremented for every material using this bind group
-	pub references: u32, 
+	// A list of all materials that use this bind group
+	// This could be a counter, but a list is better for debugging 
+	// Should maybe be a mutex instead
+	used_by_materials: RwLock<Vec<(MaterialKey, RenderContextKey)>>, 
+	// When a resource changes, it sets the dirty flag of all bind groups that have registered with it
 	pub dirty: AtomicBool,
+}
+impl BindGroupEntry {
+	pub(crate) fn add_material_usage(&self, material: MaterialKey, context: RenderContextKey) {
+		let mut materials = self.used_by_materials.write();
+		if !materials.contains(&(material, context)) {
+			materials.push((material, context));
+		}
+	}
+
+	pub(crate) fn remove_material_usage(&self, material: MaterialKey, context: RenderContextKey) {
+		self.used_by_materials.write().retain(|&(m, c)| (m, c) != (material, context));
+	}
+
+	pub fn mark_dirty(&self) {
+		self.dirty.store(true, Ordering::Relaxed);
+	}
 }
 impl From<([Option<BindGroupEntryContentDescriptor>; 4], BindGroupLayoutKey)> for BindGroupEntry {
 	fn from((slots, layout_key): ([Option<BindGroupEntryContentDescriptor>; 4], BindGroupLayoutKey)) -> Self {
 		Self {
-			descriptor: BindGroupDescriptor {slots, layout_key}, binding: None, references: 1, dirty: AtomicBool::new(true),
+			descriptor: BindGroupDescriptor {slots, layout_key}, binding: None, used_by_materials: RwLock::new(Vec::new()), dirty: AtomicBool::new(true),
 		}
 	}
 }
@@ -206,7 +226,7 @@ impl BindGroupManager {
 	}
 
 	/// Gets or creates a layout. 
-	pub fn i_need_a_layout(&mut self, layout_entries: ArrayVec::<wgpu::BindGroupLayoutEntry, 4>) -> BindGroupLayoutKey {
+	pub fn get_or_create_layout(&mut self, layout_entries: ArrayVec::<wgpu::BindGroupLayoutEntry, 4>) -> BindGroupLayoutKey {
 		if let Some(&g) = self.bind_group_layouts_by_content.get(&layout_entries) {
 			g
 		} else {
@@ -217,8 +237,8 @@ impl BindGroupManager {
 	}
 
 	/// Gets or creates a bind group. 
-	/// Increments the bind group's reference counter. 
-	pub fn i_need_a_bind_group(
+	/// Does **not** flag the bind group as being used by any materials! 
+	pub fn get_or_create_bind_group(
 		&mut self, 
 		binding_config: [Option<BindGroupEntryContentDescriptor>; 4], 
 		layout_key: BindGroupLayoutKey,
@@ -226,15 +246,14 @@ impl BindGroupManager {
 		buffers: &BufferManager, // Needed to add self as a dependent
 	) -> BindGroupKey {
 		let e = (binding_config, layout_key);
-		let key = if let Some(&g) = self.bind_group_by_slots.get(&e) {
-			g
+		let key = if let Some(&key) = self.bind_group_by_slots.get(&e) {
+			key
 		} else {
 			let binding_config = e.0.clone();
 			
 			let bg_key = self.bind_groups.insert(e.clone().into());
 			self.bind_group_by_slots.insert(e, bg_key);
 
-			// Register as dependent
 			for bgecd in binding_config.iter().filter_map(|e| e.as_ref()) {
 				let buffer_add_dependent_bind_group = |k| {
 					if let Some(b) = buffers.get(k) {
@@ -250,7 +269,6 @@ impl BindGroupManager {
 						warn!("Tried to remove dependent bind group from nonexistent texture");
 					}
 				};
-
 				match bgecd {
 					&BindGroupEntryContentDescriptor::Buffer(b) => buffer_add_dependent_bind_group(b),
 					BindGroupEntryContentDescriptor::Buffers(b) => b.iter().for_each(|&b| buffer_add_dependent_bind_group(b)),
@@ -262,27 +280,11 @@ impl BindGroupManager {
 
 			bg_key
 		};
-		self.increment_counter(key);
-
-		
 
 		key
 	}
 
-	pub fn increment_counter(&mut self, key: BindGroupKey) {
-		self.bind_groups.get_mut(key).unwrap().references += 1;
-	}
-
-	pub fn decrement_counter(&mut self, key: BindGroupKey) {
-		let t = self.bind_groups.get_mut(key).unwrap();
-		t.references -= 1;
-		if t.references == 0 {
-			// Maybe send a message to a removal queue?
-			todo!("Unload bind group")
-		}
-	}
-
-	pub fn make_or_fetch_sampler(&mut self, descriptor: SamplerDescriptor) -> SamplerKey {
+	pub fn get_or_create_sampler(&mut self, descriptor: SamplerDescriptor) -> SamplerKey {
 		if let Some(&(_, k)) = self.samplers_by_descriptor.iter().find(|(d, _)| descriptor.eq(d)) {
 			k
 		} else {
@@ -292,16 +294,8 @@ impl BindGroupManager {
 		}
 	}
 
-	pub fn get(&self, key: BindGroupKey) -> Option<&wgpu::BindGroup> {
-		self.bind_groups.get(key).and_then(|e| e.binding.as_ref())
-	}
-
-	pub fn mark_dirty(&self, key: BindGroupKey) {
-		if let Some(e) = self.bind_groups.get(key) {
-			e.dirty.store(true, Ordering::Relaxed);
-		} else {
-			warn!("Tried to mark a nonexistent bind group as dirty");
-		}
+	pub fn get(&self, key: BindGroupKey) -> Option<&BindGroupEntry> {
+		self.bind_groups.get(key)
 	}
 
 	pub fn update_bindings(
@@ -310,7 +304,7 @@ impl BindGroupManager {
 		textures: &TextureManager,
 		buffers: &BufferManager,
 	) {
-		// Do sampler stuff
+		// Create samplers 
 		for (d, b) in self.samplers.values_mut() {
 			if b.is_none() {
 				let desc: wgpu::SamplerDescriptor = (*d).into();
@@ -319,21 +313,82 @@ impl BindGroupManager {
 		}
 
 		// Remove those without references
-		self.bind_groups.retain(|_, v| v.references != 0);
+		self.bind_groups.retain(|k, v| {
+			if v.used_by_materials.read().len() == 0 {
+				debug!("Removing bind group {:?} (used by 0 materials)", k);
+				// assert!(!v.dirty.load(Ordering::Relaxed), "Bind group is dirty but is not used by any material!");
+				false
+			} else {
+				true
+			}
+		});
 
 		// Rebuild those with dirty flag
-		self.bind_groups.iter_mut()
-			.filter(|(_, e)| e.dirty.load(Ordering::Relaxed))
-			.for_each(|(k, e)| {
-				info!("Creating binding for bind group {:?}", k);
-				let entries = e.descriptor.entries(textures, buffers, &self.samplers);
+		for (key, entry) in self.bind_groups.iter_mut().filter(|(_, e)| e.dirty.load(Ordering::Relaxed)) {
+			debug!("Creating binding for bind group {:?}", key);
 
-				e.dirty.store(false, Ordering::Relaxed);
-				e.binding = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-					label: None,
-					layout: self.bind_group_layouts.get(e.descriptor.layout_key).unwrap().layout.as_ref().unwrap(),
-					entries: entries.as_slice(),
-				}));
-			});
+			// Buffer and texture data must be extracted before creating any wgpu::BindingResource::BufferArray
+			// because otherwise we cannot create a collection that both lives long enough and remains immutable 
+			let buffer_array_data = entry.descriptor.slots.iter()
+			.filter_map(|slot| slot.as_ref())
+			.filter_map(|slot| match slot {
+				BindGroupEntryContentDescriptor::Buffers(keys) => Some(keys),
+				_ => None,
+			}).flat_map(|keys| keys.iter().map(|&key| {
+				buffers.get(key).unwrap().binding.as_ref().unwrap().as_entire_buffer_binding()
+			})).collect::<Vec<_>>();
+
+			let texture_array_data = entry.descriptor.slots.iter()
+			.filter_map(|slot| slot.as_ref())
+			.filter_map(|slot| match slot {
+				BindGroupEntryContentDescriptor::Textures(keys) => Some(keys),
+				_ => None,
+			}).flat_map(|keys| keys.iter().map(|&key| {
+				textures.get(key).unwrap().view().unwrap()
+			})).collect::<Vec<_>>();
+
+			let mut buffer_array_offset = 0;
+			let mut texture_array_offset = 0;
+			let entries = entry.descriptor.slots.iter().enumerate()
+			.filter_map(|(i, slot)| {
+				slot.as_ref().map(|slot| (i, slot))
+			})
+			.map(|(i, slot)| {
+				info!("Looking for {slot:?}");
+				let resource = match slot {
+					BindGroupEntryContentDescriptor::Buffer(key) => {
+						let b = buffers.get(*key).expect("no buffer");
+						b.binding.as_ref().expect("No binding").as_entire_binding()
+					},
+					BindGroupEntryContentDescriptor::Buffers(keys) => {
+						let br = wgpu::BindingResource::BufferArray(&buffer_array_data[buffer_array_offset..]);
+						buffer_array_offset += keys.len();
+						br
+					},
+					BindGroupEntryContentDescriptor::Texture(key) => wgpu::BindingResource::TextureView({
+						let t = textures.get(*key).unwrap().view().unwrap();
+						t
+					}),
+					BindGroupEntryContentDescriptor::Textures(keys) => {
+						let br = wgpu::BindingResource::TextureViewArray(&texture_array_data[texture_array_offset..]);
+						texture_array_offset += keys.len();
+						br
+					},
+					BindGroupEntryContentDescriptor::Sampler(key) => wgpu::BindingResource::Sampler(self.samplers.get(*key).unwrap().1.as_ref().unwrap()),
+				};
+				
+				wgpu::BindGroupEntry {
+					binding: i as u32,
+					resource,
+				}
+			}).collect::<Vec<_>>();
+			
+			entry.dirty.store(false, Ordering::Relaxed);
+			entry.binding = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+				label: None,
+				layout: self.bind_group_layouts.get(entry.descriptor.layout_key).unwrap().layout.as_ref().unwrap(),
+				entries: entries.as_slice(),
+			}));
+		}
 	}
 }

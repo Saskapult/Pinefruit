@@ -76,7 +76,7 @@ impl ShaderEntry {
 		for (&i, t) in self.specification.bind_groups.iter() {
 			let mut layout_entries = ArrayVec::new();
 			t.iter().for_each(|(&i, entry)| layout_entries.try_push(entry.entry(i)).unwrap());
-			let key = bind_groups.i_need_a_layout(layout_entries);
+			let key = bind_groups.get_or_create_layout(layout_entries);
 			bind_group_layout_keys[i as usize] = Some(key);
 		}
 		

@@ -529,7 +529,13 @@ impl Texture {
 
 		if self.binding.is_some() {
 			trace!("Rebind marks {} dependent bind groups as invalid", self.bind_groups.read().len());
-			self.bind_groups.read().iter().for_each(|&key| bind_groups.mark_dirty(key));
+			self.bind_groups.read().iter().for_each(|&key| {
+				if let Some(e) = bind_groups.get(key) {
+					e.mark_dirty();
+				} else {
+					warn!("Tried to mark a nonexistent bind group as dirty");
+				}
+			});
 		}
 
 		let new_binding = {

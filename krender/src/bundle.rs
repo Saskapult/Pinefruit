@@ -84,7 +84,8 @@ impl<'a> RenderBundle<'a> {
 				pass.set_pipeline(shader.pipeline.as_ref().unwrap().compute().unwrap());
 				for (index, key) in bgs.iter().enumerate() {
 					if let &Some(key) = key {
-						let bind_group = bind_groups.get(key).unwrap();
+						let entry = bind_groups.get(key).unwrap();
+						let bind_group = entry.binding.as_ref().unwrap();
 						pass.set_bind_group(index as u32, bind_group, &[]);
 					}
 				}
@@ -151,7 +152,8 @@ impl<'a> RenderBundle<'a> {
 								if let &Some(key) = key {
 									if current_bgs[index] != Some(key) {
 										current_bgs[index] = Some(key);
-										let bind_group = bind_groups.get(key).unwrap();
+										let entry = bind_groups.get(key).unwrap();
+										let bind_group = entry.binding.as_ref().unwrap();
 										pass.set_bind_group(index as u32, bind_group, &[]);
 									}
 								}

@@ -121,7 +121,7 @@ impl RenderContext {
 					}
 					for (key, _) in binding.buffer_usages {
 						if let Some(b) = buffers.get(key) {
-							b.remove_usages(material_key, self.key);
+							b.remove_material_usage(material_key, self.key);
 						} else {
 							warn!("Tried to remove dependent material from nonexistent buffer");
 						}
@@ -205,7 +205,7 @@ impl RenderContext {
 								BindGroupEntryContentDescriptor::Texture(key)
 							},
 							BindGroupEntry::Sampler(_, address, mag_filter, min_filter, mipmap_filter, lod_min_clamp, lod_max_clamp, _) => {
-								let key = bind_groups.make_or_fetch_sampler(SamplerDescriptor {
+								let key = bind_groups.get_or_create_sampler(SamplerDescriptor {
 									address: (*address).into(),
 									mag_filter: (*mag_filter).into(),
 									min_filter: (*min_filter).into(),
@@ -237,7 +237,11 @@ impl RenderContext {
 					}
 					// Could make layout here or when shader is registered or smnk
 					let layout_key = shader.bind_group_layout_keys.unwrap()[i as usize].unwrap();
-					let k = bind_groups.i_need_a_bind_group(binding_config, layout_key, textures, buffers);
+					let k = bind_groups.get_or_create_bind_group(binding_config, layout_key, textures, buffers);
+
+					let bg = bind_groups.get(k).unwrap();
+					bg.add_material_usage(material_key, self.key);
+
 					bindings[i as usize] = Some(k);
 				}
 
@@ -251,7 +255,7 @@ impl RenderContext {
 				}
 				for &(key, usages) in buffer_usages.iter() {
 					if let Some(b) = buffers.get(key) {
-						b.add_usages(material_key, self.key, usages);
+						b.add_material_usage(material_key, self.key, usages);
 					} else {
 						warn!("Tried to add dependent material to nonexistent buffer");
 					}
