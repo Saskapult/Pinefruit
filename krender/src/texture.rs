@@ -381,7 +381,7 @@ impl Texture {
 		origin: wgpu::Origin3d, 
 		data: &[u8],
 	) {
-		// assert!(self.writable, "Buffer '{}' is not writable!", self.name);
+		assert!(self.writable, "Texture '{}' is not writable!", self.label);
 		if let Some((texture, _, _)) = self.binding.as_ref() {
 			let bytes_per_row = std::num::NonZeroU32::new(self.format.bytes_per_element() * self.size.width).and_then(|u| Some(u.get()));
 			let rows_per_image = std::num::NonZeroU32::new(self.size.height).and_then(|u| Some(u.get()));
@@ -413,27 +413,9 @@ impl Texture {
 		origin: wgpu::Origin3d, 
 		data: &[u8],
 	) {
-		// assert!(self.writable, "Buffer '{}' is not writable!", self.label);
+		assert!(self.writable, "Texture '{}' is not writable!", self.label);
 		self.queued_writes.push((mip_level, origin, data.to_vec()));
 	}
-
-	// pub fn mean_rgba(&self) -> Result<[f32; 4], TextureError> {
-	// 	let mut r = 0.0;
-	// 	let mut g = 0.0;
-	// 	let mut b = 0.0;
-	// 	let mut a = 0.0;
-	// 	let image = image::load_from_memory(self.data.data().unwrap()).unwrap();
-	// 	let raw = image.to_rgba32f().into_raw();
-	// 	raw.chunks_exact(4)
-	// 		.for_each(|p| {
-	// 			r += p[0];
-	// 			g += p[1];
-	// 			b += p[2];
-	// 			a += p[3];
-	// 		});
-		
-	// 	Ok([r, g, b, a].map(|v| v / (raw.len() / 4) as f32))
-	// }
 
 	pub fn total_bytes(&self) -> u32 {
 		self.format.bytes_per_element() * self.size.width * self.size.height * self.size.depth_or_array_layers
@@ -447,7 +429,6 @@ impl Texture {
 		}
 	}
 
-	// Setting dirty here does bypass the manager, whcih will make rebuild queues not work
 	pub fn set_size(&mut self, x: u32, y: u32, z: u32) {
 		let new_size = wgpu::Extent3d {
 			width: x, height: y, depth_or_array_layers: z,
@@ -458,9 +439,7 @@ impl Texture {
 		}
 	}
 
-	/// Adds usages from material. Returns a bool indicating if the binding was invalidated. 
-	/// Turns out I don't use that for anything but I keep it anyway.
-	fn add_dependent_material(&self, material: MaterialKey, context: RenderContextKey, usages: wgpu::TextureUsages) -> bool {
+	pub(crate) fn add_dependent_material(&self, material: MaterialKey, context: RenderContextKey, usages: wgpu::TextureUsages) -> bool {
 		let current_usages = self.usages();
 		self.derived_usages.write().insert((material, context), usages);
 		if current_usages | usages != current_usages {
@@ -472,12 +451,12 @@ impl Texture {
 		}
 	}
 
-	fn remove_dependent_material(&self, material: MaterialKey, context: RenderContextKey) -> bool {
+	pub(crate) fn remove_dependent_material(&self, material: MaterialKey, context: RenderContextKey) -> bool {
 		let old_usages = self.usages();
 		self.derived_usages.write().remove(&(material, context));
 		let new_usages = self.usages();
 		if old_usages != new_usages {
-			trace!("Buffer '{}' is made invalid by a removed material", self.label);
+			trace!("Texture '{}' is made invalid by a removed material", self.label);
 			self.dirty.store(true, Ordering::Relaxed);
 			true
 		} else {
@@ -541,9 +520,9 @@ impl Texture {
 		queue: &wgpu::Queue,
 		bind_groups: &BindGroupManager,
 	) {
-		if self.derived_usages.read().is_empty() {
-			return;
-		}
+		// if self.derived_usages.read().is_empty() {
+		// 	return;
+		// }
 
 		let usages = self.usages();
 		debug!("Texture '{}' binds with usages {:?}", self.label, usages);
@@ -571,25 +550,28 @@ impl Texture {
 			});
 
 			// Load here beucase I am lazy 
-			let bytes_per_row = std::num::NonZeroU32::new(self.format.bytes_per_element() * texture.size().width).and_then(|u| Some(u.get()));
-			let rows_per_image = std::num::NonZeroU32::new(texture.size().height).and_then(|u| Some(u.get()));
-			let size = texture.size();
-			let data = self.data.as_ref().unwrap();
-			queue.write_texture(
-				wgpu::ImageCopyTexture {
-					aspect: wgpu::TextureAspect::All,
-					texture: &texture,
-					mip_level: 0,
-					origin: wgpu::Origin3d::ZERO,
-				},
-				data,
-				wgpu::ImageDataLayout {
-					offset: 0,
-					bytes_per_row,
-					rows_per_image,
-				},
-				size,
-			);
+			// Hacky and bad 
+			if self.data.is_some() {
+				let bytes_per_row = std::num::NonZeroU32::new(self.format.bytes_per_element() * texture.size().width).and_then(|u| Some(u.get()));
+				let rows_per_image = std::num::NonZeroU32::new(texture.size().height).and_then(|u| Some(u.get()));
+				let size = texture.size();
+				let data = self.data.as_ref().unwrap();
+				queue.write_texture(
+					wgpu::ImageCopyTexture {
+						aspect: wgpu::TextureAspect::All,
+						texture: &texture,
+						mip_level: 0,
+						origin: wgpu::Origin3d::ZERO,
+					},
+					data,
+					wgpu::ImageDataLayout {
+						offset: 0,
+						bytes_per_row,
+						rows_per_image,
+					},
+					size,
+				);
+			}
 
 			(texture, view, self.mip_count.get() == 1)
 		};
@@ -713,38 +695,6 @@ impl TextureManager {
 
 	pub fn key_by_path(&self, path: &PathBuf) -> Option<TextureKey> {
 		self.textures_by_path.get(path).copied()
-	}
-
-	pub fn add_dependent_material(&self, texture: TextureKey, material: MaterialKey, context: RenderContextKey, usages: wgpu::TextureUsages) {
-		if let Some(t) = self.textures.get(texture) {
-			t.add_dependent_material(material, context, usages);
-		} else {
-			warn!("Tried to add dependent material to nonexistent texture");
-		}
-	}
-
-	pub fn remove_dependent_material(&self, texture: TextureKey, material: MaterialKey, context: RenderContextKey) {
-		if let Some(t) = self.textures.get(texture) {
-			t.remove_dependent_material(material, context);
-		} else {
-			warn!("Tried to remove dependent material from nonexistent texture");
-		}
-	}
-
-	pub fn add_dependent_bind_group(&self, texture: TextureKey, bind_group: BindGroupKey) {
-		if let Some(t) = self.textures.get(texture) {
-			t.add_dependent_bind_group(bind_group);
-		} else {
-			warn!("Tried to add dependent bind group to nonexistent texture");
-		}
-	}
-
-	pub fn remove_dependent_bind_group(&self, texture: TextureKey, bind_group: BindGroupKey) {
-		if let Some(t) = self.textures.get(texture) {
-			t.remove_dependent_bind_group(bind_group);
-		} else {
-			warn!("Tried to remove dependent bind group from nonexistent texture");
-		}
 	}
 
 	/// Bind or rebind textures. 

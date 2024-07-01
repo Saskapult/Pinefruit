@@ -18,7 +18,7 @@ const USE_SCCACHE: bool = true;
 /// If false, we will miss some rebuilds. 
 /// When working on ekstensions, however, we will need to rebuild every extension. 
 /// This takes a long time so this option sacrifices safety for better iteration time. 
-const DEEP_CHECKING: bool = false;
+const DEEP_CHECKING: bool = true;
 /// If many packages must be hard-reloaded, run cargo build --all. 
 /// It should (untested!) lead to faster startup times. 
 /// This will cause the loading udpates to be sent non-smoothly. 

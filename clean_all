@@ -1,0 +1,16 @@
+#!/bin/bash 
+
+echo "cleaning main"
+cargo clean
+
+echo "looking at extensions..."
+for dname in extensions/*; do
+    cd $dname
+    if [ -e "./target" ]; then
+        echo "$dname has target, cleaning"
+        cargo clean
+    fi
+    cd ../..
+done
+
+echo "done"

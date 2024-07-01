@@ -1292,6 +1292,7 @@ dependencies = [
  "derivative",
  "eks",
  "env_logger 0.10.2",
+ "hashbrown",
  "image",
  "log",
  "parking_lot",

@@ -112,8 +112,12 @@ impl RenderContext {
 					debug!("(Re)Binding material '{}'", material.specification.name);
 
 					trace!("Removing usages for old binding");
-					for (texture, _) in binding.texture_usages {
-						textures.remove_dependent_material(texture, material_key, self.key);
+					for (key, _) in binding.texture_usages {
+						if let Some(t) = textures.get(key) {
+							t.remove_dependent_material(material_key, self.key);
+						} else {
+							warn!("Tried to remove dependent material from nonexistent texture");
+						}
 					}
 					for (key, _) in binding.buffer_usages {
 						if let Some(b) = buffers.get(key) {
@@ -239,7 +243,11 @@ impl RenderContext {
 
 				trace!("Applying usages to resources");
 				for &(key, usages) in texture_usages.iter() {
-					textures.add_dependent_material(key, material_key, self.key, usages);
+					if let Some(t) = textures.get(key) {
+						t.add_dependent_material(material_key, self.key, usages);
+					} else {
+						warn!("Tried to add dependent material to nonexistent texture");
+					}
 				}
 				for &(key, usages) in buffer_usages.iter() {
 					if let Some(b) = buffers.get(key) {

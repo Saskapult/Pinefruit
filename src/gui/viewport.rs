@@ -139,7 +139,6 @@ impl ViewportEntry {
 			);
 			
 			let context = contexts.get(self.context).unwrap();
-			// let storage_provider = &;
 			let bundle = {
 				profiling::scope!("Render Bundle");
 				input.bundle(

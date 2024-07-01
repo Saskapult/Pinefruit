@@ -1,8 +1,6 @@
 use std::{collections::HashMap, sync::atomic::{AtomicBool, Ordering}};
-
 use arrayvec::ArrayVec;
 use slotmap::SlotMap;
-
 use crate::{BindGroupKey, BindGroupLayoutKey, BufferKey, TextureKey, texture::TextureManager, buffer::BufferManager, SamplerKey};
 
 
@@ -15,7 +13,6 @@ pub enum BindGroupEntryContentDescriptor {
 	Textures(Vec<TextureKey>),
 	Sampler(SamplerKey),
 	// Samplers(Vec<idk>),
-	// Don't need to worry about storage textures because that is built in to the layout, not this
 }
 
 
@@ -36,16 +33,12 @@ impl BindGroupDescriptor {
 		// I am not sure how to get around that
 		self.slots.iter().enumerate()
 			.filter_map(|(i, slot)| {
-				if let Some(slot) = slot {
-					Some((i, slot))
-				} else {
-					None
-				}
+				slot.as_ref().map(|slot| (i, slot))
 			})
 			.map(|(i, slot)| {
 				info!("Looking for {slot:?}");
 				let resource = match slot {
-					BindGroupEntryContentDescriptor::Buffer(key) => buffers.get(*key).unwrap().binding.as_ref().unwrap().as_entire_binding(),
+					BindGroupEntryContentDescriptor::Buffer(key) => buffers.get(*key).expect("no buffer").binding.as_ref().expect("No binding").as_entire_binding(),
 					BindGroupEntryContentDescriptor::Texture(key) => wgpu::BindingResource::TextureView({
 						let t = textures.get(*key).unwrap().view().unwrap();
 						info!("{}", textures.get(*key).unwrap().label);
@@ -333,7 +326,6 @@ impl BindGroupManager {
 			.filter(|(_, e)| e.dirty.load(Ordering::Relaxed))
 			.for_each(|(k, e)| {
 				info!("Creating binding for bind group {:?}", k);
-				trace!("{:#?}", e.descriptor.slots.iter().filter(|o| o.is_some()).count());
 				let entries = e.descriptor.entries(textures, buffers, &self.samplers);
 
 				e.dirty.store(false, Ordering::Relaxed);

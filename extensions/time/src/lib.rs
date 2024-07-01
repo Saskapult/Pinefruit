@@ -38,7 +38,7 @@ pub fn time_buffer_system(
 		time: time.start.elapsed().as_secs_f32(),
 	};
 	
-	let k = buffers.key("time").unwrap_or_else(|| {
+	let k = buffers.key_of("time").unwrap_or_else(|| {
 		debug!("Inserting time buffer");
 		buffers.insert(Buffer::new_init("time", bytemuck::bytes_of(&tb), false, true, false))
 	});

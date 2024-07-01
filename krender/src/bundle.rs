@@ -95,15 +95,14 @@ impl<'a> RenderBundle<'a> {
 			for (target, groups) in bundle.targets.iter() {
 				profiling::scope!("target");
 				let color_attachments = target.colour_attachments.iter().map(|&(attachment, resolve, ops)| {
+					let get_texture_handle_error = |k| {
+						let t = textures.get(k).expect("render pass texture not found");
+						let v = t.view().expect(format!("Render pass texture '{}' not bound", t.label).as_str());
+						v
+					};
 					Some(wgpu::RenderPassColorAttachment {
-						view: textures.get(attachment)
-							.expect("texture not found")
-							.view()
-							.expect("texture not bound"),
-						resolve_target: resolve.and_then(|r| Some(textures.get(r)
-							.expect("texture not found")
-							.view()
-							.expect("texture not bound"))),
+						view: get_texture_handle_error(attachment),
+						resolve_target: resolve.map(|r| get_texture_handle_error(r)),
 						ops,
 					})
 				}).collect::<Vec<_>>();
