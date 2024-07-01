@@ -109,6 +109,9 @@ struct GameWindow {
 	show_workloads: bool, 
 	show_controls: bool,
 	whatever: bool, 
+	console_show: bool,
+	console_log: Vec<String>,
+	console_input: String,
 }
 impl GameWindow {
 	pub fn new(
@@ -174,6 +177,9 @@ impl GameWindow {
 			show_workloads: false,
 			show_controls: false,
 			whatever: false,
+			console_show: false,
+			console_log: (0..100).map(|i| format!("Test {}", i)).collect(),
+			console_input: "SECOND CENTRAL PANNNNNNNNNNEL TEST TEST TEST LOOK AT MEEEE".to_string(),
 		}
 	}
 
@@ -213,45 +219,71 @@ impl GameWindow {
 				properties: &self.properties
 			};
 			egui::SidePanel::left("left panel")
-				.resizable(false)
-				.default_width(220.0)
-				.max_width(220.0)
-				.min_width(220.0)
-				.show(&self.context, |ui| {
-					ui.vertical(|ui| {
-						// Update rate for the UI
-						let ui_update_rate = self.update_times.iter()
-							.map(|d| d.as_secs_f32())
-							.reduce(|a, v| a + v)
-							.unwrap_or(f32::INFINITY) / (self.update_times.len() as f32);
-						ui.label(format!("UI: {:>4.1}ms, {:.0}Hz", ui_update_rate * 1000.0, (1.0 / ui_update_rate).round()));
+			.resizable(false)
+			.default_width(220.0)
+			.max_width(220.0)
+			.min_width(220.0)
+			.show(&self.context, |ui| {
+				ui.vertical(|ui| {
+					// Update rate for the UI
+					let ui_update_rate = self.update_times.iter()
+						.map(|d| d.as_secs_f32())
+						.reduce(|a, v| a + v)
+						.unwrap_or(f32::INFINITY) / (self.update_times.len() as f32);
+					ui.label(format!("UI: {:>4.1}ms, {:.0}Hz", ui_update_rate * 1000.0, (1.0 / ui_update_rate).round()));
 
-						self.viewports.show_viewport_profiling(ui, graphics);
+					self.viewports.show_viewport_profiling(ui, graphics);
 
-						ui.toggle_value(&mut self.show_workloads, "Workloads");
-						ui.toggle_value(&mut self.show_controls, "Controls");
+					ui.toggle_value(&mut self.show_workloads, "Workloads");
+					ui.toggle_value(&mut self.show_controls, "Controls");
 
-						ui.toggle_value(&mut self.whatever, "Whatever");
+					ui.toggle_value(&mut self.whatever, "Whatever");
 
-						self.profiling_widget.show_options(ui);
-					});
+					self.profiling_widget.show_options(ui);
 				});
-			// egui::SidePanel::right("right panel")
-			// 	.show(&self.context, |ui| {
-			// 		ui.vertical(|ui| {
-						
-			// 		});
-			// 	});
+			});
 			egui::CentralPanel::default()
-				.show(&self.context, |ui| {
-					ui.vertical_centered_justified(|ui| {
-						self.game_widget.get_or_insert_with(|| {
-							let entity = instance.world.spawn().finish();
-							GameWidget::new(&mut instance.world, &mut self.viewports, entity)
-						}).show(ui, &mut setting_props, &mut self.viewports);
-					});
+			.show(&self.context, |ui| {
+				ui.vertical_centered_justified(|ui| {
+					self.game_widget.get_or_insert_with(|| {
+						let entity = instance.world.spawn().finish();
+						GameWidget::new(&mut instance.world, &mut self.viewports, entity)
+					}).show(ui, &mut setting_props, &mut self.viewports);
 				});
+			});
+			if self.console_show {
+				egui::CentralPanel::default()
+				.frame(egui::Frame {
+					fill: egui::Color32::from_rgba_premultiplied(0, 0, 0, 0),
+					..Default::default()
+				})
+				.show(&self.context, |ui| {
+					ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
+					ui.style_mut().visuals.override_text_color = Some(egui::Color32::DEBUG_COLOR);
 
+					egui::ScrollArea::vertical()
+					.stick_to_bottom(true)
+					.max_height(ui.available_height() - 3.0 * ui.text_style_height(&egui::TextStyle::Monospace))
+					.max_width(f32::INFINITY)
+					.auto_shrink([false, false])
+					.show_rows(ui, ui.text_style_height(&egui::TextStyle::Monospace), self.console_log.len(), |ui, row_range| {
+						for i in row_range {
+							ui.label(&self.console_log[i]);
+						}
+					});
+					let r = egui::TextEdit::singleline(&mut self.console_input)
+						.code_editor()
+						.text_color(egui::Color32::DEBUG_COLOR)
+						.desired_width(f32::INFINITY)
+						.hint_text("...")
+						.show(ui);
+					if r.response.lost_focus() {
+						self.console_log.push(self.console_input.clone());
+						self.console_input.clear();
+					}
+				});
+			}
+			
 			if self.show_workloads {
 				egui::Window::new("Workloads")
 				.open(&mut self.show_workloads)
@@ -416,17 +448,26 @@ impl GameWindow {
 	) {
 		match event {
 			Event::WindowEvent { event: window_event, ..} => {
+				// Console activation and deactivation 
+				if let WindowEvent::KeyboardInput { event, .. } = window_event {
+					if !event.repeat && event.physical_key == controls::PhysicalKey::Code(controls::KeyCode::Backquote) && event.state.is_pressed() {
+						self.console_show = !self.console_show;
+						self.settings.cursor_captured = false;
+						self.window_surface.window.set_cursor_visible(true);
+						return; 
+					}
+				}
+
 				// Check with Egui
 				let r = self.state.on_window_event(&self.window_surface.window, window_event);
 				if r.repaint { 
-					// self.last_update.take();
 					self.window_surface.window.request_redraw();
 				}
-				if r.consumed { return }
-				// Event was not consumed by egui
+				if r.consumed { return } // Consumed by egui
+
 				match window_event {
 					WindowEvent::KeyboardInput { event, .. } => {
-						if self.properties.cursor_inside && !event.repeat {
+						if self.properties.cursor_inside && !event.repeat && !self.console_show {
 							if let Some(gw) = self.game_widget.as_mut() {
 								gw.input(
 									(event.physical_key, event.state),
