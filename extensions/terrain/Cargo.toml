@@ -13,7 +13,7 @@ env_logger = "0.11.3"
 chunks = { path = "../chunks" }
 simdnoise = "3.1.6"
 splines = { version = "4.3.1", features = ["serde"] }
-glam = "0.27.0"
+glam = { version = "0.27.0", features = ["rand"] }
 thiserror = "1.0.60"
 anyhow = "1.0.83"
 ron = "0.8.1"
@@ -25,6 +25,7 @@ transform = { path = "../transform" }
 player = { path = "../player" }
 rayon = "1.10.0"
 controls = { path = "../controls" }
+rand = "0.8.5"
 
 [profile.dev]
 # debug = 1

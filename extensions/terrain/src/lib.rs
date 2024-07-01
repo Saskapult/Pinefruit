@@ -1,3 +1,5 @@
+#![feature(test)]
+
 pub mod generator;
 pub mod modification;
 pub mod terrain;
@@ -11,6 +13,8 @@ use transform::TransformComponent;
 
 #[macro_use]
 extern crate log;
+
+extern crate test;
 
 
 

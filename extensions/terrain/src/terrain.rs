@@ -6,7 +6,6 @@ use glam::IVec3;
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
 use transform::TransformComponent;
-
 use crate::{generator::NewTerrainGenerator, modification::VoxelModification};
 
 

@@ -60,6 +60,88 @@ impl ConfigureRawFbm for FbmSettings {
 }
 
 
+#[inline]
+fn lerp(x: f32, x1: f32, x2: f32, q00: f32, q01: f32) -> f32 {
+	((x2 - x) / (x2 - x1)) * q00 + ((x - x1) / (x2 - x1)) * q01
+}
+#[inline]
+fn lerp2(
+	x: f32, y: f32, 
+	q11: f32, q12: f32, q21: f32, q22: f32, 
+	x1: f32, x2: f32, y1: f32, y2: f32,
+) -> f32 {
+	let r1 = lerp(x, x1, x2, q11, q21);
+	let r2 = lerp(x, x1, x2, q12, q22);
+	lerp(y, y1, y2, r1, r2)
+}
+#[inline]
+fn lerp3(
+	x: f32, y: f32, z: f32, 
+	q000: f32, q001: f32, q010: f32, q011: f32, q100: f32, q101: f32, q110: f32, q111: f32, 
+	x1: f32, x2: f32, y1: f32, y2: f32, z1: f32, z2: f32, 
+) -> f32 {
+	let x00 = lerp(x, x1, x2, q000, q100);
+	let x10 = lerp(x, x1, x2, q010, q110);
+	let x01 = lerp(x, x1, x2, q001, q101);
+	let x11 = lerp(x, x1, x2, q011, q111);
+
+	let r0 = lerp(y, y1, y2, x00, x01);
+	let r1 = lerp(y, y1, y2, x10, x11);
+   
+	lerp(z, z1, z2, r0, r1)
+}
+
+
+pub struct InteroplatedGeneratorNoise {
+	data: Vec<f32>, 
+	// data must extend to st's floor / inverse_scale and en's ceil / inverse_scale
+	// data_st: IVec3,
+	// data_en: IVec3,
+	extent: u32,
+	
+	inverse_scale: u32, // One sample every inverse_scale voxels 
+	st: IVec3,
+	en: IVec3,
+}
+impl InteroplatedGeneratorNoise {
+	#[inline]
+	fn index_of(&self, pos: UVec3) -> usize {
+		let [x, y, z] = pos.to_array();
+		(x * self.extent * self.extent + y * self.extent + z) as usize
+	}
+
+	#[inline]
+	pub fn get(&self, pos: IVec3) -> f32 {
+		assert!(pos.cmpge(self.st).all());
+		assert!(pos.cmplt(self.en).all());
+
+		// Start of data in word space
+		let data_st = self.st.div_euclid(IVec3::splat(self.inverse_scale as i32)) * self.inverse_scale as i32;
+
+		let pos_data_relative = (pos - data_st).as_uvec3();
+
+		let base_data_cell =  pos_data_relative / self.inverse_scale;
+		let q000 = self.data[self.index_of(base_data_cell)];
+		let q001 = self.data[self.index_of(base_data_cell + UVec3::X)];
+		let q010 = self.data[self.index_of(base_data_cell + UVec3::Y)];
+		let q011 = self.data[self.index_of(base_data_cell + UVec3::X + UVec3::Y)];
+		let q100 = self.data[self.index_of(base_data_cell + UVec3::Z)];
+		let q101 = self.data[self.index_of(base_data_cell + UVec3::Z + UVec3::X)];
+		let q110 = self.data[self.index_of(base_data_cell + UVec3::Z + UVec3::Y)];
+		let q111 = self.data[self.index_of(base_data_cell + UVec3::Z + UVec3::Y + UVec3::X)];
+
+		// pos
+		let [x, y, z] = pos_data_relative.as_vec3().to_array();
+		// pos of q000 
+		let [x1, y1, z1] = (base_data_cell * self.inverse_scale).as_vec3().to_array();
+		// pos of q111 
+		let [x2, y2, z2] = ((base_data_cell + UVec3::ONE) * self.inverse_scale).as_vec3().to_array();
+
+		lerp3(x, y, z, q000, q001, q010, q011, q100, q101, q110, q111, x1, x2, y1, y2, z1, z2)
+	}
+}
+
+
 /// Splines are loaded from disk when calling [Self::new]. 
 /// If something fails during that, the prgoram will panic.  
 #[derive(Debug)]
@@ -298,10 +380,10 @@ impl NewTerrainGenerator {
 }
 
 
-#[cfg(Test)]
+#[cfg(test)]
 pub mod tests {
-    use crate::voxel::terrain::RawFbmSettings;
 	use super::*;
+	use test::Bencher;
 
 	/// Tests that my magic scaling number is still working 
 	#[test]
@@ -333,6 +415,72 @@ pub mod tests {
 		assert!(normed.iter().copied().all(|v| v >= 0.0));
 	}
 
+	#[bench]
+	fn bench_interpolated_noise(b: &mut Bencher) {
+		let inverse_scale: u32 = 4;
+		let extent: usize = 32;
+
+		let settings = RawFbmSettings {
+			seed: 42,
+			freq: 1.0 / 50.0 / inverse_scale as f32,
+			lacunarity: 2.0,
+			gain: 0.5,
+			octaves: 3,
+		};
+
+		b.iter(|| {
+			let world_pos = rand::random::<IVec3>();
+			let st = world_pos / extent as i32 * extent as i32;
+			let en = st + IVec3::splat(extent as i32);
+			let [x_offset, y_offset, z_offset] = st.as_vec3().to_array();
+
+			let sampling_extent = (extent / inverse_scale as usize) + 1;
+			let data = simdnoise::NoiseBuilder::fbm_3d_offset(
+				x_offset as f32 + 0.5, sampling_extent, 
+				y_offset as f32 + 0.5, sampling_extent, 
+				z_offset as f32 + 0.5, sampling_extent,
+			).apply_raw_settings(settings).generate().0;
+
+			let interp = InteroplatedGeneratorNoise {
+				data,
+				inverse_scale,
+				st,
+				en,
+				extent: extent as u32 / inverse_scale,
+			};
+
+			let output = cube_iterator_xyz_uvec(UVec3::splat(extent as u32)).map(|p| interp.get(st + p.as_ivec3())).collect::<Vec<_>>();
+			
+			output
+		});
+	}
+
+	#[bench]
+	fn bench_uninterpolated_noise(b: &mut Bencher) {
+		let extent: usize = 32;
+
+		let settings = RawFbmSettings {
+			seed: 42,
+			freq: 1.0 / 50.0,
+			lacunarity: 2.0,
+			gain: 0.5,
+			octaves: 3,
+		};
+
+		b.iter(|| {
+			let world_pos = rand::random::<IVec3>();
+			let st = world_pos / extent as i32 * extent as i32;
+			let [x_offset, y_offset, z_offset] = st.as_vec3().to_array();
+
+			let data = simdnoise::NoiseBuilder::fbm_3d_offset(
+				x_offset as f32 + 0.5, extent, 
+				y_offset as f32 + 0.5, extent, 
+				z_offset as f32 + 0.5, extent,
+			).apply_raw_settings(settings).generate().0;
+
+			data
+		});
+	}
 
 	// /// Generates chunks until one is fully solid and another is fully empty
 	// #[test]
