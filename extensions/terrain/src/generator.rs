@@ -64,16 +64,16 @@ impl ConfigureRawFbm for FbmSettings {
 fn lerp(x: f32, x1: f32, x2: f32, q00: f32, q01: f32) -> f32 {
 	((x2 - x) / (x2 - x1)) * q00 + ((x - x1) / (x2 - x1)) * q01
 }
-#[inline]
-fn lerp2(
-	x: f32, y: f32, 
-	q11: f32, q12: f32, q21: f32, q22: f32, 
-	x1: f32, x2: f32, y1: f32, y2: f32,
-) -> f32 {
-	let r1 = lerp(x, x1, x2, q11, q21);
-	let r2 = lerp(x, x1, x2, q12, q22);
-	lerp(y, y1, y2, r1, r2)
-}
+// #[inline]
+// fn lerp2(
+// 	x: f32, y: f32, 
+// 	q11: f32, q12: f32, q21: f32, q22: f32, 
+// 	x1: f32, x2: f32, y1: f32, y2: f32,
+// ) -> f32 {
+// 	let r1 = lerp(x, x1, x2, q11, q21);
+// 	let r2 = lerp(x, x1, x2, q12, q22);
+// 	lerp(y, y1, y2, r1, r2)
+// }
 #[inline]
 fn lerp3(
 	x: f32, y: f32, z: f32, 

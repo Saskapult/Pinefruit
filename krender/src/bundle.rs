@@ -62,14 +62,14 @@ impl<'a> RenderBundle<'a> {
 			profiling::scope!("stage");
 			let mut scope = profiler.scope(format!("Stage {i}"), encoder, device);
 	
-			for (&key, range) in bundle.attachment_clears.iter() {
+			for (&key, _range) in bundle.attachment_clears.iter() {
 				profiling::scope!("clear");
 				info!("Clearing texture {key:?}");
 				// let texture = textures.get(key).unwrap();
 				// encoder.clear_texture(&texture.binding().unwrap().texture, range);
 				todo!("do another render pass to clear the texture?")
 			}
-			for (key, value) in bundle.depth_clears.iter() {
+			for (key, _value) in bundle.depth_clears.iter() {
 				profiling::scope!("clear");
 				info!("Clearing texture {key:?}");
 				todo!("do another render pass to clear the texture?")

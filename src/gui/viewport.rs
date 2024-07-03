@@ -92,7 +92,7 @@ impl ViewportEntry {
 		profiling::scope!("Viewport Update");
 
 		// Record update
-		if let Some(t) = self.last_update {
+		if let Some(_t) = self.last_update {
 			// self.update_times.insert(t.elapsed());
 		}
 		self.last_update = Some(Instant::now());

@@ -1,4 +1,4 @@
-use std::{sync::Arc, collections::HashMap, time::{Instant, Duration}};
+use std::{sync::Arc, collections::HashMap, time::Instant};
 use chunks::{array_volume::ArrayVolume, blocks::{BlockKey, BlockResource}, chunk::Chunk, chunk_of_voxel, chunks::{ChunkKey, ChunkLoadingComponent, ChunksResource}, voxel_relative_to_chunk, CHUNK_SIZE};
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use ekstensions::prelude::*;
@@ -117,7 +117,7 @@ pub fn terrain_loading_system(
 			trace!("Received generated chunk for {position}");
 			let i = loading.vec_generation_jobs.iter().position(|&(v, _)| v == position)
 				.expect("We don't seem to have queued this for generation");
-			let (_, t_start) = loading.vec_generation_jobs.remove(i);
+			let (_, _t_start) = loading.vec_generation_jobs.remove(i);
 			// loading.generation_durations.insert(t_start.elapsed());
 
 			if let Some(k) = chunks.get_position(position) {

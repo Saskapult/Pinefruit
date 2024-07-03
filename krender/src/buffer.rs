@@ -258,12 +258,12 @@ impl Buffer {
 }
 
 
-#[derive(thiserror::Error, Debug)]
-pub enum BufferError {
-	#[error("buffer not bound")]
-	BufferUnbound,
-	#[error("index out of bounds")]
-	OutOfBounds,
-	#[error("index out of bounds")]
-	WriteInactiveSlab,
-}
+// #[derive(thiserror::Error, Debug)]
+// pub enum BufferError {
+// 	#[error("buffer not bound")]
+// 	BufferUnbound,
+// 	#[error("index out of bounds")]
+// 	OutOfBounds,
+// 	#[error("index out of bounds")]
+// 	WriteInactiveSlab,
+// }

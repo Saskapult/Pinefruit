@@ -1,7 +1,7 @@
 use std::{path::{PathBuf, Path}, collections::HashMap, ffi::OsStr};
 use serde::{Serialize, Deserialize};
-use slotmap::{SlotMap, SparseSecondaryMap};
-use crate::{ShaderKey, BindGroupKey, shader::{ShaderManager, ShaderEntry, BindGroupEntry}, texture::{TextureManager, Texture}, buffer::BufferManager, MaterialKey, TextureKey, BufferKey, rendertarget::AbstractRenderTarget, RenderContextKey};
+use slotmap::SlotMap;
+use crate::{ShaderKey, shader::{ShaderManager, ShaderEntry, BindGroupEntry}, texture::{TextureManager, Texture}, buffer::BufferManager, MaterialKey};
 
 
 
@@ -88,21 +88,6 @@ impl MaterialSpecification {
 		}
 
 		Ok(self)
-	}
-}
-
-
-#[derive(Debug)]
-pub struct MaterialBinding {
-	pub render_target: Option<AbstractRenderTarget>,
-	pub bind_groups: [Option<BindGroupKey>; 4],
-	pub context: RenderContextKey,
-	pub texture_usages: SparseSecondaryMap<TextureKey, wgpu::TextureUsages>,
-	pub buffer_usages: SparseSecondaryMap<BufferKey, wgpu::BufferUsages>,
-}
-impl MaterialBinding {
-	pub fn polygon_stuff(&self) -> (&AbstractRenderTarget, [Option<BindGroupKey>; 4]) {
-		(self.render_target.as_ref().unwrap(), self.bind_groups)
 	}
 }
 
@@ -246,19 +231,6 @@ impl MaterialManager {
 			self.materials_by_name.remove(&material.specification.name);
 			todo!("Decrement bind group counters (BindGrouPManager::decrement_counter()")
 		}
-	}
-
-	pub(crate) fn mark_dirty(&self, key: MaterialKey, context: RenderContextKey) {
-		// if let Some(material) = self.materials.get(key) {
-		// 	if let Some((d, _)) = material.bindings.get(context) {
-		// 		d.store(true, Ordering::Relaxed);
-		// 	} else {
-		// 		warn!("Tried to mark a nonexistent context binding as dirty");
-		// 	}
-		// } else {
-		// 	warn!("Tried to mark a material as dirty");
-		// }
-		todo!()
 	}
 
 	/// Register shaders found in the material specification. 
