@@ -13,6 +13,7 @@ pub struct UntypedResource {
 		fn(&[u8]) -> bincode::Result<*mut u8>, // Box<Resource>
 	)>,
 	data_renderdata: Option<fn(&Self, &mut Vec<u8>)>,
+	data_command: *const u8,
 	
 	data_size: usize,
 	name: &'static str,
@@ -89,6 +90,12 @@ impl UntypedResource {
 		}
 	}
 
+	pub fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+		let p = self.data;
+		let f: fn(*const u8, &[&str]) -> anyhow::Result<()> = unsafe { std::mem::transmute(self.data_command) };
+		(f)(p, command)
+	}
+
 	// Should only ever be called from drop code
 	fn drop_data_as<R: Resource>(data: *mut u8) {
 		trace!("Dropping untype resource as resource of {}", R::STORAGE_ID);
@@ -112,8 +119,9 @@ impl<R: Resource> From<R> for UntypedResource {
 		UntypedResource { 
 			data, 
 			data_drop: Self::drop_data_as::<R>, 
-			data_serde: R::SERIALIZE_FN.map(|(a, _, c, _)| (a, c)),
+			data_serde: None, //R::get_serde_fns(),
 			data_renderdata: None,
+			data_command: R::command as *const u8,
 			data_size, 
 			name, 
 		}
@@ -127,7 +135,7 @@ mod tests {
 	use super::UntypedResource;
 
 	#[derive(Debug, Resource, serde::Serialize, serde::Deserialize)]
-	#[storage_options(snap = true)]
+	// #[storage_options(snap = true)]
 	struct ResourceA(pub u32);
 
 	#[test]

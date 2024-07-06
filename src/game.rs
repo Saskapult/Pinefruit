@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crate::util::RingDataHolder;
 use crate::voxel::load_all_blocks_in_file;
 use crate::window::*;
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use krender::prelude::*;
 
 

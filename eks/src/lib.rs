@@ -7,13 +7,16 @@ pub mod system;
 pub mod query;
 pub mod prelude {
 	pub use crate::entity::Entity;
-	pub use crate::{World, Component, Resource, Storage};
+	pub use crate::{World, Component, Resource, Storage, StorageRenderData, StorageSerde, StorageLuaExpose, StorageCommandExpose, StorageRenderDataFn, SerdeFns};
 	pub use component_derive::*;
 	pub use crate::query::{Queriable, ComponentStorage, Comp, CompMut, Res, ResMut, ResOptMut, EntitiesMut};
 	pub use bincode;
+	pub use anyhow; 
+	pub use mlua;
 }
 
-use std::{fmt::Debug, collections::HashMap};
+use std::{collections::HashMap, fmt::Debug, sync::{atomic::AtomicBool, Arc}};
+use anyhow::{anyhow, Context};
 use atomic_refcell::{AtomicRefCell, AtomicRef, AtomicRefMut};
 use entity::{Entity, EntitySparseSet};
 use parking_lot::RwLock;
@@ -28,54 +31,114 @@ extern crate log;
 
 // It would be possible to throw all of this into a struct, allowing us to make new components at run time 
 // We'd just need to record more function pointers for dropping and other stuff I haven't though of 
-pub trait Storage: 'static + Send + Sync + std::fmt::Debug + Sized {
+pub trait Storage: 'static + Send + Sync + std::fmt::Debug + Sized + StorageRenderData + StorageSerde + StorageCommandExpose + StorageLuaExpose {
 	const STORAGE_ID: &'static str;
-	// If some, then we want to record this component's data when taking shapshots 
-	// Data will be restored when the parent extension is reloaded
-	const SERIALIZE_FN: Option<(
-		// Serialization of one item
-		// Used in network communication when we only want to replicate some entities
-		fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
-		// fn(&Self, &mut Vec<u8>) -> bincode::Result<()>,
-		// Serialization of many items
-		// Used when taking world snapshots
-		// Points to &[Self]
-		fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
-		// fn(&[Self]) -> bincode::Result<()>,
-		// Deserialization of one item 
-		// See serialization of one item
-		fn(&[u8]) -> bincode::Result<*mut u8>, // Box<Type>
-		// fn(&[u8]) -> bincode::Result<Self>,
-		// Deserialization of many items 
-		// See serialization of many items
-		fn(&[u8]) -> bincode::Result<*mut u8>, // Box<[Type]>
-		// fn(&[u8]) -> bincode::Result<Vec<Self>>,
-	)>;
-	// A function to transform this data for passage into shaders 
-	// For example, converting position, scale, and rotation into a matrix
-	const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>>;
 }
+
+
+// I think that we can just transmute &self to *const u8 for storage 
+pub type StorageRenderDataFn = fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>;
+// A function to transform this data for passage into shaders 
+// For example, converting position, scale, and rotation into a matrix
+pub trait StorageRenderData {
+	fn get_render_data_fn() -> Option<StorageRenderDataFn> {
+		None
+	}
+}
+impl<T> StorageRenderData for Option<T> {}
+
+
+pub type SerdeFns = (
+	// Serialization of one item
+	// Used in network communication when we only want to replicate some entities
+	fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
+	// fn(&Self, &mut Vec<u8>) -> bincode::Result<()>,
+	// Serialization of many items
+	// Used when taking world snapshots
+	// Points to &[Self]
+	fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
+	// fn(&[Self]) -> bincode::Result<()>,
+	// Deserialization of one item 
+	// See serialization of one item
+	fn(&[u8]) -> bincode::Result<*mut u8>, // Box<Type>
+	// fn(&[u8]) -> bincode::Result<Self>,
+	// Deserialization of many items 
+	// See serialization of many items
+	fn(&[u8]) -> bincode::Result<*mut u8>, // Box<[Type]>
+	// fn(&[u8]) -> bincode::Result<Vec<Self>>,
+);
+pub trait StorageSerde {
+	fn get_serde_fns() -> Option<SerdeFns> {
+		None
+	}
+}
+impl<T> StorageSerde for Option<T> {}
+
+
+// It would be nice to be able to automatically list every available command
+pub trait StorageCommandExpose {
+	fn command(&mut self, _command: &[&str]) -> anyhow::Result<()> {
+		Err(anyhow!("No such command"))
+	}
+}
+impl<T: StorageCommandExpose> StorageCommandExpose for Option<T> {
+	fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+		if let Some(s) = self {
+			s.command(command)
+		} else {
+			Err(anyhow!("Optional storage was not initialized"))
+		}
+	}
+}
+
+
+// This trait is made a bit more awful becuase it uses the external UserData trait.
+// We cannot require UserData because not it is not implemented for Options. 
+// We cannot implement this for every T: mlua::UserData because "upstream crates may add a new impl of trait". 
+// I hate it. 
+// Instead we must derive this and trust the user to implement it correctly. 
+pub trait StorageLuaExpose {
+	fn create_scoped_ref<'lua, 'scope>(&'scope self, _scope: &mlua::Scope<'lua, 'scope>) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> {
+		None
+	}
+}
+// impl<T: mlua::UserData> StorageLuaExpose for T {}
+impl<T: StorageLuaExpose> StorageLuaExpose for Option<T> {}
 
 
 pub trait Component: Storage {}
 
 
+// const ALIVE: OnceCell<Arc<AtomicBool>> = OnceCell::new();
+
+/// When we load an extension, we take pointers to its functions. 
+/// This works well until we must reload the extension. 
+/// At that point, previous pointers are made invalid. 
+/// This can be worked around, but it is painful (expecially for closures). 
+/// Instead of dealing with that, we can just have one heap-allocated boolean
+/// to signal that all of an extension's pointers are invalid. 
+pub struct SafeStatic<T: 'static> {
+	alive: Arc<AtomicBool>,
+	item: T,
+}
+impl<T> SafeStatic<T> {
+	pub fn new(alive: &Arc<AtomicBool>, item: T) -> Self {
+		Self { alive: alive.clone(), item, }
+	}
+	pub fn try_get(&self) -> Option<&T> {
+		self.alive.load(std::sync::atomic::Ordering::Relaxed).then_some(&self.item)
+	}
+	pub fn try_get_mut(&mut self) -> Option<&T> {
+		self.alive.load(std::sync::atomic::Ordering::Relaxed).then_some(&mut self.item)
+	}
+}
+
+
 pub trait Resource: Storage {}
+// Optional resources do not have render data transformation or serde. 
 impl<R: Resource> Resource for Option<R> {}
-// Do not allow serialization or render data transformation for optional resources
-// There is no rationale for this decision other than I just want the thing to compile
-// This will likely cause unexpected bugs if someone tries to use it
-// In the future we should fix that
-// Or, of course, rust could stabilize specialization... 
 impl<R: Resource> Storage for Option<R> {
 	const STORAGE_ID: &'static str = R::STORAGE_ID;
-	const SERIALIZE_FN: Option<(
-		fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>,
-		fn(*const [u8], &mut Vec<u8>) -> bincode::Result<()>,
-		fn(&[u8]) -> bincode::Result<*mut u8>, 
-		fn(&[u8]) -> bincode::Result<*mut u8>, 
-	)> = None;
-	const RENDERDATA_FN: Option<fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>> = None;
 }
 
 
@@ -315,7 +378,88 @@ impl World {
 	pub fn run_with_data<'q, S: SystemFunction<'q, Data, Q, R>, Data, R, Q: Queriable<'q>>(&'q self, data: Data, system: S) -> R {
 		system.run_system(data, self)
 	}
+
+	pub fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+		let keyword = command.get(0)
+			.with_context(|| "target either a component or resource storage")?;
+		match *keyword {
+			"component" => {
+				let id = command.get(1)
+					.with_context(|| "Supply an id pls")?;
+				let mut s = self.component_raw_mut(id);
+				let entity = command.get(2)
+					.with_context(|| "Supply an entity pls")?;
+				// In order to have "player" as an entity, there should be a prepass to replace that with an entity id before sending the command data here! Otherwise it will not parse
+				let entity = ron::de::from_str(entity)
+					.with_context(|| "Failed to parse entity")?;
+				s.command(entity, &command[3..])
+			},
+			"resource" => {
+				let id = command.get(1)
+					.with_context(|| "Supply an id pls")?;
+				let mut s = self.resource_raw_mut(id);
+				s.command(&command[2..])
+			},
+			// If you want global commands, you must do a prepass for anything that is not component or resource
+			_ => Err(anyhow!("Valid commands are 'component' and 'resource'")),
+		}
+	}
 }
+impl mlua::UserData for World {
+	fn add_fields<'lua, F: mlua::UserDataFields<'lua, Self>>(_fields: &mut F) {}
+	fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(methods: &mut M) {
+		// This is currently require_all
+		// We could move the code to the filter and have require and exclude
+		methods.add_method("filter", |_, _, vals: mlua::Variadic<String>| {
+			Ok(ComponentIteratorFilter {
+				borrows: vals.into_iter().collect(),
+			})
+		});
+		methods.add_method("comp_mut", |_, _, _id: String| {
+			error!("TODO: borrows");
+			Ok(())
+		});
+		methods.add_method("run", |lua, this, (filter, function): (ComponentIteratorFilter, mlua::Function)| {
+			trace!("Running a lua system");
+			trace!("Borrowing storages {:?}", filter.borrows);
+			// Borrow storages
+			let borrows = filter.borrows.iter()
+				.map(|id| this.component_raw_mut(id))
+				.collect::<Vec<_>>();
+
+			trace!("Find min");
+			let min_entries = borrows.iter().min_by_key(|b| b.len()).unwrap();
+			trace!("Min entry has {} entities", min_entries.len());
+			for &entity in min_entries.entities() {
+				if borrows.iter().all(|b| b.contains(entity)) {
+					trace!("Entity {:?}, scope", entity);
+					// Now that we know it's worthwile, pull component data
+					lua.scope(|scope| {
+						let t = lua.create_table()?;
+						for (name, borrow) in filter.borrows.iter().zip(borrows.iter()) {
+							trace!("Insert {}", name);
+							let ud = borrow.get_scoped_ref(entity, &scope)
+								.expect("Requested component without UserData capability")?;
+							t.set(name.clone(), ud)?;
+						}
+						trace!("Call");
+						function.call(t)?;
+						Ok(())
+					})?;
+				}
+			}
+
+			Ok(())
+		});
+	}
+}
+
+
+#[derive(Debug, mlua::FromLua, Clone)]
+pub struct ComponentIteratorFilter {
+	pub borrows: Vec<String>,
+}
+impl mlua::UserData for ComponentIteratorFilter {}
 
 
 // Replace with entity builder? 
@@ -343,11 +487,37 @@ mod tests {
 	use crate::prelude::*;
 
 	#[derive(Debug, Component, PartialEq, Eq, Clone, Copy)]
+	#[sda(commands = true)]
 	pub struct ComponentA(u32);
+	impl StorageCommandExpose for ComponentA {
+		fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+			match command[0] {
+				"test" => println!("test"),
+				"get" => println!("{}", self.0),
+				"inc" => self.0 += 1,
+				_ => {},
+			}
+			Ok(())
+		}
+	}
+
 	#[derive(Debug, Component, PartialEq, Eq, Clone, Copy)]
 	pub struct ComponentB(u32);
+
 	#[derive(Debug, Resource, PartialEq, Eq, Clone, Copy)]
+	#[sda(commands = true)]
 	pub struct Ressy(u32);
+	impl StorageCommandExpose for Ressy {
+		fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+			match command[0] {
+				"test" => println!("test"),
+				"get" => println!("{}", self.0),
+				"inc" => self.0 += 1,
+				_ => {},
+			}
+			Ok(())
+		}
+	}
 
 	// #[derive(Debug, serde::Serialize, serde::Deserialize)]
 	// // #[storage_options(snap = true)]
@@ -519,5 +689,28 @@ mod tests {
 
 		world.run(testing_system);
 		world.run(testing_system);
+	}
+
+	#[test]
+	fn test_command_component() {
+		let mut world = World::new();
+		world.register_component::<ComponentA>();
+
+		let e = world.spawn()
+			.with(ComponentA(42))
+			.finish();
+		let eid = ron::ser::to_string(&e).unwrap();
+
+		let commands = &[
+			format!("component ComponentA {} test", eid),
+			format!("component ComponentA {} get", eid),
+			format!("component ComponentA {} inc", eid),
+			format!("component ComponentA {} get", eid),
+		];
+		for command in commands {
+			println!("Running '{}'", command);
+			let parts = command.split(" ").collect::<Vec<_>>();
+			world.command(parts.as_slice()).unwrap();
+		}
 	}
 }

@@ -1,7 +1,7 @@
 use std::{sync::Arc, collections::HashMap, time::Instant};
 use chunks::{array_volume::ArrayVolume, blocks::{BlockKey, BlockResource}, chunk::Chunk, chunk_of_voxel, chunks::{ChunkKey, ChunkLoadingComponent, ChunksResource}, voxel_relative_to_chunk, CHUNK_SIZE};
 use crossbeam_channel::{Sender, Receiver, unbounded};
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use glam::IVec3;
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;

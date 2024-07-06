@@ -1,15 +1,15 @@
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use glam::*;
 use controls::*;
 
-#[macro_use]
-extern crate log;
+// #[macro_use]
+// extern crate log;
 
 
 
 #[repr(C)]
 #[derive(Component, Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-#[storage_options(render_transform = "TransformComponent::render_transform")]
+#[sda(renderdata = true)]
 pub struct TransformComponent {
 	pub translation: Vec3,
 	pub rotation: Quat,
@@ -59,6 +59,11 @@ impl Default for TransformComponent {
 			rotation: Quat::IDENTITY,
 			scale: Vec3::ONE,
 		}
+	}
+}
+impl StorageRenderData for TransformComponent {
+	fn get_render_data_fn() -> Option<StorageRenderDataFn> {
+		Some(Self::render_transform)
 	}
 }
 
@@ -222,7 +227,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(p: &mut eeks::ExtensionStorageLoader) {
 	p.component::<TransformComponent>();
 	p.component::<MovementComponent>();
 }

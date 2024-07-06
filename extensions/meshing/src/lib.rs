@@ -1,6 +1,6 @@
 pub mod model;
 
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use model::{map_rendering_system, map_modelling_system, model_wipe_system, MapMeshingComponent, MapModelResource};
 use player::PlayerSpawnResource;
 
@@ -43,7 +43,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(storages: &mut eeks::ExtensionStorageLoader) {
 	storages.resource(MapModelResource::new(8));
 	storages.component::<MapMeshingComponent>();
 }

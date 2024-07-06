@@ -1,7 +1,7 @@
 use controls::{ControlMap, InputEvent, KeyKey};
 use egui::{Context, ViewportId};
 use egui_wgpu::{preferred_framebuffer_format, Renderer, ScreenDescriptor};
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use parking_lot::Mutex;
 use slotmap::SlotMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings};
@@ -87,7 +87,7 @@ struct GameWindow {
 	settings: WindowSettings,
 	profiler: wgpu_profiler::GpuProfiler, // For egui renders
 
-	extension_load_status: Arc<Mutex<Option<ekstensions::LoadStatus>>>,
+	extension_load_status: Arc<Mutex<Option<eeks::LoadStatus>>>,
 
 	// Winit doesn't support locking the cursor on x11, only confining it
 	// We need to do this manually (brings needless mess)
@@ -120,7 +120,7 @@ impl GameWindow {
 		window_builder: WindowBuilder,
 		event_loop: &EventLoopWindowTarget::<WindowCommand>,
 		client: &Arc<Mutex<GameInstance>>,
-		extension_load_status: Arc<Mutex<Option<ekstensions::LoadStatus>>>,
+		extension_load_status: Arc<Mutex<Option<eeks::LoadStatus>>>,
 	) -> Self {
 		let window = window_builder.build(event_loop).unwrap();
 		let window_surface = WindowSurface::new(instance, window);
@@ -132,7 +132,7 @@ impl GameWindow {
 		adapter: &wgpu::Adapter, 
 		window_surface: WindowSurface, 
 		client: &Arc<Mutex<GameInstance>>,
-		extension_load_status: Arc<Mutex<Option<ekstensions::LoadStatus>>>,
+		extension_load_status: Arc<Mutex<Option<eeks::LoadStatus>>>,
 	) -> Self {
 		let client = client.clone();
 

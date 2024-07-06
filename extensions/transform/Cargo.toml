@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-ekstensions = { path = "../../ekstensions" }
+eeks = { path = "../../eeks" }
 controls = { path = "../controls" }
 glam = { version = "0.27.0", features = ["serde"] }
 serde = "1.0.200"

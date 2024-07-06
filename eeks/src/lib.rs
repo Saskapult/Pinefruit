@@ -1,10 +1,12 @@
-use std::{collections::HashMap, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
+#![feature(lazy_cell)]
+
+use std::{cell::LazyCell, collections::HashMap, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use anyhow::{anyhow, Context};
 use eks::{prelude::*, resource::UntypedResource, sparseset::UntypedSparseSet, system::SystemFunction, WorldEntitySpawn};
 pub use eks;
 pub mod prelude {
 	pub use eks::prelude::*;
-	pub use crate::{ExtensionRegistry, ExtensionSystemsLoader};
+	pub use crate::{ExtensionRegistry, ExtensionSystemsLoader, ExtensionStorageLoader};
 	pub use ekstensions_derive::*;
 }
 
@@ -13,27 +15,68 @@ extern crate log;
 
 
 /// Use sccache for crate extensions outside of the root workspace. 
-const USE_SCCACHE: bool = true;
+const USE_SCCACHE: LazyCell<bool> = LazyCell::new(|| {
+	if !check_environment_boolean("EEKS_SCCACHE", true) {
+		return false;
+	}
+	let exit = std::process::Command::new("which sccache").status().unwrap();
+	if !exit.success() {
+		error!("Sccache command failed: {:?}, disabling", exit.code());
+		return false
+	}
+	true
+});
 /// When testing to see if an extension is outdated, should we look in the .d file? 
 /// If false, we will miss some rebuilds. 
 /// When working on ekstensions, however, we will need to rebuild every extension. 
 /// This takes a long time so this option sacrifices safety for better iteration time. 
-const DEEP_CHECKING: bool = true;
+const DEEP_CHECKING: LazyCell<bool> = LazyCell::new(|| {
+	check_environment_boolean("EEKS_DEEP_CHECKING", true)
+});
 /// If many packages must be hard-reloaded, run cargo build --all. 
 /// It should (untested!) lead to faster startup times. 
 /// This will cause the loading udpates to be sent non-smoothly. 
-const BATCHED_COMPILATION: bool = true;
+const BATCHED_COMPILATION: LazyCell<bool> = LazyCell::new(|| {
+	check_environment_boolean("EEKS_BATCHED", true)
+});
+
+
+fn check_environment_boolean(key: impl AsRef<str>, default: bool) -> bool {
+	if let Ok(val) = std::env::var(key.as_ref()) {
+		match val.to_lowercase().as_str() {
+			"true" => true,
+			"false" => false,
+			_ => {
+				if default {
+					error!("Bad value for {} ('{}'), enabling by default", key.as_ref(), val);
+				} else {
+					error!("Bad value for {} ('{}'), disabling by default", key.as_ref(), val);
+				}
+				default
+			},
+		}
+	} else {
+		if default {
+			info!("{} not set, enabling by default", key.as_ref());
+		} else {
+			info!("{} not set, disabling by default", key.as_ref());
+		}
+		default
+	}
+}
 
 
 /// A macro which statically loads core extensions and registers dynamic extensions. 
+/// Currently limite to loading everything in "./extensions". 
 #[macro_export]
 macro_rules! load_extensions {
 	($world:expr, $extensions:expr) => {
 		{
-			let mut esl = ekstensions::ExtensionStorageLoader::new(&mut $world);
+			use std::path::Path;
+			let mut esl = eeks::ExtensionStorageLoader::new(&mut $world);
 			let mut systems = Vec::new();
 			let mut ess = ExtensionSystemsLoader::new(&mut systems);
-			let excludes = load_core_extensions!();
+			let excludes: Vec<&Path> = load_core_extensions!();
 
 			$extensions.init_directory("extensions", excludes.as_slice(), systems)
 		}
@@ -306,14 +349,14 @@ fn src_files_last_modified(path: impl AsRef<Path>) -> SystemTime {
 
 // Panics if dep files does not exist or if it is empty of dependent files (should not be possible)
 // You will also want to look at the cargo toml file
-fn dep_file_last_modified(dep_file_path: impl AsRef<Path>) -> SystemTime {
+fn dep_file_last_modified(dep_file_path: impl AsRef<Path>) -> anyhow::Result<SystemTime> {
 	let contents = std::fs::read_to_string(dep_file_path.as_ref())
-		.expect(&*format!("Cannot open {:?}", dep_file_path.as_ref()));
+		.with_context(|| format!("Cannot open {:?}", dep_file_path.as_ref()))?;
 	let (_, after_colon) = contents.split_once(": ").unwrap();
 	let deps_modified = after_colon.strip_suffix("\n").unwrap().split(" ").map(|p| {
-		Path::new(p).metadata().unwrap().modified().unwrap()
-	});
-	deps_modified.max().unwrap()
+		Ok(Path::new(p).metadata()?.modified().unwrap())
+	}).collect::<anyhow::Result<Vec<_>>>()?;
+	Ok(deps_modified.into_iter().max().unwrap())
 }
 
 
@@ -362,16 +405,16 @@ impl ExtensionEntry {
 			.with_context(|| "failed to parse root Cargo.toml")?;
 		let root_workspace_members = root_cargo_toml
 			.get("workspace").and_then(|v| v.as_table())
-			.expect("root Cargo.toml has no workspace")
-			.get("members").and_then(|v| v.as_array())
-			.expect("root Cargo.toml workspace has no members")
-			.iter().map(|v| v.as_str())
-			.collect::<Option<Vec<_>>>()
-			.expect("failed to read root Cargo.toml workspace members");
+			.map(|ws| ws.get("members").and_then(|v| v.as_array())
+				.expect("root Cargo.toml workspace has no members")
+				.iter().map(|v| v.as_str())
+				.collect::<Option<Vec<_>>>()
+				.expect("failed to read root Cargo.toml workspace members")
+			);
 		
 		// Output path differs if in workspace or not
-		let in_workspace = root_workspace_members.contains(&"extensions/*") 
-			|| root_workspace_members.contains(&&*format!("extensions/{}", name));
+		let in_workspace = root_workspace_members.map(|rwm| rwm.contains(&"extensions/*") 
+		|| rwm.contains(&&*format!("extensions/{}", name))).unwrap_or(false);
 
 		let file_path = if in_workspace {
 			PathBuf::from("target/debug")
@@ -383,6 +426,16 @@ impl ExtensionEntry {
 			name: name.to_string(),
 			file_path,
 			crate_path: Some((path.as_ref().to_path_buf(), in_workspace)),
+			library: None,
+		})
+	}
+
+	pub fn new_precompiled(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+		let name = path.as_ref().file_name().unwrap().to_str().unwrap();
+		Ok(Self {
+			name: name.into(),
+			file_path: path.as_ref().to_path_buf(),
+			crate_path: None,
 			library: None,
 		})
 	}
@@ -428,7 +481,7 @@ impl ExtensionEntry {
 				command.arg("-p").arg(&self.name);
 			} else {
 				command.current_dir(path.canonicalize().unwrap());
-				if USE_SCCACHE {
+				if *USE_SCCACHE {
 					command.env("RUSTC_WRAPPER", "/usr/bin/sccache");
 				}
 			}
@@ -466,11 +519,17 @@ impl ExtensionEntry {
 	pub fn dirty_level(&self) -> (DirtyLevel, SystemTime) {
 		let src_mod = self.crate_path.as_ref().map(|(path, _)| {
 			let mut last_mod = src_files_last_modified(path);
-			if DEEP_CHECKING {
-				let dep_file_path = Path::new("target/debug").join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
+			if *DEEP_CHECKING {
+				let dep_file_path = path.join(Path::new("target/debug")).join(Path::new(self.file_path.file_stem().unwrap())).with_extension("d");
 				if let Ok(p) = dep_file_path.canonicalize() {
-					let deps = dep_file_last_modified(p);
-					last_mod = last_mod.max(deps);
+					trace!("Deep check of {:?}", p);
+					match dep_file_last_modified(p) {
+						Ok(deps) => last_mod = last_mod.max(deps),
+						Err(e) => {
+							error!("Error checking dependency file: {}, using maximum dirty level", e);
+							return SystemTime::now();
+						}
+					}
 				}
 			}
 			last_mod
@@ -508,9 +567,112 @@ pub struct LoadStatus {
 }
 
 
+pub struct LuaExtensionEntry {
+	pub name: String,
+	pub file_path: PathBuf,
+	pub library: Option<LuaExtensionLibrary>,
+}
+impl LuaExtensionEntry {
+	pub fn new(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+		let name = path.as_ref().file_stem().unwrap().to_str().unwrap().into();
+		Ok(Self { name, file_path: path.as_ref().into(), library: None, })
+	}
+
+	pub fn dirty(&self) -> bool {
+		self.library.as_ref().map(|l| {
+			let last_read = l.read_at;
+			let last_mod = self.file_path.metadata().unwrap().modified().unwrap();
+			last_mod > last_read
+		}).unwrap_or(true)
+	}
+
+	pub fn activate(&mut self, lua: &mlua::Lua) -> anyhow::Result<()> {
+		assert!(self.library.is_none());
+		self.library = Some(LuaExtensionLibrary::new(&self.name, &self.file_path, lua)?);
+		Ok(())
+	}
+
+	pub fn active(&self) -> bool {
+		self.library.is_some()
+	}
+
+	pub fn reload(&mut self, lua: &mlua::Lua) -> anyhow::Result<()> {
+		self.library = None;
+		self.activate(lua)
+	}
+}
+
+
+#[derive(Clone, mlua::FromLua, Debug)]
+pub struct LuaExtensionSystem {
+	pub group: String,
+	pub id: String,
+	pub run_after: Vec<String>, 
+	pub run_before: Vec<String>, 
+}
+impl mlua::UserData for LuaExtensionSystem {
+	fn add_fields<'lua, F: mlua::UserDataFields<'lua, Self>>(_fields: &mut F) {}
+	fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(methods: &mut M) {
+		methods.add_method_mut("run_after", |_, this, id| {
+			this.run_after.push(id);
+			Ok(())
+		});
+		methods.add_method_mut("run_before", |_, this, id| {
+			this.run_before.push(id);
+			Ok(())
+		});
+	}
+}
+
+
+pub struct LuaExtensionLibrary {
+	pub read_at: SystemTime,
+	pub systems: Vec<LuaExtensionSystem>,
+	pub commands: Vec<String>,
+}
+impl LuaExtensionLibrary {
+	pub fn new(name: impl AsRef<str>, path: impl AsRef<Path>, lua: &mlua::Lua) -> anyhow::Result<Self> {
+		trace!("Load '{}'", name.as_ref());
+		let read_at = SystemTime::now();
+		let contents = std::fs::read_to_string(path.as_ref())?;
+		let f = lua.load(contents).into_function()?;
+		lua.unload(name.as_ref())?;
+		lua.load_from_function::<mlua::Table>(name.as_ref(), f).unwrap();
+
+		let mut systems: Vec<LuaExtensionSystem> = Vec::new();
+		let mut commands = Vec::new();
+		lua.scope(|scope| {
+			lua.globals().set("new_system", scope.create_function(|_, (group, id)| {
+				Ok(LuaExtensionSystem {
+					group, id, run_after: Vec::new(), run_before: Vec::new(),
+				})
+			})?)?;
+			lua.globals().set("add_system", scope.create_function_mut(|_, system: LuaExtensionSystem| {
+				systems.push(system);
+				Ok(())
+			})?)?;
+
+			lua.globals().set("add_command", scope.create_function_mut(|_, command: String| {
+				commands.push(command);
+				Ok(())
+			})?)?;
+			
+			lua.load(format!(r#"
+				extensionmodule = require("{}")
+				extensionmodule.systems()
+			"#, name.as_ref())).exec().unwrap();
+			Ok(())
+		})?;
+
+		Ok(Self { read_at, systems, commands, })
+	}
+}
+
+
 enum SystemIndex {
 	Core(usize),
 	External((usize, usize)),
+	Lua((usize, usize)),
 }
 
 
@@ -529,6 +691,9 @@ pub struct ExtensionRegistry {
 	core_paths: Vec<PathBuf>,
 	core_systems: Vec<ExtensionSystem>,
 
+	lua: mlua::Lua,
+	lua_extensions: Vec<LuaExtensionEntry>,
+
 	// Rebuilt when anything changes
 	// workloads 
 	// name -> (stages((extension index, system index), depends on (index within this vec)), stages)
@@ -540,6 +705,8 @@ impl ExtensionRegistry {
 			extensions: Vec::new(),
 			core_paths: Vec::new(),
 			core_systems: Vec::new(),
+			lua: mlua::Lua::new(),
+			lua_extensions: Vec::new(),
 			workloads: HashMap::new(),
 		}
 	}
@@ -587,6 +754,12 @@ impl ExtensionRegistry {
 			}
 		}
 
+		let mut lua_queue = (0..self.lua_extensions.len()).filter(|&i| {
+			let e = &self.lua_extensions[i];
+			e.dirty()
+		}).collect::<Vec<_>>();
+		let mut lua_loaded = Vec::with_capacity(lua_queue.len());
+
 		update_function(LoadStatus {
 			to_load: load_queue.iter()
 				.map(|(&i, &h)| (self.extensions[i].name.clone(), h))
@@ -597,7 +770,7 @@ impl ExtensionRegistry {
 				.collect::<Vec<_>>(),
 		});
 
-		if BATCHED_COMPILATION {
+		if *BATCHED_COMPILATION {
 			if batchable_rebuilds.len() > 1 {
 				warn!("Found rebuilds for {} core extensions, using batch compilation", batchable_rebuilds.len());
 				let mut command = std::process::Command::new("cargo");
@@ -685,13 +858,19 @@ impl ExtensionRegistry {
 			});
 		}
 
+		trace!("Reloading {} lua thingies", lua_queue.len());
+		while let Some(i) = lua_queue.pop() {
+			let e = &mut self.lua_extensions[i];
+			e.reload(&self.lua)?;
+			lua_loaded.push(i);
+			// TODO: another update function call 
+		}
+
 		self.rebuild_workloads()?;
 		
 		Ok(())
 	}
 
-	/// Registers all folders in a path as extensions. 
-	/// Should registration fail, the path is skipped. 
 	pub fn init_directory(
 		&mut self, 
 		path: impl AsRef<Path>,
@@ -705,15 +884,37 @@ impl ExtensionRegistry {
 		let dirs = std::fs::read_dir(path.as_ref())?
 			.filter_map(|d| d.ok())
 			.map(|d| d.path().canonicalize().unwrap())
-			.filter(|d| d.is_dir())
-			.filter(|d| !self.core_paths.iter().any(|p| p == d))
 			.collect::<Vec<_>>();
 
-		debug!("Found {} extensions in {:?}: {:?}", dirs.len(), path.as_ref(), dirs);
-
-		for path in dirs {
+		let cargo_extensions = dirs.iter()
+			.filter(|d| d.is_dir())
+			.filter(|d| !self.core_paths.iter().any(|p| p == *d))
+			.collect::<Vec<_>>();
+		debug!("Found {} cargo extensions", cargo_extensions.len());
+		let precompiled_extensions = dirs.iter()
+			.filter(|d| !d.is_dir())
+			.filter(|d| d.extension().unwrap() == "so")
+			.collect::<Vec<_>>();
+		debug!("Found {} precompiled extensions", precompiled_extensions.len());
+		let lua_file_extensions = dirs.iter()
+			.filter(|d| !d.is_dir())
+			.filter(|d| d.extension().unwrap() == "lua")
+			.collect::<Vec<_>>();
+		debug!("Found {} lua file extensions", lua_file_extensions.len());
+		
+		for path in cargo_extensions {
+			trace!("Register cargo extension from {:?}", path);
 			let e = ExtensionEntry::new_crate(path)?;
 			self.extensions.push(e);
+		}
+		for path in precompiled_extensions {
+			trace!("Register precompiled extension from {:?}", path);
+			let e = ExtensionEntry::new_precompiled(path)?;
+			self.extensions.push(e);
+		}
+		for path in lua_file_extensions {
+			trace!("Register lua file extension from {:?}", path);
+			self.lua_extensions.push(LuaExtensionEntry::new(path)?);
 		}
 
 		Ok(())
@@ -741,6 +942,7 @@ impl ExtensionRegistry {
 				.map(|(si, d)| match si {
 					SystemIndex::External((ei, si)) => (&self.extensions[*ei].library.as_ref().unwrap().systems[*si].id, d),
 					SystemIndex::Core(i) => (&self.core_systems[*i].id, d),
+					SystemIndex::Lua((i, j)) => (&self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].id, d),
 				})
 				.collect::<Vec<_>>();
 			(n, systems, o)
@@ -761,31 +963,52 @@ impl ExtensionRegistry {
 				.filter(|i| self.core_systems[*i].group == group.as_ref())
 				.map(|i| SystemIndex::Core(i))
 			)
+			.chain(self.lua_extensions.iter().enumerate()
+				.filter_map(|(i, e)| e.library.as_ref().map(|l| (i, l)))
+				.flat_map(|(i, l)| {
+					l.systems.iter().enumerate()
+						.filter(|(_, s)| (s.group == group.as_ref()))
+						.map(move |(j, _)| SystemIndex::Lua((i, j)))
+				})
+			)
 			.collect::<Vec<_>>();
 		
 		let deps = systems.iter().enumerate().map(|(i, si)| {
-			let s = match si {
-				SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
-				SystemIndex::Core(i) => &self.core_systems[*i],
+			let run_after = match si {
+				SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si].run_after,
+				SystemIndex::Core(i) => &self.core_systems[*i].run_after,
+				SystemIndex::Lua((i, j)) => &self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].run_after,
 			};
 			// Find group system index of dependencies
-			let mut deps = s.run_after.iter()
-				.map(|id: &String| systems.iter()
+			let mut deps = run_after.iter()
+				.map(|id| systems.iter()
 					.map(|si| match si {
-						SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
-						SystemIndex::Core(i) => &self.core_systems[*i],
+						SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si].id,
+						SystemIndex::Core(i) => &self.core_systems[*i].id,
+						SystemIndex::Lua((i, j)) => &self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].id,
 					})
-					.position(|s| s.id.eq(id)).expect("Failed to find dependent system"))
+					.position(|s| s.eq(id)).expect("Failed to find dependent system"))
 				.collect::<Vec<_>>();
 			// Add others to dependencies if they want to be run before
+			let id = match si {
+				SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si].id,
+				SystemIndex::Core(i) => &self.core_systems[*i].id,
+				SystemIndex::Lua((i, j)) => &self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].id,
+			};
 			for (j, si) in systems.iter().enumerate() {
 				if i == j { continue }
-				let d = match si {
-					SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
-					SystemIndex::Core(i) => &self.core_systems[*i],
+				let run_before = match si {
+					SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si].run_before,
+					SystemIndex::Core(i) => &self.core_systems[*i].run_before,
+					SystemIndex::Lua((i, j)) => &self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].run_before,
 				};
-				if d.run_before.contains(&s.id) {
-					trace!("'{}' runs before '{}' so '{}' depends on '{}'", d.id, s.id, s.id, d.id);
+				let other_id = match si {
+					SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si].id,
+					SystemIndex::Core(i) => &self.core_systems[*i].id,
+					SystemIndex::Lua((i, j)) => &self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].id,
+				};
+				if run_before.contains(id) {
+					trace!("'{}' runs before '{}' so '{}' depends on '{}'", other_id, id, id, other_id);
 					deps.push(j);
 				}
 			}
@@ -823,30 +1046,32 @@ impl ExtensionRegistry {
 						error!("{}:", i);
 						for j in stage {
 							let (si, _d) = &systems_deps[j];
-							let s = match si {
-								SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
-								SystemIndex::Core(i) => &self.core_systems[*i],
+							let id = match si {
+								SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si].id,
+								SystemIndex::Core(i) => &self.core_systems[*i].id,
+								SystemIndex::Lua((i, j)) => &self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].id,
 							};
-							error!("\t'{}'", s.id);
+							error!("\t'{}'", id);
 						}
 					}
 					error!("Remaining items are:");
 					for i in queue {
 						let (si, d) = &systems_deps[i];
-						let s = match si {
-							SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
-							SystemIndex::Core(i) => &self.core_systems[*i],
+						let id = match si {
+							SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si].id,
+							SystemIndex::Core(i) => &self.core_systems[*i].id,
+							SystemIndex::Lua((i, j)) => &self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].id,
 						};
-						let n = &s.id;
+						let id = id;
 						let d = d.iter().copied().map(|i| {
 							let (si, _d) = &systems_deps[i];
-							let s = match si {
-								SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si],
-								SystemIndex::Core(i) => &self.core_systems[*i],
-							};
-							&s.id
+							match si {
+								SystemIndex::External((ei, si)) => &self.extensions[*ei].library.as_ref().unwrap().systems[*si].id,
+								SystemIndex::Core(i) => &self.core_systems[*i].id,
+								SystemIndex::Lua((i, j)) => &self.lua_extensions[*i].library.as_ref().unwrap().systems[*j].id,
+							}
 						}).collect::<Vec<_>>();
-						error!("'{}' - {:?}", n, d);
+						error!("'{}' - {:?}", id, d);
 					}
 					panic!();
 				}
@@ -861,18 +1086,22 @@ impl ExtensionRegistry {
 	fn rebuild_workloads(&mut self) -> anyhow::Result<()> {
 		info!("Rebuilding workloads");
 
-		let mut groups2 = HashMap::new();
-
-		let mut groups = self.extensions.iter()
+		let mut workload_ids = self.extensions.iter()
 			.flat_map(|e| e.library.as_ref().unwrap().systems.iter())
 			.map(|s| &s.group)
 			.collect::<Vec<_>>();
-		groups.sort_unstable();
-		groups.dedup();
+		workload_ids.extend(self.lua_extensions.iter()
+			.filter_map(|e| e.library.as_ref())
+			.flat_map(|l| l.systems.iter().map(|s| &s.group))
+		);
+		
+		workload_ids.sort_unstable();
+		workload_ids.dedup();
 
-		debug!("There are {} workloads to build ({:?})", groups.len(), groups);
+		debug!("There are {} workloads to build ({:?})", workload_ids.len(), workload_ids);
 
-		for group in groups {
+		let mut workloads = HashMap::new();
+		for group in workload_ids {
 			debug!("Collect systems for group '{}'", group);
 			let systems_deps = self.get_systems_and_deps(group);
 			debug!("{} systems are found", systems_deps.len());
@@ -881,10 +1110,10 @@ impl ExtensionRegistry {
 			let run_order = self.construct_run_order(&systems_deps);
 			debug!("Run in {} stages", run_order.len());
 
-			groups2.insert(group.clone(), (systems_deps, run_order));
+			workloads.insert(group.clone(), (systems_deps, run_order));
 		}
 
-		self.workloads = groups2;
+		self.workloads = workloads;
 
 		let wi = self.workload_info();
 		debug!("Created {} workloads:", wi.len());
@@ -921,17 +1150,85 @@ impl ExtensionRegistry {
 						profiling::scope!("System", format!("core::{}", s.id));
 						let w = world as *const World;
 						(s.pointer)(w);
-					}
+					},
+					SystemIndex::Lua((i, j)) => {
+						let e = &self.lua_extensions[*i];
+						let s = &e.library.as_ref().unwrap().systems[*j];
+						trace!("Extension '{}' system '{}'", e.name, s.id);
+						profiling::scope!("System", format!("{}::{}", e.name, s.id));
+
+						self.lua.scope(|scope| {
+							let world = scope.create_userdata_ref(&*world)?;
+							self.lua.globals().set("world", world)?;
+
+							self.lua.load(format!(r#"
+								extensionmodule = require("{}")
+								extensionmodule.{}(world)
+							"#, e.name, s.id)).exec()?;
+
+							Ok(())
+						})?;
+					},
 				}
 			}
 		} 
 
 		Ok(())
 	}
+
+	pub fn command(&mut self, world: &mut World, command: &[&str]) -> anyhow::Result<()> {
+		let keyword = *command.get(0)
+			.with_context(|| "please supply a keyword")?;
+		match keyword {
+			"component" | "resource" => world.command(command),
+			_ => {
+				info!("Global command '{}'", keyword);
+				// I've decided that running commands doesn't need to be optimized 
+				for e in self.lua_extensions.iter() {
+					if let Some(l) = e.library.as_ref() {
+						for command in l.commands.iter() {
+							if command == keyword {
+								trace!("Command '{}' from '{}'", command, e.name);
+								self.lua.scope(|scope| {
+									let world = scope.create_userdata_ref(&*world)?;
+									self.lua.globals().set("world", world)?;
+		
+									self.lua.load(format!(r#"
+										extensionmodule = require("{}")
+										extensionmodule.{}(world)
+									"#, e.name, command)).exec()?;
+		
+									Ok(())
+								})?;
+								return Ok(())
+							}
+						}
+					}
+				}
+				Err(anyhow!("Command not found!"))
+			}
+		}
+	}
 }
-// impl Drop for ExtensionRegistry {
-// 	fn drop(&mut self) {
-// 		// Any references to the data in a library must be dropped before the library itself 
-// 		self.systems.clear();
-// 	}
-// }
+
+#[cfg(test)]
+mod tests {
+	use crate::prelude::*;
+
+	#[derive(Debug, Component)]
+	struct ComponentA;
+
+	#[test]
+	fn fuck_you() {
+		let mut world = World::new();
+		world.register_component::<ComponentA>();
+
+		let _ = world.spawn().with(ComponentA).finish();
+
+		let b = world.component_ref::<ComponentA>();
+		assert_eq!(1, b.len());
+
+		let b = world.component_raw_ref(ComponentA::STORAGE_ID);
+		assert_eq!(1, b.len());
+	}
+}

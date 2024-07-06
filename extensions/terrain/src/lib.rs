@@ -5,7 +5,7 @@ pub mod modification;
 pub mod terrain;
 
 use controls::ControlMap;
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use modification::{terrain_modification_application, terrain_placement_queue, VoxelModifierComponent};
 use player::PlayerSpawnResource;
 use terrain::{terrain_loading_system, TerrainLoadingResource, TerrainResource};
@@ -72,7 +72,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(storages: &mut eeks::ExtensionStorageLoader) {
 	storages.component::<VoxelModifierComponent>();
 	storages.resource(TerrainLoadingResource::new(0));
 	storages.resource(TerrainResource::default());

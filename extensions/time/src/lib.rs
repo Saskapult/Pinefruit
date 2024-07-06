@@ -1,4 +1,4 @@
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use render::{BufferResource, QueueResource};
 use std::time::Instant;
 use krender::prelude::Buffer;
@@ -62,6 +62,6 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(storages: &mut eeks::ExtensionStorageLoader) {
 	storages.resource(TimeResource::new());
 }

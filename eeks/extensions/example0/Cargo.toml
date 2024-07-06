@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-ekstensions = { path = "../../ekstensions" }
+eeks = { path = "../../../eeks" }
 log = "0.4.21"
 env_logger = "0.11.3"
 

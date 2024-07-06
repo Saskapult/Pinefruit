@@ -3,7 +3,7 @@ use krender::{prelude::RenderInput, prepare_for_render, RenderContextKey};
 use render::{ActiveContextResource, BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, OutputResolutionComponent, QueueResource, RenderInputResource, TextureResource};
 use slotmap::SecondaryMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use crate::{client::GameInstance, GraphicsHandle};
 
 

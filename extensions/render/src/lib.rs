@@ -1,4 +1,4 @@
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use std::{ops::{Deref, DerefMut}, sync::Arc};
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec3, Mat4, Vec4, Vec2};
@@ -668,7 +668,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(p: &mut eeks::ExtensionStorageLoader) {
 	warn!("Note that wrapped wgpu things must be inserted by the main code");
 
 	p.component::<CameraComponent>();

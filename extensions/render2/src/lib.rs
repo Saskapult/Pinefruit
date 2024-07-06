@@ -1,4 +1,4 @@
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use glam::Vec3;
 use krender::{prelude::*, MaterialKey, MeshKey};
 use render::{MaterialResource, MeshResource, RenderInputResource};
@@ -98,6 +98,6 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(p: &mut eeks::ExtensionStorageLoader) {
 	p.component::<ModelComponent>();
 }

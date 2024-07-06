@@ -1,4 +1,4 @@
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use std::{time::{Instant, Duration}, collections::{HashMap, HashSet}};
 use arrayvec::ArrayVec;
 use crossbeam_channel::{Receiver, Sender};
@@ -304,7 +304,7 @@ impl KeyCombo {
 new_key_type! { pub struct ControlKey; }
 
 
-#[derive(Debug, Resource)]
+#[derive(Debug)]
 struct ControlMapEntry {
 	pub name: String,
 	pub description: String,
@@ -424,7 +424,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(p: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(p: &mut ExtensionStorageLoader) {
 	p.component::<ControlComponent>();
 	p.component::<LocalInputComponent>();
 

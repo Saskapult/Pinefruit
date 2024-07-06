@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use controls::ControlMap;
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use transform::{MovementComponent, TransformComponent};
 
 #[macro_use]
@@ -70,6 +70,6 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {	
+pub fn load(storages: &mut eeks::ExtensionStorageLoader) {	
 	storages.resource(PlayerSpawnResource::default());
 }

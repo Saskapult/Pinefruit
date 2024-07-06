@@ -1,5 +1,5 @@
 use std::{sync::Arc, collections::HashMap};
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use glam::{IVec3, UVec3, Vec3};
 use parking_lot::RwLock;
 use slotmap::{SlotMap, new_key_type};

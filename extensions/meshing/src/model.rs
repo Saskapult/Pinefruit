@@ -3,7 +3,7 @@ use arrayvec::ArrayVec;
 use chunks::{blocks::{BlockEntry, BlockKey, BlockManager, BlockRenderType, BlockResource}, chunk::Chunk, chunk_of_point, chunks::{ChunkKey, ChunksResource}, generation::KGeneration, VoxelCube, CHUNK_SIZE};
 use controls::ControlComponent;
 use crossbeam_channel::{Receiver, Sender};
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use glam::{IVec3, UVec3, Vec2, Vec3};
 use krender::{prelude::{AbstractRenderTarget, Mesh, RRID}, MaterialKey, MeshKey};
 use light::light::{LightRGBA, TorchLightChunksResource, TorchLightModifierComponent};

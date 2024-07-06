@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 extern crate proc_macro;
 
@@ -58,9 +58,17 @@ pub fn load_core_extensions(
 ) -> proc_macro::TokenStream {
 	let extension_directory = Path::new("extensions");
 
-	let cargo_toml_path = Path::new("Cargo.toml");
-	let cargo_toml_content = std::fs::read_to_string(cargo_toml_path)
+	let cargo_toml_path = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("Cargo.toml");
+	let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
 		.expect("Failed to read Cargo.toml");
+
+	// println!("Cargo toml is {:?}", cargo_toml_path.canonicalize());
+	// println!("File is {:?}", file!());
+	// println!("Env is {:?}", env!("CARGO_MANIFEST_DIR"));
+	// println!("Env2 is {:?}", std::env::var("CARGO_MANIFEST_DIR").unwrap());
+	// let span = proc_macro::Span::call_site();
+	// span.
+
 	let cargo_toml: toml::Table = toml::from_str(&cargo_toml_content)
 		.expect("Failed to parse Cargo.toml");
 

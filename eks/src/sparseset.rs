@@ -218,6 +218,10 @@ pub struct UntypedSparseSet {
 	data_drop: fn(*mut u8), 
 	data_delete: fn(*mut u8, Entity) -> bool, 
 	data_get: fn(*mut u8, Entity) -> Option<(*const u8, usize)>,
+	data_len: fn(*mut u8) -> usize,
+	data_contains: *const u8,
+	data_entities: *const u8,
+	data_lua: *const u8,
 	data_serde: Option<(
 		// Serialize 
 		fn(*const u8, &mut Vec<u8>), // &C
@@ -228,14 +232,8 @@ pub struct UntypedSparseSet {
 		fn(&[u8], &mut Vec<u8>), // deserialize as extension of Vec<C>
 		fn(&[u8]) -> *const u8, // SparseSet<~> -> Box<SparseSet<~>>
 	)>,
-	data_renderdata: Option<
-		// This fucntion is a little different than the serialization functions 
-		// That's beucase it uses only one indirect function call 
-		// It's just copeid from the [Storage] trait
-		// This should increase performance, but I have no measurments for it
-		// Please alter the serializtion funtions to be like this
-		fn(*const u8, &mut Vec<u8>) -> bincode::Result<()>
-	>,	
+	data_renderdata: Option<StorageRenderDataFn>,	
+	data_command: *const u8,
 
 	item_size: usize,
 	name: &'static str,
@@ -310,6 +308,24 @@ impl UntypedSparseSet {
 			Some(unsafe { std::slice::from_raw_parts(data, len) }))
 	}
 
+	pub fn get_scoped_ref<'lua, 'scope>(&'scope self, entity: Entity, scope: &mlua::Scope<'lua, 'scope>) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> {
+		let thing: fn(*const u8, &mlua::Scope) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> = unsafe { std::mem::transmute(self.data_lua) };
+		(self.data_get)(self.data, entity).and_then(|(p, _)| (thing)(p, scope))
+	}
+
+	pub fn len(&self) -> usize {
+		// let f: fn(*const u8) -> usize = unsafe { std::mem::transmute(self.data_len) };
+		(self.data_len)(self.data)
+	}
+	pub fn entities<'a>(&'a self) -> &'a [Entity] {
+		let f: fn(*const u8) -> &'a [Entity] = unsafe { std::mem::transmute(self.data_entities) };
+		(f)(self.data)
+	}
+	pub fn contains(&self, entity: Entity) -> bool {
+		let f: fn(*const u8, Entity) -> bool = unsafe { std::mem::transmute(self.data_entities) };
+		(f)(self.data, entity)
+	}
+
 	// -> bincode::Result<()>
 	// serialize_one(&self, buffer: &mut Vec<u8>)
 	// serialize_many(&self, entities: &[Entity], buffer: &mut Vec<u8>)
@@ -330,6 +346,15 @@ impl UntypedSparseSet {
 		} else {
 			false
 		}
+	}
+
+	pub fn command(&mut self, entity: Entity, command: &[&str]) -> anyhow::Result<()> {
+		let data = self.get(entity)
+			.with_context(|| "Failed to find entity")
+			.unwrap();
+		let p = data.as_ptr();
+		let f: fn(*const u8, &[&str]) -> anyhow::Result<()> = unsafe { std::mem::transmute(self.data_command) };
+		(f)(p, command)
 	}
 
 	fn drop_data_as<C: Component>(data: *mut u8) {
@@ -357,8 +382,15 @@ impl<C: Component> From<SparseSet<C>> for UntypedSparseSet {
 			data_get: |p, entity| unsafe {
 				(*(p as *mut SparseSet<C>)).get_ptr(entity).and_then(|data| Some((data as *const u8, std::mem::size_of::<C>())))
 			},
+			data_len: |p| unsafe {
+				(*(p as *mut SparseSet<C>)).len()
+			},
+			data_contains: SparseSet::<C>::contains as *const u8,
+			data_entities: SparseSet::<C>::entities as *const u8,
 			data_serde: None,
-			data_renderdata: C::RENDERDATA_FN,
+			data_renderdata: C::get_render_data_fn(),
+			data_command: C::command as *const u8,
+			data_lua: C::create_scoped_ref as *const u8,
 			
 			item_size: std::mem::size_of::<C>(), 
 			name: C::STORAGE_ID,
@@ -372,7 +404,7 @@ mod tests {
 	use crate::prelude::*;
 	use super::*;
 
-	#[derive(Debug, Component, serde::Serialize, serde::Deserialize)]
+	#[derive(Debug, Component)]
 	struct ComponentA(pub u32);
 
 	#[test]
@@ -423,4 +455,34 @@ mod tests {
 	// 		println!("{e:?} - '{s}'");
 	// 	}
 	// }
+
+	#[test]
+	fn test_untyped_len() {
+		let mut set = SparseSet::new();
+		
+		set.insert(Entity::new(0_u32, 0), ComponentA(0));
+		set.insert(Entity::new(2_u32, 0), ComponentA(1));
+
+		let l0 = set.len();
+
+		let untyped: UntypedSparseSet = set.into();
+		let l1 = untyped.len();
+
+		assert_eq!(l0, l1);
+	}
+
+	#[test]
+	fn test_untyped_entities() {
+		let mut set = SparseSet::new();
+		
+		set.insert(Entity::new(0_u32, 0), ComponentA(0));
+		set.insert(Entity::new(2_u32, 0), ComponentA(1));
+
+		let e0 = set.entities().to_vec();
+
+		let untyped: UntypedSparseSet = set.into();
+		let e1 = untyped.entities().to_vec();
+
+		assert_eq!(e0, e1);
+	}
 }

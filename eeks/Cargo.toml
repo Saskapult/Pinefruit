@@ -1,13 +1,7 @@
 [package]
-name = "ekstensions"
+name = "eeks"
 version = "0.1.0"
 edition = "2021"
-
-# [workspace] 
-# members = [
-# 	"eks",
-# 	"extensions/*"
-# ]
 
 [dependencies]
 anyhow = "1.0.82"
@@ -16,6 +10,7 @@ libloading = "0.8.3"
 log = "0.4.21"
 toml = "0.8.12"
 walkdir = "2.5.0"
-eks = { path = "eks" }
+eks = { path = "../eks" }
 profiling = { version = "1.0.10" }
 ekstensions-derive = { path = "ekstensions-derive" }
+mlua = { version = "0.9.9", features = ["luau-jit", "macros", "send"] }

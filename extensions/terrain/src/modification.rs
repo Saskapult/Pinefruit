@@ -1,7 +1,7 @@
 use std::{time::{Instant, Duration}, sync::Arc};
 use chunks::{blocks::{BlockKey, BlockResource}, chunk_of_voxel, chunks::ChunksResource, fvt::FVTIterator, CHUNK_SIZE};
 use controls::{ControlComponent, ControlKey, ControlMap, KeyCode, KeyCombo, KeyKey, KeyModifiers};
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use glam::{IVec3, Vec3};
 use transform::TransformComponent;
 use crate::terrain::{TerrainEntry, TerrainResource};

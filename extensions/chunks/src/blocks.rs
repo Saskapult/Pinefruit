@@ -13,7 +13,7 @@ use render::MaterialResource;
 use serde::{Serialize, Deserialize};
 use slotmap::SlotMap;
 use slotmap::new_key_type;
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 
 
 

@@ -1,7 +1,7 @@
 pub mod light;
 
 use controls::ControlMap;
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use light::{torchlight_chunk_init_system, torchlight_debug_place_system, torchlight_update_system, TorchLightChunksResource, TorchLightModifierComponent};
 use player::PlayerSpawnResource;
 
@@ -49,7 +49,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(storages: &mut eeks::ExtensionStorageLoader) {
 	storages.resource(TorchLightChunksResource::default());
 	storages.component::<TorchLightModifierComponent>();
 }

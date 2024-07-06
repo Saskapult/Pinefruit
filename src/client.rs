@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ekstensions::{prelude::*, load_extensions};
+use eeks::{prelude::*, load_extensions};
 use krender::prelude::{BindGroupManager, BufferManager, MaterialManager, MeshManager, ShaderManager, TextureManager};
 use render::{BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, QueueResource, TextureResource};
 
@@ -48,7 +48,7 @@ impl GameInstance {
 	/// Used to be part of new but I wanted a loading screen.
 	/// 
 	/// Maybe have a progress callback option. 
-	pub fn initialize(&mut self, updates: impl Fn(ekstensions::LoadStatus)) {
+	pub fn initialize(&mut self, updates: impl Fn(eeks::LoadStatus)) {
 		load_extensions!(self.world, self.extensions).unwrap();
 		self.extensions.reload(&mut self.world, updates).unwrap();
 

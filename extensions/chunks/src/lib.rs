@@ -7,7 +7,7 @@ pub mod generation;
 
 use blocks::{load_blocks, BlockResource};
 use chunks::{chunk_loading_system, ChunkLoadingComponent, ChunksResource};
-use ekstensions::prelude::*;
+use eeks::prelude::*;
 use glam::{Vec3, IVec3, UVec3};
 use player::PlayerSpawnResource;
 
@@ -158,7 +158,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 
 
 #[load]
-pub fn load(storages: &mut ekstensions::ExtensionStorageLoader) {
+pub fn load(storages: &mut ExtensionStorageLoader) {
 	storages.resource(ChunksResource::new());
 	storages.resource(BlockResource::default());
 	storages.component::<ChunkLoadingComponent>();

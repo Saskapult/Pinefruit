@@ -63,31 +63,32 @@ pub enum ServerCommand {
 
 
 pub fn run_server(
-	server: Arc<RwLock<GameInstance>>, // TODO: replace with server?
+	_server: Arc<RwLock<GameInstance>>, // TODO: replace with server?
 ) -> (crossbeam_channel::Sender<ServerCommand>, JoinHandle<anyhow::Result<()>>) {
-	let (s, r) = crossbeam_channel::unbounded();
+	// let (s, r) = crossbeam_channel::unbounded();
 
-	let h = std::thread::Builder::new()
-	.name("Server Thread".into())
-	.spawn(move || {
-		profiling::register_thread!("Server Thread");
+	// let h = std::thread::Builder::new()
+	// .name("Server Thread".into())
+	// .spawn(move || {
+	// 	profiling::register_thread!("Server Thread");
 
-		let mut tick_thing = TickThing::new(Duration::from_secs_f32(1.0 / 30.0));
-		let mut exit = false;
-		while !exit {
-			std::thread::sleep(tick_thing.duration_to_next());
-			for c in r.try_iter() {
-				match c {
-					ServerCommand::ShutDown => exit = true,
-				}
-			}
-			{
-				let mut server = server.write();
-				tick_thing.tick_to_time(Instant::now(), || server.tick());
-			}
-		}
-		Ok(())
-	}).unwrap();
+	// 	let mut tick_thing = TickThing::new(Duration::from_secs_f32(1.0 / 30.0));
+	// 	let mut exit = false;
+	// 	while !exit {
+	// 		std::thread::sleep(tick_thing.duration_to_next());
+	// 		for c in r.try_iter() {
+	// 			match c {
+	// 				ServerCommand::ShutDown => exit = true,
+	// 			}
+	// 		}
+	// 		{
+	// 			let mut server = server.write();
+	// 			tick_thing.tick_to_time(Instant::now(), || server.tick());
+	// 		}
+	// 	}
+	// 	Ok(())
+	// }).unwrap();
 
-	(s, h)
+	// (s, h)
+	todo!()
 }
