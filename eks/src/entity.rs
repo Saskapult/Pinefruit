@@ -40,6 +40,7 @@ impl std::fmt::Display for Entity {
 		Ok(())
 	}
 }
+impl mlua::UserData for Entity {}
 
 
 #[derive(Debug, Default)]

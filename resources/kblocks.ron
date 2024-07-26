@@ -1,20 +1,6 @@
 
 [
-	(
-		name: "dirt",
-		render_type: Cube(
-			xp: Path("materials/dirt.ron"),
-			xn: Path("materials/dirt.ron"),
-			yp: Path("materials/dirt.ron"),
-			yn: Path("materials/dirt.ron"),
-			zp: Path("materials/dirt.ron"),
-			zn: Path("materials/dirt.ron"),
-		),
-		floats: {
-			"colour": [0.200, 0.154, 0.108, 1.0],
-		},
-		sounds: {},
-	), 
+
 	(
 		name: "stone",
 		render_type: Cube(

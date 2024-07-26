@@ -1,5 +1,6 @@
 # Extendable Entity Komponent System (Extendable EKS (EEKS))
 EEKS is an entity component system of my own design. 
+Behold my [modding API](https://www.youtube.com/watch?v=G-zthYFjk6s)!
 It features rust code hot reloading, lua scripting, and integration with my rendering system. 
 
 Ekstensions is an extension to EKS with a hot-reloadable ECS. 

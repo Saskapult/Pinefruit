@@ -32,6 +32,7 @@ impl Deref for QueueResource {
 
 
 #[derive(Debug, Resource, Default)]
+#[sda(lua = true)]
 pub struct MaterialResource (pub MaterialManager);
 impl Deref for MaterialResource {
 	type Target = MaterialManager;
@@ -43,6 +44,10 @@ impl DerefMut for MaterialResource {
 	fn deref_mut(&mut self) -> &mut Self::Target {
 		&mut self.0
 	}
+}
+impl mlua::UserData for MaterialResource {
+	fn add_fields<'lua, F: mlua::UserDataFields<'lua, Self>>(_fields: &mut F) {}
+	fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(_methods: &mut M) {}
 }
 
 

@@ -14,6 +14,7 @@ pub struct UntypedResource {
 	)>,
 	data_renderdata: Option<fn(&Self, &mut Vec<u8>)>,
 	data_command: *const u8,
+	data_lua: *const u8,
 	
 	data_size: usize,
 	name: &'static str,
@@ -96,6 +97,11 @@ impl UntypedResource {
 		(f)(p, command)
 	}
 
+	pub fn create_scoped_ref<'lua, 'scope>(&'scope mut self, scope: &mlua::Scope<'lua, 'scope>) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> {
+		let f: fn(*const u8, &mlua::Scope<'lua, 'scope>) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> = unsafe { std::mem::transmute(self.data_lua) };
+		f(self.data, scope)
+	}
+
 	// Should only ever be called from drop code
 	fn drop_data_as<R: Resource>(data: *mut u8) {
 		trace!("Dropping untype resource as resource of {}", R::STORAGE_ID);
@@ -122,6 +128,7 @@ impl<R: Resource> From<R> for UntypedResource {
 			data_serde: None, //R::get_serde_fns(),
 			data_renderdata: None,
 			data_command: R::command as *const u8,
+			data_lua: R::create_scoped_ref as *const u8,
 			data_size, 
 			name, 
 		}

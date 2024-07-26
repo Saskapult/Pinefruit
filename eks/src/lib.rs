@@ -98,9 +98,10 @@ impl<T: StorageCommandExpose> StorageCommandExpose for Option<T> {
 // I hate it. 
 // Instead we must derive this and trust the user to implement it correctly. 
 pub trait StorageLuaExpose {
-	fn create_scoped_ref<'lua, 'scope>(&'scope self, _scope: &mlua::Scope<'lua, 'scope>) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> {
+	fn create_scoped_ref<'lua, 'scope>(&'scope mut self, _scope: &mlua::Scope<'lua, 'scope>) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> {
 		None
 	}
+	// fn create_userdata(&self, )
 }
 // impl<T: mlua::UserData> StorageLuaExpose for T {}
 impl<T: StorageLuaExpose> StorageLuaExpose for Option<T> {}
@@ -179,6 +180,7 @@ impl<S> WorldStorage<S> {
 			(**s.get(k.as_ref()).unwrap()).try_borrow_mut().is_ok()
 		}, "Cannot remove borrowed storage!");
 		s.remove(k.as_ref()).and_then(|c| unsafe { 
+			// This is safe becuase c can only have been created by our insertion method 
 			let c = Box::from_raw(c);
 			Some(c.into_inner())
 		})
@@ -199,6 +201,7 @@ impl<S> WorldStorage<S> {
 impl<S> Drop for WorldStorage<S> {
 	fn drop(&mut self) {
 		for &p in self.storages.read().values() {
+			// See "remove" justification 
 			drop(unsafe { Box::from_raw(p) });
 		}
 	}
@@ -310,8 +313,8 @@ impl World {
 	}
 
 	pub fn resource_raw_ref(&self, id: impl AsRef<str>) -> AtomicRef<'_, UntypedResource> {
-		let r = self.resources.get(id.as_ref())
-			.expect(&*format!("Bad resource '{}'", id.as_ref()));
+		let r = self.resources.get(id.as_ref());
+		let r = r.expect(&*format!("Bad resource '{}'", id.as_ref()));
 		let r = unsafe { &*r };
 		r.try_borrow().unwrap()
 	}
@@ -404,6 +407,42 @@ impl World {
 			_ => Err(anyhow!("Valid commands are 'component' and 'resource'")),
 		}
 	}
+
+	/// Adds world' functions to the scope and creates a world reference. 
+	// One of mlua's limitatiosn is the inability to return scoped data from scoped data
+	// It is possible, but only with some weird hacy wizardry (see below)
+	// https://github.com/mlua-rs/mlua/issues/300#issuecomment-1935091023
+	// I have chosen to not do that and do this instead 
+	pub fn add_to_scope<'scope, 's: 'scope>(&'s self, lua: &mlua::Lua, scope: &'scope mlua::Scope<'_, 'scope>) -> anyhow::Result<()> {
+		// TODO: insert reference to storage
+		// Maybe insert a key? We need some way to return references to inner data 
+		// lua.globals().set("get_component", scope.create_function(|_, (id, entity): (String, mlua::UserDataRef<Entity>)| {
+		// 	let s: AtomicRef<UntypedSparseSet> = self.component_raw_ref(id);
+		// 	let sr: &UntypedSparseSet = &*s;
+		// 	let sr = unsafe {
+		// 		// This is just unsafe, but not too unsafe 
+		// 		// Becuase we are creating userdata references through a scope, it is not possible for the lua script to maintain references to that userdata after the sope is exited 
+		// 		// This is safe iff scope lives for less time than the world reference 
+		// 		std::mem::transmute::<_, &'static UntypedSparseSet>(sr)
+		// 	};
+		// 	let ud = sr.get_scoped_ref(*entity, scope).unwrap()?;
+		// 	Ok(ud)
+		// })?)?;
+		lua.globals().set("get_resource", scope.create_function(move |_, id: String| {
+			trace!("Lua get resource '{}'", id);
+			let mut s = self.resource_raw_mut(id);
+			let sr: &mut UntypedResource = &mut *s;
+			let sr = unsafe {
+				// See above explaination 
+				std::mem::transmute::<_, &'static mut UntypedResource>(&mut *sr)
+			};
+			let ud = sr.create_scoped_ref(&scope).unwrap()?;
+			Ok(ud)
+		})?)?;
+
+		lua.globals().set("world", scope.create_userdata_ref(&*self)?)?;
+		Ok(())
+	}
 }
 impl mlua::UserData for World {
 	fn add_fields<'lua, F: mlua::UserDataFields<'lua, Self>>(_fields: &mut F) {}
@@ -414,10 +453,6 @@ impl mlua::UserData for World {
 			Ok(ComponentIteratorFilter {
 				borrows: vals.into_iter().collect(),
 			})
-		});
-		methods.add_method("comp_mut", |_, _, _id: String| {
-			error!("TODO: borrows");
-			Ok(())
 		});
 		methods.add_method("run", |lua, this, (filter, function): (ComponentIteratorFilter, mlua::Function)| {
 			trace!("Running a lua system");

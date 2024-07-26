@@ -18,6 +18,7 @@ use eeks::prelude::*;
 
 
 #[derive(Debug, Resource, Default)]
+#[sda(lua = true)]
 pub struct BlockResource {
 	pub blocks: Arc<RwLock<BlockManager>>,
 }
@@ -229,10 +230,17 @@ impl BlockManager {
 	}
 
 	pub fn insert(&mut self, block: BlockEntry) -> BlockKey {
-		self.blocks.insert_with_key(|key| {
-			self.key_by_name.insert(block.specification.name.clone(), key);
-			block
-		})
+		if let Some(key) = self.key_by_name.get(&block.specification.name) {
+			warn!("Overwriting block '{}'", block.specification.name);
+			let r = self.blocks.get_mut(*key).unwrap();
+			*r = block;
+			*key
+		} else {
+			self.blocks.insert_with_key(|key| {
+				self.key_by_name.insert(block.specification.name.clone(), key);
+				block
+			})
+		}
 	}
 
 	pub fn get(&self, key: BlockKey) -> Option<&BlockEntry> {
@@ -276,6 +284,28 @@ impl BlockManager {
 
 	// 	(uidx_map, name_map)
 	// }
+}
+impl mlua::UserData for BlockManager {
+	fn add_fields<'lua, F: mlua::UserDataFields<'lua, Self>>(_fields: &mut F) {}
+	
+	fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(methods: &mut M) {
+		methods.add_method_mut("register_block_from_string", |_lua, this, (block_string, mut materials): (String, mlua::UserDataRefMut<MaterialResource>)| {
+			match ron::de::from_str::<BlockSpecification>(block_string.as_str()) {
+				Ok(mut specification) => {
+					specification.canonicalize("./").unwrap();
+					let e = BlockEntry::from_specification(specification, "./", &mut materials).unwrap();
+					this.insert(e);
+
+					Ok(true)
+				},
+				Err(e) => {
+					error!("Failed to load a block specification!");
+					error!("{}", e);
+					Ok(false)
+				}
+			}
+		});
+	}
 }
 
 

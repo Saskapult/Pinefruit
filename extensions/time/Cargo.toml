@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-ekstensions = { path = "../../ekstensions" }
+eeks = { path = "../../eeks" }
 render = { path = "../render" }
 krender = { path = "../../krender" }
 log = "0.4.21"

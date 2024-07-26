@@ -51,8 +51,8 @@ fn storage_derive_macro2(input: proc_macro2::TokenStream, component: bool) -> de
 	} else {
 		other_traits.push(quote::quote! {
 			impl StorageLuaExpose for #ident {
-				fn create_scoped_ref<'lua, 'scope>(&'scope self, scope: &mlua::Scope<'lua, 'scope>) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> {
-					Some(scope.create_any_userdata_ref(self))
+				fn create_scoped_ref<'lua, 'scope>(&'scope mut self, scope: &mlua::Scope<'lua, 'scope>) -> Option<Result<mlua::AnyUserData<'lua>, mlua::Error>> {
+					Some(scope.create_userdata_ref_mut(self))
 				}
 			}
 		});

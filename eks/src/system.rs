@@ -2,8 +2,6 @@ use crate::{query::Queriable, World};
 
 
 pub trait SystemFunction<'q, Data, Args, R> {
-	// function name
-	// const COMPONENT_NAME: &'static str = #component_name;
 	fn run_system(self, data: Data, world: &'q World) -> R;
 }
 

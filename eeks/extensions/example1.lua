@@ -2,6 +2,11 @@ local example1 = {}
 
 function example1.systems()
 	print("example1 systems")
+	error("error")
+	warn("warn")
+	info("info")
+	debug("debug")
+	trace("trace")
 
 	local system0 = new_system("group", "somefunction")
 	system0:run_before("someotherfunction")
@@ -19,6 +24,11 @@ end
 
 function example1.somefunction(world)
 	print("Some function")
+	print("Get ExampleResource")
+	local exres = get_resource("ExampleResource")
+	print(exres)
+	exres:test0()
+	exres:test1("Stringyy")
 end
 
 function example1.someotherfunction(world)
@@ -26,6 +36,7 @@ function example1.someotherfunction(world)
 	local f = world:filter("ExampleComponent")
 	function iterthing(e) 
 		print("thing happened")
+		e.ExampleComponent:test2()
 	end
 	print("Iterating...")
 	world:run(f, iterthing)

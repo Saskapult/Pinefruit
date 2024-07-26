@@ -1,6 +1,6 @@
 #![feature(lazy_cell)]
 
-use std::{cell::LazyCell, collections::HashMap, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, path::{Path, PathBuf}, sync::LazyLock, time::{Duration, SystemTime, UNIX_EPOCH}};
 use anyhow::{anyhow, Context};
 use eks::{prelude::*, resource::UntypedResource, sparseset::UntypedSparseSet, system::SystemFunction, WorldEntitySpawn};
 pub use eks;
@@ -15,11 +15,11 @@ extern crate log;
 
 
 /// Use sccache for crate extensions outside of the root workspace. 
-const USE_SCCACHE: LazyCell<bool> = LazyCell::new(|| {
+static USE_SCCACHE: LazyLock<bool> = LazyLock::new(|| {
 	if !check_environment_boolean("EEKS_SCCACHE", true) {
 		return false;
 	}
-	let exit = std::process::Command::new("which sccache").status().unwrap();
+	let exit = std::process::Command::new("sccache").arg("--version").status().unwrap();
 	if !exit.success() {
 		error!("Sccache command failed: {:?}, disabling", exit.code());
 		return false
@@ -30,13 +30,13 @@ const USE_SCCACHE: LazyCell<bool> = LazyCell::new(|| {
 /// If false, we will miss some rebuilds. 
 /// When working on ekstensions, however, we will need to rebuild every extension. 
 /// This takes a long time so this option sacrifices safety for better iteration time. 
-const DEEP_CHECKING: LazyCell<bool> = LazyCell::new(|| {
+static DEEP_CHECKING: LazyLock<bool> = LazyLock::new(|| {
 	check_environment_boolean("EEKS_DEEP_CHECKING", true)
 });
 /// If many packages must be hard-reloaded, run cargo build --all. 
 /// It should (untested!) lead to faster startup times. 
 /// This will cause the loading udpates to be sent non-smoothly. 
-const BATCHED_COMPILATION: LazyCell<bool> = LazyCell::new(|| {
+static BATCHED_COMPILATION: LazyLock<bool> = LazyLock::new(|| {
 	check_environment_boolean("EEKS_BATCHED", true)
 });
 
@@ -159,10 +159,6 @@ impl ExtensionSystem {
 	pub fn new<S: SystemFunction<'static, (), Q, R> + Copy + 'static, R, Q: Queriable<'static>>(
 		group: impl AsRef<str>, id: impl AsRef<str>, s: S,
 	) -> Self {
-
-		// I hate SystemFuction
-		// I hate lifetimes
-		// I feel hate 
 		// TODO: can't we just get a pointer to S::run_system?
 		let closure = move |world: *const World| unsafe {
 			let world = &*world;
@@ -701,11 +697,14 @@ pub struct ExtensionRegistry {
 }
 impl ExtensionRegistry {
 	pub fn new() -> Self {
+		let lua = mlua::Lua::new();
+		add_lua_logging(&lua);
+
 		Self {
 			extensions: Vec::new(),
 			core_paths: Vec::new(),
 			core_systems: Vec::new(),
-			lua: mlua::Lua::new(),
+			lua,
 			lua_extensions: Vec::new(),
 			workloads: HashMap::new(),
 		}
@@ -796,6 +795,9 @@ impl ExtensionRegistry {
 				if lib.is_some() {
 					trace!("Removing storages...");
 				}
+				// These operations are safe iff the reloaded extension is able to interpret the previous version's data 
+				// It *could* be possible to maintain the previous drop code until it is verified that the new extension is capable of handling the data
+				// This is ommitted because if they wanted to do that, they would just use serialization 
 				let previous_storages = lib.as_mut().map(|lib| lib.unload(world))
 					.map(|r| r.map(|(c, r)| (
 						c.into_iter()
@@ -821,6 +823,7 @@ impl ExtensionRegistry {
 
 				if let Some((components, resources)) = previous_storages {
 					// Replace storages
+					// These operations are not safe at all 
 					trace!("Overwriting to restore previous storages...");
 					for (id, uss) in components {
 						warn!("Replacing component storage '{}' with raw persisted data", id);
@@ -1157,9 +1160,18 @@ impl ExtensionRegistry {
 						trace!("Extension '{}' system '{}'", e.name, s.id);
 						profiling::scope!("System", format!("{}::{}", e.name, s.id));
 
-						self.lua.scope(|scope| {
-							let world = scope.create_userdata_ref(&*world)?;
-							self.lua.globals().set("world", world)?;
+						self.lua.scope(|scope: &mlua::Scope| {
+							let world = unsafe {
+								// This is safe because no references to it are stored for longer than the scope's lifetime 
+								// It is possible that I would not need to do this if I was more skilled at annotating lifetimes 
+								std::mem::transmute::<_, &'static World>(&*world)
+							};
+							let scope = unsafe {
+								// See above 
+								std::mem::transmute::<_, &'static mlua::Scope<'_, 'static>>(scope)
+							};
+							
+							world.add_to_scope(&self.lua, &scope).unwrap();
 
 							self.lua.load(format!(r#"
 								extensionmodule = require("{}")
@@ -1210,6 +1222,32 @@ impl ExtensionRegistry {
 		}
 	}
 }
+
+
+/// Adds logging functions (from env_logger) to the lua context. 
+fn add_lua_logging(lua: &mlua::Lua) {
+	lua.globals().set("error", lua.create_function(|_, s: String| {
+		error!("{}", s);
+		Ok(())
+	}).unwrap()).unwrap();
+	lua.globals().set("warn", lua.create_function(|_, s: String| {
+		warn!("{}", s);
+		Ok(())
+	}).unwrap()).unwrap();
+	lua.globals().set("info", lua.create_function(|_, s: String| {
+		info!("{}", s);
+		Ok(())
+	}).unwrap()).unwrap();
+	lua.globals().set("debug", lua.create_function(|_, s: String| {
+		debug!("{}", s);
+		Ok(())
+	}).unwrap()).unwrap();
+	lua.globals().set("trace", lua.create_function(|_, s: String| {
+		trace!("{}", s);
+		Ok(())
+	}).unwrap()).unwrap();
+}
+
 
 #[cfg(test)]
 mod tests {

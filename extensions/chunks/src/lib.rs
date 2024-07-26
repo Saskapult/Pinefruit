@@ -146,9 +146,7 @@ pub fn dependencies() -> Vec<String> {
 
 
 #[systems]
-pub fn systems(loader: &mut ExtensionSystemsLoader) {
-	loader.system("client_init", "load_blocks", load_blocks);
-	
+pub fn systems(loader: &mut ExtensionSystemsLoader) {	
 	loader.system("client_tick", "chunk_loading_system", chunk_loading_system);
 	
 	loader.system("client_tick", "player_chunk_loader", player_chunk_loader)

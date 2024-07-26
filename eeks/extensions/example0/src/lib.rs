@@ -4,7 +4,8 @@ use eeks::prelude::*;
 extern crate log;
 
 
-#[derive(Debug, Component, PartialEq, Eq, Clone, Copy, DefaultRenderData, NotSerdeStorage, NoUserData)]
+#[derive(Debug, Component, PartialEq, Eq, Clone, Copy)]
+#[sda(lua = true, commands = true)]
 pub struct ExampleComponent(pub u32);
 impl StorageCommandExpose for ExampleComponent {
 	fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
@@ -17,9 +18,18 @@ impl StorageCommandExpose for ExampleComponent {
 		Ok(())
 	}
 }
+impl mlua::UserData for ExampleComponent {
+	fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(methods: &mut M) {
+		methods.add_method("test2", |_lua, this, ()| {
+			info!("Called test2");
+			Ok(())
+		});
+	}
+}
 
 
-#[derive(Debug, Resource, PartialEq, Eq, Clone, Copy, DefaultRenderData, NotSerdeStorage, NoUserData)]
+#[derive(Debug, Resource, PartialEq, Eq, Clone, Copy)]
+#[sda(lua = true, commands = true)]
 pub struct ExampleResource(pub u32);
 impl StorageCommandExpose for ExampleResource {
 	fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
@@ -30,6 +40,19 @@ impl StorageCommandExpose for ExampleResource {
 			_ => {},
 		}
 		Ok(())
+	}
+}
+impl mlua::UserData for ExampleResource {
+	fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(methods: &mut M) {
+		methods.add_method("test0", |_lua, this, ()| {
+			info!("Called test0");
+			Ok(())
+		});
+		methods.add_method("test1", |_lua, this, s: String| {
+			info!("Called test1");
+			info!("String is '{}'", s);
+			Ok(42)
+		});
 	}
 }
 

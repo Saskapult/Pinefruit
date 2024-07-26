@@ -284,6 +284,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05efc5cfd9110c8416e471df0e96702d58690178e206e61b7173706673c93706"
+dependencies = [
+ "memchr",
+ "serde",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -387,7 +397,7 @@ name = "chunks"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ekstensions",
+ "eeks",
  "env_logger 0.11.3",
  "glam",
  "krender",
@@ -489,8 +499,8 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "crossbeam-channel",
+ "eeks",
  "egui",
- "ekstensions",
  "enumflags2",
  "log",
  "slotmap",
@@ -731,6 +741,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20930a432bbd57a6d55e07976089708d4893f3d556cf42a0d79e9e321fa73b10"
 
 [[package]]
+name = "eeks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "eks",
+ "ekstensions-derive",
+ "env_logger 0.11.3",
+ "libloading 0.8.3",
+ "log",
+ "mlua",
+ "profiling",
+ "toml",
+ "walkdir",
+]
+
+[[package]]
 name = "egui"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -751,28 +777,16 @@ checksum = "3dca9240753cf90908d7e4aac30f630662b02aebaa1b58a3cadabdb23385b58b"
 name = "eks"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "atomic_refcell",
  "bincode",
  "component-derive",
  "log",
+ "mlua",
  "parking_lot",
+ "ron 0.8.1",
  "serde",
  "thiserror",
-]
-
-[[package]]
-name = "ekstensions"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "eks",
- "ekstensions-derive",
- "env_logger 0.11.3",
- "libloading 0.8.3",
- "log",
- "profiling",
- "toml",
- "walkdir",
 ]
 
 [[package]]
@@ -1004,6 +1018,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e05e7e6723e3455f4818c7b26e855439f7546cf617ef669d1adedb8669e5cb9"
 dependencies = [
  "bytemuck",
+ "rand",
  "serde",
 ]
 
@@ -1214,6 +1229,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8478577c03552c21db0e2724ffb8986a5ce7af88107e6be5d2ee6e158c12800"
 
 [[package]]
+name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "jni"
 version = "0.21.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1362,7 +1386,7 @@ version = "0.1.0"
 dependencies = [
  "chunks",
  "controls",
- "ekstensions",
+ "eeks",
  "env_logger 0.11.3",
  "glam",
  "log",
@@ -1396,6 +1420,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
 
 [[package]]
+name = "luau0-src"
+version = "0.10.2+luau635"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8bd6bc70c84fdd4e89b71b528f7ab7db7b97adf759faa8dbe15c5011468e290"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "malloc_buf"
 version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1427,7 +1460,7 @@ dependencies = [
  "chunks",
  "controls",
  "crossbeam-channel",
- "ekstensions",
+ "eeks",
  "env_logger 0.11.3",
  "glam",
  "krender",
@@ -1470,6 +1503,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "mlua"
+version = "0.9.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d111deb18a9c9bd33e1541309f4742523bfab01d276bfa9a27519f6de9c11dc7"
+dependencies = [
+ "bstr",
+ "libloading 0.8.3",
+ "mlua-sys",
+ "mlua_derive",
+ "num-traits",
+ "once_cell",
+ "rustc-hash 2.0.0",
+]
+
+[[package]]
+name = "mlua-sys"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a088ed0723df7567f569ba018c5d48c23c501f3878b190b04144dfa5ebfa8abc"
+dependencies = [
+ "cc",
+ "cfg-if 1.0.0",
+ "luau0-src",
+ "pkg-config",
+]
+
+[[package]]
+name = "mlua_derive"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09697a6cec88e7f58a02c7ab5c18c611c6907c8654613df9cc0192658a4fb859"
+dependencies = [
+ "itertools",
+ "once_cell",
+ "proc-macro-error",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "syn 2.0.66",
+]
+
+[[package]]
 name = "naga"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1482,7 +1557,7 @@ dependencies = [
  "indexmap",
  "log",
  "num-traits",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "spirv",
  "termcolor",
  "thiserror",
@@ -1691,7 +1766,7 @@ name = "player"
 version = "0.1.0"
 dependencies = [
  "controls",
- "ekstensions",
+ "eeks",
  "env_logger 0.11.3",
  "log",
  "transform",
@@ -1754,6 +1829,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d37c51ca738a55da99dc0c4a34860fd675453b8b36209178c2249bb13651284"
 dependencies = [
  "toml_edit 0.21.1",
+]
+
+[[package]]
+name = "proc-macro-error"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
+dependencies = [
+ "proc-macro-error-attr",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+ "version_check",
+]
+
+[[package]]
+name = "proc-macro-error-attr"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "version_check",
 ]
 
 [[package]]
@@ -1940,7 +2039,7 @@ name = "render"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "ekstensions",
+ "eeks",
  "glam",
  "krender",
  "log",
@@ -1983,6 +2082,12 @@ name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
+
+[[package]]
+name = "rustc-hash"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "583034fd73374156e66797ed8e5b0d5690409c9226b22d87cb7f19821c05d152"
 
 [[package]]
 name = "rustix"
@@ -2227,12 +2332,13 @@ dependencies = [
  "chunks",
  "controls",
  "crossbeam-channel",
- "ekstensions",
+ "eeks",
  "env_logger 0.11.3",
  "glam",
  "log",
  "parking_lot",
  "player",
+ "rand",
  "rayon",
  "ron 0.8.1",
  "simdnoise",
@@ -2385,7 +2491,7 @@ name = "transform"
 version = "0.1.0"
 dependencies = [
  "controls",
- "ekstensions",
+ "eeks",
  "env_logger 0.11.3",
  "glam",
  "log",
@@ -2717,7 +2823,7 @@ dependencies = [
  "parking_lot",
  "profiling",
  "raw-window-handle",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "smallvec",
  "thiserror",
  "web-sys",
@@ -2761,7 +2867,7 @@ dependencies = [
  "range-alloc",
  "raw-window-handle",
  "renderdoc-sys",
- "rustc-hash",
+ "rustc-hash 1.1.0",
  "smallvec",
  "thiserror",
  "wasm-bindgen",
