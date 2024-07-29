@@ -18,4 +18,4 @@ log = "0.4.21"
 render = { path = "../render" }
 env_logger = "0.11.3"
 
-[workspace]
+# [workspace]

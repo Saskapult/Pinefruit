@@ -563,6 +563,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
+name = "chunks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "eeks",
+ "env_logger 0.11.3",
+ "glam",
+ "krender",
+ "log",
+ "parking_lot",
+ "player",
+ "render",
+ "ron 0.8.1",
+ "serde",
+ "slotmap",
+ "transform",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1672,6 +1691,7 @@ dependencies = [
  "atomic_refcell",
  "bincode",
  "bytemuck",
+ "chunks",
  "controls",
  "crossbeam-channel",
  "dashmap",
@@ -1685,6 +1705,7 @@ dependencies = [
  "hashbrown",
  "image 0.25.1",
  "krender",
+ "light",
  "log",
  "lz4_flex",
  "noise",
@@ -1699,6 +1720,7 @@ dependencies = [
  "rand_xoshiro",
  "rayon",
  "render",
+ "render2",
  "ron 0.8.1",
  "rustc-hash 1.1.0",
  "serde",
@@ -1706,7 +1728,9 @@ dependencies = [
  "slotmap",
  "smallvec",
  "splines",
+ "terrain",
  "thiserror",
+ "time 0.1.0",
  "tobj",
  "transform",
  "variantly",
@@ -1809,6 +1833,23 @@ dependencies = [
  "bitflags 2.5.0",
  "libc",
  "redox_syscall 0.4.1",
+]
+
+[[package]]
+name = "light"
+version = "0.1.0"
+dependencies = [
+ "chunks",
+ "controls",
+ "eeks",
+ "env_logger 0.11.3",
+ "glam",
+ "log",
+ "parking_lot",
+ "player",
+ "slotmap",
+ "terrain",
+ "transform",
 ]
 
 [[package]]
@@ -2643,7 +2684,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "puffin",
- "time",
+ "time 0.3.36",
  "vec1",
  "web-time",
 ]
@@ -3002,6 +3043,22 @@ dependencies = [
  "krender",
  "log",
  "rand 0.8.5",
+ "transform",
+ "wgpu",
+]
+
+[[package]]
+name = "render2"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "eeks",
+ "env_logger 0.11.3",
+ "glam",
+ "krender",
+ "log",
+ "rand 0.8.5",
+ "render",
  "transform",
  "wgpu",
 ]
@@ -3372,6 +3429,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "terrain"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chunks",
+ "controls",
+ "crossbeam-channel",
+ "eeks",
+ "env_logger 0.11.3",
+ "glam",
+ "log",
+ "parking_lot",
+ "player",
+ "rand 0.8.5",
+ "rayon",
+ "ron 0.8.1",
+ "simdnoise",
+ "slotmap",
+ "splines",
+ "thiserror",
+ "transform",
+ "variantly",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.60"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3400,6 +3482,18 @@ dependencies = [
  "flate2",
  "jpeg-decoder",
  "weezl",
+]
+
+[[package]]
+name = "time"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "eeks",
+ "env_logger 0.11.3",
+ "krender",
+ "log",
+ "render",
 ]
 
 [[package]]

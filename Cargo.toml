@@ -30,6 +30,19 @@ render = { path = "extensions/render"}
 controls = { path = "extensions/controls" }
 player = { path = "extensions/player" }
 transform = { path = "extensions/transform" }
+# Dependencies that appear in the extensions directory are marked as core
+# extensions and built as part of the base binary
+# The extensions listed above are required for the project to function.
+# The extensions listed below could be built and loaded dynamically.
+# I simply want to not compile them separately (it takes a lot of time).
+# Be aware that the "[workspace]" must be remove from the crates' manifest
+chunks = { path = "extensions/chunks"}
+light = { path = "extensions/light"}
+# meshing = { path = "extensions/meshing"}
+render2 = { path = "extensions/render2"}
+terrain = { path = "extensions/terrain"}
+time = { path = "extensions/time"}
+
 
 env_logger = "0.11.3"
 log = "0.4"

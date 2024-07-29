@@ -31,4 +31,4 @@ rand = "0.8.5"
 # debug = 1
 opt-level = 2
 
-[workspace]
+# [workspace]
