@@ -33,6 +33,29 @@ impl std::ops::DerefMut for BlockResource {
 		&mut self.blocks
 	}
 }
+impl mlua::UserData for BlockResource {
+	fn add_fields<'lua, F: mlua::UserDataFields<'lua, Self>>(_fields: &mut F) {}
+
+	fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(methods: &mut M) {
+		methods.add_method_mut("register_block_from_string", |_lua, this, (block_string, mut materials): (String, mlua::UserDataRefMut<MaterialResource>)| {
+			match ron::de::from_str::<BlockSpecification>(block_string.as_str()) {
+				Ok(mut specification) => {
+					specification.canonicalize("./").unwrap();
+					let e = BlockEntry::from_specification(specification, &mut materials).unwrap();
+					trace!("Lua registers block '{}'", e.specification.name);
+					this.blocks.write().insert(e);
+
+					Ok(true)
+				},
+				Err(e) => {
+					error!("Failed to load a block specification!");
+					error!("{}", e);
+					Ok(false)
+				}
+			}
+		});
+	}
+}
 
 
 new_key_type! {
@@ -53,6 +76,10 @@ pub struct BlockSpecification {
 	
 	pub floats: HashMap<String, Vec<f32>>,
 	pub sounds: HashMap<String, PathBuf>,
+	// Should we call a workload when this block is placed/interacted/broken?
+	pub on_place: bool,
+	pub on_interact: bool,
+	pub on_break: bool,
 }
 impl BlockSpecification {
 	pub fn read(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -104,7 +131,13 @@ impl PathOrLabel {
 	pub fn canonicalize(&mut self, context: impl AsRef<Path>) -> anyhow::Result<()> {
 		match self {
 			Self::Label(_) => {},
-			Self::Path(p) => {
+			Self::Path(p) => if p.is_absolute() {
+				// A path such as /a/b/c should be {path to resources}/a/b/c
+				// This might break on windows 
+				*p = Path::new("./resources").join(p.strip_prefix("/").unwrap()).canonicalize()?;
+			} else {
+				// A path such as a/b/c in file d should be d/a/b/c
+				trace!("{:?} relative", p);
 				*p = context.as_ref().join(p.clone()).canonicalize()?;
 			}
 		}
@@ -147,7 +180,8 @@ pub enum BlockRenderType {
 #[derive(Debug)]
 pub struct BlockEntry {
 	pub specification: BlockSpecification,
-	pub path: PathBuf,
+	// If this entry came from a file, this is the file it came from
+	pub path: Option<PathBuf>,
 	// This could have been Option<BlockRenderType> for more parallelization
 	// I very much doubt, however, that it's worth the effort
 	pub render_type: BlockRenderType, 
@@ -158,12 +192,13 @@ impl BlockEntry {
 		let path = path.as_ref();
 		let specification = BlockSpecification::read(path)?;
 
-		Self::from_specification(specification, path, materials)
+		let mut s = Self::from_specification(specification, materials)?;
+		s.path = Some(path.canonicalize()?);
+		Ok(s)
 	}
 
 	pub fn from_specification(
 		specification: BlockSpecification, 
-		path: impl AsRef<Path>,
 		materials: &mut MaterialManager,
 	) -> anyhow::Result<Self> {
 
@@ -188,7 +223,7 @@ impl BlockEntry {
 
 		Ok(Self {
 			specification,
-			path: path.as_ref().canonicalize()?,
+			path: None,
 			render_type,
 			covering: true,
 		})
@@ -285,28 +320,6 @@ impl BlockManager {
 	// 	(uidx_map, name_map)
 	// }
 }
-impl mlua::UserData for BlockManager {
-	fn add_fields<'lua, F: mlua::UserDataFields<'lua, Self>>(_fields: &mut F) {}
-	
-	fn add_methods<'lua, M: mlua::UserDataMethods<'lua, Self>>(methods: &mut M) {
-		methods.add_method_mut("register_block_from_string", |_lua, this, (block_string, mut materials): (String, mlua::UserDataRefMut<MaterialResource>)| {
-			match ron::de::from_str::<BlockSpecification>(block_string.as_str()) {
-				Ok(mut specification) => {
-					specification.canonicalize("./").unwrap();
-					let e = BlockEntry::from_specification(specification, "./", &mut materials).unwrap();
-					this.insert(e);
-
-					Ok(true)
-				},
-				Err(e) => {
-					error!("Failed to load a block specification!");
-					error!("{}", e);
-					Ok(false)
-				}
-			}
-		});
-	}
-}
 
 
 pub fn load_all_blocks_in_directory(
@@ -339,17 +352,10 @@ pub fn load_all_blocks_in_file(
 	let specifications = BlockSpecification::read_many(path)?;
 
 	for specification in specifications {
-		blocks.insert(BlockEntry::from_specification(specification, path, materials)?);
+		let mut e = BlockEntry::from_specification(specification, materials)?;
+		e.path = Some(path.to_path_buf());
+		blocks.insert(e);
 	}
 
 	Ok(())
-}
-
-pub fn load_blocks(
-	br: Res<BlockResource>,
-	mut materials: ResMut<MaterialResource>,
-) {
-	info!("Loading blocks from file");
-	let mut blocks = br.write();
-	load_all_blocks_in_file(&mut blocks, "resources/kblocks.ron", &mut materials).unwrap();
 }
