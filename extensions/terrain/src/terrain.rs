@@ -64,6 +64,7 @@ impl TerrainResource {
 
 
 #[derive(Debug, Resource)]
+#[sda(commands = true)]
 pub struct TerrainLoadingResource {
 	pub chunk_sender: Sender<(IVec3, ArrayVolume<BlockKey>, Vec<VoxelModification>)>,
 	pub chunk_receiver: Receiver<(IVec3, ArrayVolume<BlockKey>, Vec<VoxelModification>)>,
@@ -83,11 +84,29 @@ impl TerrainLoadingResource {
 			chunk_sender, chunk_receiver, 
 			max_generation_jobs: 16,
 			cur_generation_jobs: 0,
-			vec_generation_jobs: Vec::with_capacity(8),
+			vec_generation_jobs: Vec::with_capacity(16),
 			// generation_durations: RingDataHolder::new(32),
 			seed, 
 			pending_blockmods: HashMap::new(),
 			generator: Arc::new(NewTerrainGenerator::new(seed as i32)),
+		}
+	}
+}
+impl StorageCommandExpose for TerrainLoadingResource {
+	// resource TerrainLoadingResource set max_jobs 32
+	fn command(&mut self, command: &[&str]) -> anyhow::Result<String> {
+		match command[0] {
+			"set" => match command[1] {
+				"max_jobs" => if let Some(v) = command.get(2) {
+						let v = v.parse::<u8>()?;
+						self.max_generation_jobs = v;
+						Ok(format!("TerrainLoadingResource max_jobs {}", v))
+					} else {
+						Err(anyhow::anyhow!("Give a set value"))
+					},
+				_ => Err(anyhow::anyhow!("Unknown field")),
+			}
+			_ => Err(anyhow::anyhow!("Unknown command")),
 		}
 	}
 }

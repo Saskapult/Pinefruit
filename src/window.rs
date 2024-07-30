@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
 use crate::client::GameInstance;
+use crate::gui::console::ConsoleWidget;
 use crate::gui::profiling::ProfilingWidget;
 use crate::gui::viewport::ViewportManager;
 use crate::gui::{show_workgroup_info, GameWidget};
@@ -110,8 +111,7 @@ struct GameWindow {
 	show_controls: bool,
 	whatever: bool, 
 	console_show: bool,
-	console_log: Vec<String>,
-	console_input: String,
+	console: ConsoleWidget,
 }
 impl GameWindow {
 	pub fn new(
@@ -178,8 +178,7 @@ impl GameWindow {
 			show_controls: false,
 			whatever: false,
 			console_show: false,
-			console_log: (0..100).map(|i| format!("Test {}", i)).collect(),
-			console_input: "SECOND CENTRAL PANNNNNNNNNNEL TEST TEST TEST LOOK AT MEEEE".to_string(),
+			console: ConsoleWidget::new(),
 		}
 	}
 
@@ -258,29 +257,7 @@ impl GameWindow {
 					..Default::default()
 				})
 				.show(&self.context, |ui| {
-					ui.style_mut().override_text_style = Some(egui::TextStyle::Monospace);
-					ui.style_mut().visuals.override_text_color = Some(egui::Color32::DEBUG_COLOR);
-
-					egui::ScrollArea::vertical()
-					.stick_to_bottom(true)
-					.max_height(ui.available_height() - 3.0 * ui.text_style_height(&egui::TextStyle::Monospace))
-					.max_width(f32::INFINITY)
-					.auto_shrink([false, false])
-					.show_rows(ui, ui.text_style_height(&egui::TextStyle::Monospace), self.console_log.len(), |ui, row_range| {
-						for i in row_range {
-							ui.label(&self.console_log[i]);
-						}
-					});
-					let r = egui::TextEdit::singleline(&mut self.console_input)
-						.code_editor()
-						.text_color(egui::Color32::DEBUG_COLOR)
-						.desired_width(f32::INFINITY)
-						.hint_text("...")
-						.show(ui);
-					if r.response.lost_focus() {
-						self.console_log.push(self.console_input.clone());
-						self.console_input.clear();
-					}
+					self.console.show(ui, &mut instance);
 				});
 			}
 			

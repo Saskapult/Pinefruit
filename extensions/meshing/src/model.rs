@@ -50,6 +50,7 @@ impl MapModelState {
 
 
 #[derive(Debug, Resource)]
+#[sda(commands = true)]
 pub struct MapModelResource {
 	// bool for if modelling job is active
 	pub chunks: SecondaryMap<ChunkKey, (IVec3, bool, MapModelState)>,
@@ -252,6 +253,24 @@ impl MapModelResource {
 					self.cur_meshing_jobs += 1;
 				}
 			}
+		}
+	}
+}
+impl StorageCommandExpose for MapModelResource {
+	// resource MapModelResource set max_jobs 32
+	fn command(&mut self, command: &[&str]) -> anyhow::Result<String> {
+		match command[0] {
+			"set" => match command[1] {
+				"max_jobs" => if let Some(v) = command.get(2) {
+						let v = v.parse::<u8>()?;
+						self.max_meshing_jobs = v;
+						Ok(format!("MapModelResource max_jobs {}", v))
+					} else {
+						Err(anyhow::anyhow!("Give a set value"))
+					},
+				_ => Err(anyhow::anyhow!("Unknown field")),
+			}
+			_ => Err(anyhow::anyhow!("Unknown command")),
 		}
 	}
 }

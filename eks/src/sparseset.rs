@@ -348,12 +348,12 @@ impl UntypedSparseSet {
 		}
 	}
 
-	pub fn command(&mut self, entity: Entity, command: &[&str]) -> anyhow::Result<()> {
+	pub fn command(&mut self, entity: Entity, command: &[&str]) -> anyhow::Result<String> {
 		let data = self.get(entity)
 			.with_context(|| "Failed to find entity")
 			.unwrap();
 		let p = data.as_ptr();
-		let f: fn(*const u8, &[&str]) -> anyhow::Result<()> = unsafe { std::mem::transmute(self.data_command) };
+		let f: fn(*const u8, &[&str]) -> anyhow::Result<String> = unsafe { std::mem::transmute(self.data_command) };
 		(f)(p, command)
 	}
 

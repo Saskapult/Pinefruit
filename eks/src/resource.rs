@@ -91,9 +91,9 @@ impl UntypedResource {
 		}
 	}
 
-	pub fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+	pub fn command(&mut self, command: &[&str]) -> anyhow::Result<String> {
 		let p = self.data;
-		let f: fn(*const u8, &[&str]) -> anyhow::Result<()> = unsafe { std::mem::transmute(self.data_command) };
+		let f: fn(*const u8, &[&str]) -> anyhow::Result<String> = unsafe { std::mem::transmute(self.data_command) };
 		(f)(p, command)
 	}
 

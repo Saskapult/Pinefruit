@@ -1189,7 +1189,7 @@ impl ExtensionRegistry {
 		Ok(())
 	}
 
-	pub fn command(&mut self, world: &mut World, command: &[&str]) -> anyhow::Result<()> {
+	pub fn command(&mut self, world: &mut World, command: &[&str]) -> anyhow::Result<String> {
 		let keyword = *command.get(0)
 			.with_context(|| "please supply a keyword")?;
 		match keyword {
@@ -1202,18 +1202,19 @@ impl ExtensionRegistry {
 						for command in l.commands.iter() {
 							if command == keyword {
 								trace!("Command '{}' from '{}'", command, e.name);
+								let mut r: String = "".into();
 								self.lua.scope(|scope| {
 									let world = scope.create_userdata_ref(&*world)?;
 									self.lua.globals().set("world", world)?;
 		
-									self.lua.load(format!(r#"
+									r = self.lua.load(format!(r#"
 										extensionmodule = require("{}")
 										extensionmodule.{}(world)
-									"#, e.name, command)).exec()?;
+									"#, e.name, command)).eval()?;
 		
 									Ok(())
 								})?;
-								return Ok(())
+								return Ok(r)
 							}
 						}
 					}

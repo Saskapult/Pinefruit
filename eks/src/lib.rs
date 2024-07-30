@@ -77,12 +77,12 @@ impl<T> StorageSerde for Option<T> {}
 
 // It would be nice to be able to automatically list every available command
 pub trait StorageCommandExpose {
-	fn command(&mut self, _command: &[&str]) -> anyhow::Result<()> {
+	fn command(&mut self, _command: &[&str]) -> anyhow::Result<String> {
 		Err(anyhow!("No such command"))
 	}
 }
 impl<T: StorageCommandExpose> StorageCommandExpose for Option<T> {
-	fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+	fn command(&mut self, command: &[&str]) -> anyhow::Result<String> {
 		if let Some(s) = self {
 			s.command(command)
 		} else {
@@ -382,7 +382,7 @@ impl World {
 		system.run_system(data, self)
 	}
 
-	pub fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+	pub fn command(&mut self, command: &[&str]) -> anyhow::Result<String> {
 		let keyword = command.get(0)
 			.with_context(|| "target either a component or resource storage")?;
 		match *keyword {
@@ -525,14 +525,14 @@ mod tests {
 	#[sda(commands = true)]
 	pub struct ComponentA(u32);
 	impl StorageCommandExpose for ComponentA {
-		fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+		fn command(&mut self, command: &[&str]) -> anyhow::Result<String> {
 			match command[0] {
 				"test" => println!("test"),
 				"get" => println!("{}", self.0),
 				"inc" => self.0 += 1,
 				_ => {},
 			}
-			Ok(())
+			Ok("".into())
 		}
 	}
 
@@ -543,14 +543,14 @@ mod tests {
 	#[sda(commands = true)]
 	pub struct Ressy(u32);
 	impl StorageCommandExpose for Ressy {
-		fn command(&mut self, command: &[&str]) -> anyhow::Result<()> {
+		fn command(&mut self, command: &[&str]) -> anyhow::Result<String> {
 			match command[0] {
 				"test" => println!("test"),
 				"get" => println!("{}", self.0),
 				"inc" => self.0 += 1,
 				_ => {},
 			}
-			Ok(())
+			Ok("".into())
 		}
 	}
 
