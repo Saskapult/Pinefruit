@@ -1097,6 +1097,7 @@ impl ExtensionRegistry {
 			.filter_map(|e| e.library.as_ref())
 			.flat_map(|l| l.systems.iter().map(|s| &s.group))
 		);
+		workload_ids.extend(self.core_systems.iter().map(|s| &s.group));
 		
 		workload_ids.sort_unstable();
 		workload_ids.dedup();
