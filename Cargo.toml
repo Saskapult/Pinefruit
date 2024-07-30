@@ -13,6 +13,16 @@ edition = "2021"
 # codegen-backend = "cranelift" # Cranelift back-end
 # debug = 1
 
+# Optimizations for performance critical extensions 
+[profile.dev.package.krender]
+opt-level = 2
+[profile.dev.package.chunks]
+opt-level = 2
+[profile.dev.package.terrain]
+opt-level = 2
+[profile.dev.package.meshing]
+opt-level = 2
+
 [workspace]
 members = [
 	"krender", 
@@ -38,7 +48,7 @@ transform = { path = "extensions/transform" }
 # Be aware that the "[workspace]" must be remove from the crates' manifest
 chunks = { path = "extensions/chunks"}
 light = { path = "extensions/light"}
-# meshing = { path = "extensions/meshing"}
+meshing = { path = "extensions/meshing"}
 render2 = { path = "extensions/render2"}
 terrain = { path = "extensions/terrain"}
 time = { path = "extensions/time"}

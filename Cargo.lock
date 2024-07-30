@@ -1708,6 +1708,7 @@ dependencies = [
  "light",
  "log",
  "lz4_flex",
+ "meshing",
  "noise",
  "parking_lot",
  "player",
@@ -1957,6 +1958,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5aa361d4faea93603064a027415f07bd8e1d5c88c9fbf68bf56a285428fd79ce"
 dependencies = [
  "autocfg 1.2.0",
+]
+
+[[package]]
+name = "meshing"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "chunks",
+ "controls",
+ "crossbeam-channel",
+ "eeks",
+ "env_logger 0.11.3",
+ "glam",
+ "krender",
+ "light",
+ "log",
+ "parking_lot",
+ "player",
+ "rayon",
+ "render",
+ "slotmap",
+ "smallvec",
+ "terrain",
+ "thiserror",
+ "transform",
 ]
 
 [[package]]
