@@ -130,6 +130,8 @@ impl MapModelResource {
 						let mut uvs = Vec::with_capacity(g.len() * 4);
 						let mut indices = Vec::with_capacity(g.len() * 6);
 						for &(position, direction, _) in g {
+							indices.extend_from_slice(quad_indices(direction).map(|i| i + positions.len() as u32).as_slice());
+							uvs.extend_from_slice(quad_uvs().as_slice());
 							positions.extend_from_slice(quad_positions(position, direction).as_slice());
 
 							// Find the voxel this face is facing, then get light data from it
@@ -167,9 +169,6 @@ impl MapModelResource {
 								l.into_vec4().x
 							};
 							lights.extend_from_slice(&[light; 4]);
-							
-							uvs.extend_from_slice(quad_uvs().as_slice());
-							indices.extend_from_slice(quad_indices(direction).map(|i| i + positions.len() as u32).as_slice());
 						}
 
 						let mesh = Mesh::new(format!("Chunk {position} material {:?}", g[0].2))
