@@ -6,12 +6,13 @@ version = "0.1.0"
 authors = ["Saskapult <“thekieransmith@gmail.com”>"]
 edition = "2021"
 
-# [profile.dev.package."*"]
-# opt-level = 2
+[profile.dev.package."*"]
+opt-level = 2
 
-# [profile.dev]
+[profile.dev]
+# Cranelift breaks simd_noise :( 
 # codegen-backend = "cranelift" # Cranelift back-end
-# debug = 1
+debug = 1
 
 # Optimizations for performance critical extensions 
 [profile.dev.package.krender]
