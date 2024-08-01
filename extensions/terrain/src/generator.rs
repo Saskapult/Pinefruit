@@ -25,7 +25,7 @@ fn load_spline(path: impl AsRef<Path>) -> anyhow::Result<Spline<f32, f32>> {
 
 /// This structure is used because [simdnoise::FbmSettings] does not implment [std::fmt::Debug] and also stores volume data. 
 #[derive(Debug, Clone, Copy)]
-struct RawFbmSettings {
+pub struct RawFbmSettings {
 	pub seed: i32,
 	pub freq: f32,
     pub lacunarity: f32,
@@ -93,21 +93,63 @@ fn lerp3(
 
 
 pub struct InteroplatedGeneratorNoise {
-	data: Vec<f32>, 
-	// data must extend to st's floor / inverse_scale and en's ceil / inverse_scale
-	// data_st: IVec3,
-	// data_en: IVec3,
-	extent: u32,
-	
-	inverse_scale: u32, // One sample every inverse_scale voxels 
+	samples: Vec<f32>, 
+	samples_extent: UVec3,
+
+	scale: UVec3, // One sample every scale voxels 
+
+	// Start and end of the area to sample
 	st: IVec3,
 	en: IVec3,
 }
 impl InteroplatedGeneratorNoise {
+	pub fn generate(
+		settings: RawFbmSettings,
+		x_offset: i32, x_extent: u32, x_scale: u32,
+		y_offset: i32, y_extent: u32, y_scale: u32,
+		z_offset: i32, z_extent: u32, z_scale: u32,
+	) -> Vec<f32> {
+		let scale = UVec3::new(x_scale, y_scale, z_scale);
+		let extent = UVec3::new(x_extent, y_extent, z_extent);
+
+		// settings.freq /= x_scale as f32;
+	
+		let base_sample = IVec3::new(x_offset, y_offset, z_offset) / scale.as_ivec3();
+		let [x_offset_f, y_offset_f, z_offset_f] = base_sample.as_vec3().to_array();
+
+		let samples_extent = (extent / scale) + UVec3::ONE;
+		let [width, height, depth] = samples_extent.to_array();
+		
+		let samples = simdnoise::NoiseBuilder::fbm_3d_offset(
+			x_offset_f + 0.5, width as usize,
+			y_offset_f + 0.5, height as usize,
+			z_offset_f + 0.5, depth as usize,
+		).apply_raw_settings(settings).generate().0;
+	
+		assert_eq!(width * height * depth, samples.len() as u32);
+	
+		// should be data box bounds
+		let st = IVec3::new(x_offset, y_offset, z_offset); 
+		let en = st + extent.as_ivec3();
+		let interp = Self {
+			samples,
+			samples_extent,
+			scale,
+			st,
+			en,
+		};
+	
+		let output = cube_iterator_xyz_uvec(extent)
+			.map(|p| interp.get(st + p.as_ivec3()))
+			.collect::<Vec<_>>();
+		assert_eq!(x_extent * y_extent * z_extent, output.len() as u32);
+		output
+	}
+
 	#[inline]
 	fn index_of(&self, pos: UVec3) -> usize {
 		let [x, y, z] = pos.to_array();
-		(x * self.extent * self.extent + y * self.extent + z) as usize
+		(z * self.samples_extent.y * self.samples_extent.x + y * self.samples_extent.x + x) as usize
 	}
 
 	#[inline]
@@ -116,26 +158,27 @@ impl InteroplatedGeneratorNoise {
 		assert!(pos.cmplt(self.en).all());
 
 		// Start of data in word space
-		let data_st = self.st.div_euclid(IVec3::splat(self.inverse_scale as i32)) * self.inverse_scale as i32;
+		let st_data_cell = self.st.div_euclid(self.scale.as_ivec3());
+		let pos_data_cell = pos.div_euclid(self.scale.as_ivec3());
 
-		let pos_data_relative = (pos - data_st).as_uvec3();
+		let pos_cell_data_relative = (pos_data_cell - st_data_cell).as_uvec3();
 
-		let base_data_cell =  pos_data_relative / self.inverse_scale;
-		let q000 = self.data[self.index_of(base_data_cell)];
-		let q001 = self.data[self.index_of(base_data_cell + UVec3::X)];
-		let q010 = self.data[self.index_of(base_data_cell + UVec3::Y)];
-		let q011 = self.data[self.index_of(base_data_cell + UVec3::X + UVec3::Y)];
-		let q100 = self.data[self.index_of(base_data_cell + UVec3::Z)];
-		let q101 = self.data[self.index_of(base_data_cell + UVec3::Z + UVec3::X)];
-		let q110 = self.data[self.index_of(base_data_cell + UVec3::Z + UVec3::Y)];
-		let q111 = self.data[self.index_of(base_data_cell + UVec3::Z + UVec3::Y + UVec3::X)];
+		let base_data_cell =  pos_cell_data_relative / self.scale;
+		let q000 = self.samples[self.index_of(base_data_cell)];
+		let q001 = self.samples[self.index_of(base_data_cell + UVec3::X)];
+		let q010 = self.samples[self.index_of(base_data_cell + UVec3::Y)];
+		let q011 = self.samples[self.index_of(base_data_cell + UVec3::X + UVec3::Y)];
+		let q100 = self.samples[self.index_of(base_data_cell + UVec3::Z)];
+		let q101 = self.samples[self.index_of(base_data_cell + UVec3::Z + UVec3::X)];
+		let q110 = self.samples[self.index_of(base_data_cell + UVec3::Z + UVec3::Y)];
+		let q111 = self.samples[self.index_of(base_data_cell + UVec3::Z + UVec3::Y + UVec3::X)];
 
 		// pos
-		let [x, y, z] = pos_data_relative.as_vec3().to_array();
+		let [x, y, z] = pos_cell_data_relative.as_vec3().to_array();
 		// pos of q000 
-		let [x1, y1, z1] = (base_data_cell * self.inverse_scale).as_vec3().to_array();
+		let [x1, y1, z1] = (base_data_cell * self.scale).as_vec3().to_array();
 		// pos of q111 
-		let [x2, y2, z2] = ((base_data_cell + UVec3::ONE) * self.inverse_scale).as_vec3().to_array();
+		let [x2, y2, z2] = ((base_data_cell + UVec3::ONE) * self.scale).as_vec3().to_array();
 
 		lerp3(x, y, z, q000, q001, q010, q011, q100, q101, q110, q111, x1, x2, y1, y2, z1, z2)
 	}
@@ -191,7 +234,6 @@ impl NewTerrainGenerator {
 				octaves: 1,
 			},
 			height_difference_spline: load_spline("resources/difference_spline.ron").unwrap(),
-			
 		}
 	}
 
@@ -242,13 +284,27 @@ impl NewTerrainGenerator {
 
 		// Outputs in zyx order
 		let density_scale = self.density_noise.compute_scale();
-		let densities = simdnoise::NoiseBuilder::fbm_3d_offset(
+		let densities = 
+		simdnoise::NoiseBuilder::fbm_3d_offset(
 			x_offset as f32 + 0.5, x_extent as usize, 
 			y_offset as f32 + 0.5, y_extent as usize, 
 			z_offset as f32 + 0.5, z_extent as usize,
-		).apply_raw_settings(self.density_noise).generate().0.into_iter()
+		).apply_raw_settings(self.density_noise).generate().0
+		// vec![0.0; 32768]
+		.into_iter()
 			.map(|d| (d * density_scale + 1.0) / 2.0) // Normalize
 			.collect::<Vec<_>>();
+		// let densities = 
+		// InteroplatedGeneratorNoise::generate(
+		// 	self.density_noise, 
+		// 	x_offset, x_extent, 2, 
+		// 	y_offset, y_extent, 2, 
+		// 	z_offset, z_extent, 2,
+		// )
+		// // vec![0.0; 32768]
+		// .into_iter()
+		// 	.map(|d| (d * density_scale + 1.0) / 2.0) // Normalize
+		// 	.collect::<Vec<_>>();
 
 		// Because simd_noise outputs in zyx/yx order, we can't just zip() here
 		cube_iterator_xyz_uvec(extent)
@@ -259,6 +315,11 @@ impl NewTerrainGenerator {
 					p.y * x_extent +
 					p.x
 				) as usize];
+				// let density = densities[(
+				// 	p.x * y_extent * x_extent +
+				// 	p.y * x_extent +
+				// 	p.z
+				// ) as usize];
 				let height = heights[(
 					p.z * x_extent +
 					p.x
@@ -417,12 +478,11 @@ pub mod tests {
 
 	#[bench]
 	fn bench_interpolated_noise(b: &mut Bencher) {
-		let inverse_scale: u32 = 4;
-		let extent: usize = 32;
-
+		let scale: UVec3 = UVec3::splat(4);
+		let extent: UVec3 = UVec3::splat(32);
 		let settings = RawFbmSettings {
 			seed: 42,
-			freq: 1.0 / 50.0 / inverse_scale as f32,
+			freq: 1.0 / 50.0,
 			lacunarity: 2.0,
 			gain: 0.5,
 			octaves: 3,
@@ -430,28 +490,16 @@ pub mod tests {
 
 		b.iter(|| {
 			let world_pos = rand::random::<IVec3>();
-			let st = world_pos / extent as i32 * extent as i32;
-			let en = st + IVec3::splat(extent as i32);
-			let [x_offset, y_offset, z_offset] = st.as_vec3().to_array();
-
-			let sampling_extent = (extent / inverse_scale as usize) + 1;
-			let data = simdnoise::NoiseBuilder::fbm_3d_offset(
-				x_offset as f32 + 0.5, sampling_extent, 
-				y_offset as f32 + 0.5, sampling_extent, 
-				z_offset as f32 + 0.5, sampling_extent,
-			).apply_raw_settings(settings).generate().0;
-
-			let interp = InteroplatedGeneratorNoise {
-				data,
-				inverse_scale,
-				st,
-				en,
-				extent: extent as u32 / inverse_scale,
-			};
-
-			let output = cube_iterator_xyz_uvec(UVec3::splat(extent as u32)).map(|p| interp.get(st + p.as_ivec3())).collect::<Vec<_>>();
+			let [x_offset, y_offset, z_offset] = world_pos.to_array();
+			let [x_extent, y_extent, z_extent] = extent.to_array();
+			let [x_scale, y_scale, z_scale] = scale.to_array();
 			
-			output
+			InteroplatedGeneratorNoise::generate(
+				settings, 
+				x_offset, x_extent, x_scale, 
+				y_offset, y_extent, y_scale, 
+				z_offset, z_extent, z_scale,
+			)
 		});
 	}
 

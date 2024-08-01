@@ -329,11 +329,11 @@ pub fn map_modelling_system(
 	}
 
 	models.receive_jobs(&mut meshes, &mut entities, &mut transforms, &torchlight);
-	let n = chunks.read().chunks.len();
-	let n_loaded = models.chunks.values().filter(|(_, w, s)| {
-		(!w) && s.ref_complete().is_some()
-	}).count();
-	trace!("World is now {:.2}% meshed",  n_loaded as f32 / n as f32 * 100.0);
+	// let n = chunks.read().chunks.len();
+	// let n_loaded = models.chunks.values().filter(|(_, w, s)| {
+	// 	(!w) && s.ref_complete().is_some()
+	// }).count();
+	// trace!("World is now {:.2}% meshed",  n_loaded as f32 / n as f32 * 100.0);
 
 	{
 		// profiling::scope!("Check for remesh viability");
