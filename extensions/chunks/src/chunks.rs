@@ -55,6 +55,9 @@ pub struct Chunks {
 	// We could reduce memory usage by not storing positions here but it is 
 	// useful to iterate over these
 	pub chunks: SlotMap<ChunkKey, IVec3>,
+	/// All chunk keys, but sorted by distance to a loader. 
+	/// Be aware that distance is not linear distance. 
+	pub chunks_by_distance: Vec<(ChunkKey, i32)>,
 	// pub min: IVec3,
 	// pub max: IVec3,
 
@@ -75,6 +78,7 @@ impl Chunks {
 	pub fn new() -> Self {
 		Self {
 			chunks: SlotMap::with_key(),
+			chunks_by_distance: Vec::new(),
 			hm: HashMap::new(),
 		}
 	}
@@ -99,10 +103,18 @@ impl Chunks {
 		}
 	}
 
+	pub fn post_load(&mut self) {
+		
+	}
+
 	pub fn unload(&mut self, key: ChunkKey) {
 		if let Some(p) = self.chunks.remove(key) {
 			self.hm.remove(&p);
 		}
+	}
+
+	pub fn post_unload(&mut self) {
+
 	}
 }
 
@@ -135,8 +147,18 @@ pub fn chunk_loading_system(
 	map_loaders: Comp<ChunkLoadingComponent>,
 	transforms: Comp<TransformComponent>,
 ) { 
+	// loading_volumes.iter()
+	// 	.flat_map(|(loader_chunk, volume)| 
+	// 		volume.iter()
+	// 		.filter(|&p| chunks_read.get_position(p).is_none())
+	// 		.map(|p| (p, loader_chunk.distance_squared(p)))) 
+	// 	.collect::<Vec<_>>()
+	// let loading_volumes = (&map_loaders, &transforms).iter()
+	// 	.map(|(loader, transform)| (chunk_of_point(transform.translation), loader.loading_volume(transform.translation)))
+	// 	.collect::<Vec<_>>();
+
 	let loading_volumes = (&map_loaders, &transforms).iter()
-		.map(|(loader, transform)| loader.loading_volume(transform.translation))
+		.map(|(loader, transform)| (chunk_of_point(transform.translation), loader.loading_volume(transform.translation)))
 		.collect::<Vec<_>>();
 
 	let un_loading_volumes = (&map_loaders, &transforms).iter()
@@ -155,8 +177,7 @@ pub fn chunk_loading_system(
 	let chunks_to_load = {
 		// profiling::scope!("Collect chunks to load");
 		loading_volumes.iter()
-			.map(|lv| lv.iter())
-			.flatten()
+			.flat_map(|(_, lv)| lv.iter())
 			.filter(|&pos| chunks_read.get_position(pos).is_none()).collect::<Vec<_>>()
 	};
 
@@ -178,8 +199,12 @@ pub fn chunk_loading_system(
 			debug!("Prune {} chunks", chunks_to_prune.len());
 		}
 		for (key, _) in chunks_to_prune {
-			chunks_write.unload(key);
+			if let Some(p) = chunks_write.chunks.remove(key) {
+				chunks_write.hm.remove(&p);
+			}
 		}
+		let chunks = &mut *chunks_write;
+		chunks.chunks_by_distance.retain(|&(key, _)| chunks.chunks.contains_key(key));
 	}
 
 	{ // Insert entries for chunks that should be in the HM but are not
@@ -188,7 +213,43 @@ pub fn chunk_loading_system(
 			debug!("Load {} chunks", chunks_to_load.len());
 		}
 		for position in chunks_to_load {
-			chunks_write.load(position);
+			let key = match chunks_write.get_position(position) {
+				Some(k) => k,
+				None => {
+					let k = chunks_write.chunks.insert(position);
+					chunks_write.hm.insert(position, k);
+					k
+				},
+			};
+			chunks_write.chunks_by_distance.push((key, 0));
+		}
+	}
+
+	{ // Sort chunks by distance to a loader 
+		// profiling::scope!("Sort chunks by distance");
+		let chunks = &mut *chunks_write;
+		for (k, d) in chunks.chunks_by_distance.iter_mut() {
+			let p = *chunks.chunks.get(*k).unwrap();
+			*d = loading_volumes.iter()
+				.map(|(c, _)| c.distance_squared(p))
+				.min().unwrap();
+		}
+
+		insertion_sort_by_key(&mut chunks_write.chunks_by_distance, |&(_, p)| p);
+		assert_eq!(chunks_write.chunks.len(), chunks_write.chunks_by_distance.len());
+	}
+}
+
+
+// https://medium.com/@spyr1014/sorting-in-rust-selection-insertion-and-counting-sort-2c4d3575e364
+// It's so short! So elegant! 
+fn insertion_sort_by_key<T, K: Ord + Copy, F: FnMut(&T) -> K>(data: &mut [T], mut f: F) {
+	for i in 1..data.len() {
+		for j in (1..i+1).rev() {
+			if f(&data[j-1]) <= f(&data[j]) { 
+				break 
+			}
+			data.swap(j-1, j);
 		}
 	}
 }

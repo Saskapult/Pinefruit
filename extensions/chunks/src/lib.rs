@@ -119,7 +119,7 @@ impl VoxelCube {
 		(postion - self.centre).abs().as_uvec3().cmplt(self.half_edge_length + 1).all()
 	}
 
-	pub fn iter(&self) -> impl IntoIterator<Item = IVec3> + '_ {
+	pub fn iter(&self) -> impl Iterator<Item = IVec3> + '_ {
 		let base_pos = self.min();
 		cube_iterator_xyz_uvec(self.edge_length())
 			.map(move |p| base_pos + p.as_ivec3() )

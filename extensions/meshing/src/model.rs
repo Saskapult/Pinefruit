@@ -219,42 +219,6 @@ impl MapModelResource {
 			self.cur_meshing_jobs -= 1;
 		}
 	}
-
-	pub fn start_jobs(
-		&mut self, 
-		chunks: &ChunksResource,
-		terrain: &TerrainResource, 
-		blocks: &BlockResource,
-	) {
-		for (key, (position, modelling, entry)) in self.chunks.iter_mut() {
-			let position = *position;
-			if self.cur_meshing_jobs >= self.max_meshing_jobs {
-				trace!("Reached maxium chunk generation jobs");
-				break;
-			}
-			// If not modelling and entry is outdated or none
-			if !*modelling {
-				if match &entry {
-					MapModelState::Complete(e) => e.outdated,
-					MapModelState::Failed(_) => false,
-					MapModelState::Waiting => true,
-				} {
-					*modelling = true;
-					trace!("Begin modeling chunk {position}");
-					let sender = self.sender.clone();
-					let terrain_chunks = terrain.chunks.clone();
-					let blocks = blocks.blocks.clone();
-					let chunks = chunks.clone();
-					rayon::spawn(move || {
-						let blocks = blocks.read();
-						let mesh_res = chunk_quads_simple(&blocks, &chunks, &terrain_chunks, position);
-						sender.send((key, position, mesh_res)).unwrap();
-					});
-					self.cur_meshing_jobs += 1;
-				}
-			}
-		}
-	}
 }
 impl StorageCommandExpose for MapModelResource {
 	// resource MapModelResource set max_jobs 32
@@ -341,7 +305,7 @@ pub fn map_modelling_system(
 		for (k, &p) in chunks_chunks.chunks.iter() {
 			if loading_volumes.iter().any(|lv| lv.contains(p)) {
 				if !models.chunks.contains_key(k) {
-					trace!("Chunk {p} must be modeled");
+					// trace!("Chunk {p} must be modeled");
 					models.chunks.insert(k, (p, false, MapModelState::Waiting));
 				}
 			}
@@ -356,7 +320,7 @@ pub fn map_modelling_system(
 		for (key, pos) in g {
 			if !un_loading_volumes.iter().any(|lv| lv.contains(pos)) {
 				if let Some((_, _, MapModelState::Complete(_))) = models.chunks.remove(key) {
-					trace!("Unloading model for chunk {}", pos);
+					// trace!("Unloading model for chunk {}", pos);
 					// Remove meshes
 					// Remove entity
 				}
@@ -365,6 +329,11 @@ pub fn map_modelling_system(
 	}
 
 	models.receive_jobs(&mut meshes, &mut entities, &mut transforms, &torchlight);
+	let n = chunks.read().chunks.len();
+	let n_loaded = models.chunks.values().filter(|(_, w, s)| {
+		(!w) && s.ref_complete().is_some()
+	}).count();
+	trace!("World is now {:.2}% meshed",  n_loaded as f32 / n as f32 * 100.0);
 
 	{
 		// profiling::scope!("Check for remesh viability");
@@ -428,7 +397,45 @@ pub fn map_modelling_system(
 		// debug!("{} outdated, {} failed, {} retry", n_outdated, n_failed, n_waiting);
 	}
 
-	models.start_jobs(&chunks, &terrain, &blocks);
+	if models.cur_meshing_jobs < models.max_meshing_jobs {
+		let terrain_chunks = terrain.chunks.read();
+		for &(key, d) in chunks.read().chunks_by_distance.iter() {
+			// All chunks require their own contents to be loaded prior to meshing 
+			// We don't want to start a job that will immediately fail 
+			if !terrain_chunks.contains_key(key) {
+				continue
+			}
+
+			// let position = chunks.chunks[key];
+			// if loading_volumes.iter().any(|lv| lv.contains(p)) && !models.chunks.contains_key(k) 
+			if let Some((position, working, entry)) = models.chunks.get_mut(key) {
+				if match &entry {
+					MapModelState::Complete(e) => e.outdated,
+					MapModelState::Failed(_) => false,
+					MapModelState::Waiting => true,
+				} {
+					let position = *position;
+					*working = true;
+					trace!("Begin modeling chunk {position} (distance {d})");
+					let sender = models.sender.clone();
+					let terrain_chunks = terrain.chunks.clone();
+					let blocks = blocks.blocks.clone();
+					let chunks = chunks.clone();
+					rayon::spawn(move || {
+						let blocks = blocks.read();
+						let mesh_res = chunk_quads_simple(&blocks, &chunks, &terrain_chunks, position);
+						sender.send((key, position, mesh_res)).unwrap();
+					});
+					models.cur_meshing_jobs += 1;
+				}
+			}
+
+			if models.cur_meshing_jobs >= models.max_meshing_jobs {
+				trace!("Reached maxium chunk meshing jobs");
+				break;
+			}
+		}
+	}
 }
 
 
