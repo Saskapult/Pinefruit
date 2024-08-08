@@ -1171,6 +1171,8 @@ impl ExtensionRegistry {
 								// See above 
 								std::mem::transmute::<_, &'static mlua::Scope<'_, 'static>>(scope)
 							};
+							// let mut lua_storages = world.lua_borrow().unwrap();
+							// lua_storages.add_scoped_methods(&self.lua, scope);
 							
 							world.add_to_scope(&self.lua, &scope).unwrap();
 

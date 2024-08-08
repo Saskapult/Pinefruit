@@ -5,6 +5,7 @@ pub mod resource;
 pub mod entity;
 pub mod system;
 pub mod query;
+mod luastorages;
 pub mod prelude {
 	pub use crate::entity::Entity;
 	pub use crate::{World, Component, Resource, Storage, StorageRenderData, StorageSerde, StorageLuaExpose, StorageCommandExpose, StorageRenderDataFn, SerdeFns};
@@ -19,6 +20,7 @@ use std::{collections::HashMap, fmt::Debug, sync::{atomic::AtomicBool, Arc}};
 use anyhow::{anyhow, Context};
 use atomic_refcell::{AtomicRefCell, AtomicRef, AtomicRefMut};
 use entity::{Entity, EntitySparseSet};
+use luastorages::Lua;
 use parking_lot::RwLock;
 use query::{Queriable, CompMut};
 use sparseset::{SparseSet, UntypedSparseSet};
@@ -143,16 +145,16 @@ impl<R: Resource> Storage for Option<R> {
 }
 
 
-#[derive(thiserror::Error, Debug)]
-pub enum BorrowError {
-	#[error("Storage `{0}` does not exist")]
-	ResourceMissing(String),
-	#[error("Storage `{0}` is already borrowed")]
-	BorrowConflict(String),
+#[derive(Debug, thiserror::Error)]
+pub enum WorldBorrowError {
+	#[error("Failed to locate storage '{0}'")]
+	NotFound(String),
+	#[error("Storage '{0}' is exclusively borrowed")]
+	Exclusion(String),
 }
 
 
-struct WorldStorage<S> {
+pub(crate) struct WorldStorage<S> {
 	storages: RwLock<HashMap<String, *mut AtomicRefCell<S>>>,
 }
 impl<S> WorldStorage<S> {
@@ -162,9 +164,11 @@ impl<S> WorldStorage<S> {
 		}
 	}
 
-	pub fn get(&self, k: impl Into<String>) -> Option<*mut AtomicRefCell<S>> {
+	pub fn get(&self, k: impl AsRef<str>) -> Result<*mut AtomicRefCell<S>, WorldBorrowError> {
 		let s = self.storages.read();
-		s.get(&k.into()).cloned()
+		// Todo: Use hashbrown's HashMap's entry_ref method to avoid cloning with every lookup
+		s.get(&k.as_ref().to_string()).cloned()
+			.ok_or_else(|| WorldBorrowError::NotFound(k.as_ref().to_string()))
 	}
 
 	pub fn insert(&self, k: impl Into<String>, s: S) {
@@ -225,6 +229,9 @@ pub struct World {
 	// This is not true if we let other things touch it. 
 	components: WorldStorage<UntypedSparseSet>,
 	resources: WorldStorage<UntypedResource>,
+
+	// lua: Arc<mlua::Lua>, // mlua::Lua will be Clone in upcoming version
+	// lua_storages: AtomicRefCell<LuaStorages>,
 }
 impl World {
 	pub fn new() -> Self {
@@ -232,7 +239,19 @@ impl World {
 			entities: AtomicRefCell::new(EntitySparseSet::default()),
 			components: WorldStorage::new(),
 			resources: WorldStorage::new(),
+			// lua: Arc::new(mlua::Lua::new()),
+			// lua_storages: AtomicRefCell::new(LuaStorages::new()),
 		}
+	}
+
+	pub fn lua_borrow(&self) -> Result<Lua, WorldBorrowError> {
+		todo!("Wait for mlua to release to 0.10.0-beta.2 (needs Sync types and re-enabled mlua::Scope");
+		// let storages = self.lua_storages.try_borrow_mut()
+		// 	.map_err(|_| WorldBorrowError::Exclusion("World Lua Storages".to_string()))?;
+		// Ok(Lua {
+		// 	lua: self.lua.clone(),
+		// 	storages,
+		// })
 	}
 
 	/// Clears all storages. 
