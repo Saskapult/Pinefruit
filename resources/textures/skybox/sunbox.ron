@@ -1,0 +1,15 @@
+(
+	label: "sunbox texture",
+	source: Cube(Faces((
+		"sun.png",
+		"empty.png",
+		"empty.png",
+		"empty.png",
+		"empty.png",
+		"empty.png",
+	))),
+	format: Rgba8Unorm,
+	mip_count: 1,
+	base_usages: [],
+	readable: false,
+)
