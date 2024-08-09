@@ -11,18 +11,26 @@ extern crate log;
 #[derive(Debug, Clone, Copy, Resource)]
 pub struct TimeResource {
 	pub start: Instant,
-	// Tick info?
+	/// The seconds that have passed since 'start'
+	pub tick_time: f32,
 }
 impl TimeResource {
 	pub fn new() -> Self {
 		Self {
 			start: Instant::now(),
+			tick_time: 0.0,
 		}
 	}
 }
 
 
-/// Updates a time buffer on the GPU
+pub fn time_update_system(
+	mut time: ResMut<TimeResource>,
+) {
+	time.tick_time = time.start.elapsed().as_secs_f32();
+}
+
+
 pub fn time_buffer_system(
 	queue: Res<QueueResource>,
 	time: Res<TimeResource>,
@@ -57,7 +65,9 @@ pub fn dependencies() -> Vec<String> {
 
 #[systems]
 pub fn systems(loader: &mut ExtensionSystemsLoader) {	
-	loader.system("client_tick", "time_buffer_system", time_buffer_system);
+	loader.system("client_tick", "time_buffer_system", time_buffer_system)
+		.run_after("time_update_system");
+	loader.system("client_tick", "time_update_system", time_update_system);
 }
 
 

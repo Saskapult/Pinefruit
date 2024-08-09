@@ -1,4 +1,5 @@
 pub mod light;
+pub mod sun;
 
 use controls::ControlMap;
 use eeks::prelude::*;

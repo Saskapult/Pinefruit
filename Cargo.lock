@@ -1840,6 +1840,7 @@ dependencies = [
 name = "light"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "chunks",
  "controls",
  "eeks",
@@ -1848,8 +1849,12 @@ dependencies = [
  "log",
  "parking_lot",
  "player",
+ "render",
+ "ron 0.8.1",
  "slotmap",
+ "splines",
  "terrain",
+ "time 0.1.0",
  "transform",
 ]
 

@@ -2,7 +2,7 @@ use eeks::prelude::*;
 use std::{ops::{Deref, DerefMut}, sync::Arc};
 use bytemuck::{Pod, Zeroable};
 use glam::{Vec3, Mat4, Vec4, Vec2};
-use krender::{prelude::*, BufferKey, MaterialKey, RenderContextKey, TextureKey};
+pub use krender::{prelude::*, BufferKey, MaterialKey, RenderContextKey, TextureKey};
 use rand::Rng;
 use transform::*;
 
