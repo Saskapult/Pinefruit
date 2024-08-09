@@ -1,8 +1,13 @@
-use chunks::CHUNK_SIZE;
+use std::sync::Arc;
+
+use chunks::{chunks::{ChunkKey, ChunksResource}, CHUNK_SIZE};
 use eeks::prelude::*;
 use glam::IVec3;
+use parking_lot::RwLock;
 use render::{Buffer, BufferKey, BufferResource, QueueResource};
+use slotmap::SecondaryMap;
 use splines::Spline;
+use terrain::terrain::TerrainResource;
 use time::TimeResource;
 
 
@@ -20,7 +25,7 @@ use time::TimeResource;
 // Vs 1.0 * (32 + 131072) = 131104 bytes per average chunk 
 // Which uses about 6% of the space 
 #[derive(Debug, Default)]
-pub enum SunlightContents {
+pub enum SunlightChunk {
 	// Fully bright 
 	Exposed,
 	// Fully dark 
@@ -32,7 +37,7 @@ pub enum SunlightContents {
 	// Should use u24, but it's (probably) not worth the hassle 
 	Tinted((Box<[u32]>, u32, u32, u32)),
 }
-impl SunlightContents {
+impl SunlightChunk {
 	/// SunlightContents initializes as being fully in darkness. 
 	pub fn new() -> Self {
 		Self::default()
@@ -160,6 +165,34 @@ impl SunlightContents {
 			Self::Tinted(_) => base + 4 * CHUNK_SIZE.pow(3) as usize,
 		}
 	}
+}
+
+
+#[derive(Debug, Resource)]
+pub struct SunChunksResource {
+	pub chunks: Arc<RwLock<SecondaryMap<ChunkKey, SunlightChunk>>>,
+	pub add_lights: Vec<(IVec3, u32)>,
+	pub del_lights: Vec<IVec3>, 
+}
+impl SunChunksResource {
+	pub fn approximate_size(&self) -> usize {
+		let mut base = std::mem::size_of::<Self>();
+		let chunks = self.chunks.read();
+		base += chunks.capacity() * std::mem::size_of::<ChunkKey>();
+		for c in chunks.values() {
+			base += c.size();
+		}
+		base
+	}
+}
+
+
+pub fn sunlight_update_system(
+	chunks: Res<ChunksResource>,
+	terrain: Res<TerrainResource>,
+	mut torchlight: ResMut<SunChunksResource>,
+) {
+	todo!("copy torchlight update but with sun constraints");
 }
 
 
