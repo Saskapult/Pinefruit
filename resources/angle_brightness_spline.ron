@@ -1,0 +1,27 @@
+([
+    ( // Sunrise
+        t: 0.0,
+        value: 0.0,
+        interpolation: linear,
+    ),
+    ( // Sunset
+        t: 3.14,
+        value: 0.0,
+        interpolation: linear,
+    ),
+    ( // Morning
+        t: 3.33,
+        value: 1.0,
+        interpolation: linear,
+    ),
+    ( // Evening
+        t: 6.00,
+        value: 1.0,
+        interpolation: linear,
+    ),
+    ( // Sunrise
+        t: 6.29,
+        value: 0.0,
+        interpolation: linear,
+    ),
+])

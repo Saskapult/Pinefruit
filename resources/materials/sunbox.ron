@@ -1,0 +1,12 @@
+(
+	name: "sunbox material",
+	shader: "../shaders/skybox/sunbox.ron",
+	mappings: {
+		"albedo": Context("albedo"),
+		"texture": Global(Path("../textures/skybox/sunbox.ron")),
+		"camera": Context("camera"),
+		"depth": Context("depth"),
+		"sun_buffer": Global(Label("SunBuffer")),
+	},
+	array_mappings: {},
+)

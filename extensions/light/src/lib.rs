@@ -5,6 +5,7 @@ use controls::ControlMap;
 use eeks::prelude::*;
 use light::{torchlight_chunk_init_system, torchlight_debug_place_system, torchlight_update_system, TorchLightChunksResource, TorchLightModifierComponent};
 use player::PlayerSpawnResource;
+use sun::{sun_buffer_system, sun_render_system, SunResource};
 
 #[macro_use]
 extern crate log;
@@ -46,11 +47,17 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	loader.system("client_tick", "player_light_modifier", player_light_modifier)
 		.run_after("player_spawn")
 		.run_before("player_spawned");
+
+	loader.system("client_tick", "sun_buffer_system", sun_buffer_system)
+		.run_after("time_update_system");
+
+	loader.system("render", "sun_render_system", sun_render_system);
 }
 
 
 #[load]
 pub fn load(storages: &mut eeks::ExtensionStorageLoader) {
 	storages.resource(TorchLightChunksResource::default());
+	storages.resource(SunResource::new());
 	storages.component::<TorchLightModifierComponent>();
 }

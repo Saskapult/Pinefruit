@@ -1,0 +1,52 @@
+(
+    name: "skybox shader",
+    base: Polygonal((
+		vertex: (
+			language: Wgsl,
+			path: "sunbox.wgsl",
+			entry: "vs_sky",
+		),
+		fragment: Some((
+			language: Wgsl,
+			path: "sunbox.wgsl",
+			entry: "fs_sky",
+		)),
+		polygon_input: Generative(3),
+		polygon_mode: Fill,
+		instance_attributes: [],
+		attachments: [
+			(
+				source: "albedo",
+				format: Rgba8Unorm,
+				blend_colour: Specific(
+					src_factor: One,
+					dst_factor: OneMinusSrcAlpha,
+					operation: Add,
+				),
+				blend_alpha: Over,
+			),
+		],
+		depth: Some((
+			source: "depth",
+			format: Depth32Float,
+			write: false,
+			comparison: LessEqual,
+		)),
+		multisample_count: 1,
+		topology: TriangleList,
+		face_culling: Front,
+		unclipped_depth: false,
+		conservative: false,
+	)),
+	bind_groups: {
+		0: {
+            0: UniformBuffer("camera", [Vertex, Fragment]),
+		},
+		1: {
+            0: Texture("texture", Rgba8Unorm, Cube, false, Float, [Fragment]),
+			1: Sampler("sampler", Repeat, Nearest, Nearest, Nearest, 0.0, 32.0, [Fragment]),
+			2: UniformBuffer("sun_buffer", [Vertex, Fragment]),
+		},
+	},
+	push_constant_range: [],
+)
