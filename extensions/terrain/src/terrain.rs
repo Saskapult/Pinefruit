@@ -1,12 +1,134 @@
 use std::{sync::Arc, collections::HashMap, time::Instant};
-use chunks::{array_volume::ArrayVolume, blocks::{BlockKey, BlockResource}, chunk::Chunk, chunk_of_voxel, chunks::{ChunkKey, ChunksResource}, voxel_relative_to_chunk, CHUNK_SIZE};
+use chunks::{array_volume::ArrayVolume, blocks::{BlockKey, BlockResource}, chunk::Chunk, chunk_of_voxel, chunks::{ChunkKey, ChunksResource}, generation::KGeneration, voxel_relative_to_chunk, CHUNK_SIZE};
 use crossbeam_channel::{Sender, Receiver, unbounded};
 use eeks::prelude::*;
-use glam::IVec3;
+use glam::{IVec3, UVec3};
 use parking_lot::RwLock;
 use slotmap::SecondaryMap;
 use crate::{generator::NewTerrainGenerator, modification::VoxelModification};
 
+
+
+#[derive(Clone, Debug)]
+pub struct TerrainContents {
+	// Option<BlockKey> uses 8 bytes, but we can avoid storing more of it
+	// By using pallettes 
+	// TODO: that 
+	contents: Option<Box<[Option<BlockKey>]>>,
+	contents_count: usize,
+}
+impl TerrainContents {
+	pub fn new() -> Self {
+		Self { 
+			contents: None, 
+			contents_count: 0,
+		}
+	}
+
+	pub fn is_empty(&self) -> bool {
+		self.contents.is_none()
+	}
+
+	pub fn in_bounds(&self, position: UVec3) -> bool {
+		position.cmplt(UVec3::splat(CHUNK_SIZE)).all()
+	}
+
+	fn index_of(&self, position: UVec3) -> usize {
+		let [x, y, z] = position.to_array();
+		(x * CHUNK_SIZE * CHUNK_SIZE + y * CHUNK_SIZE + z) as usize
+	}
+	
+	pub fn get(&self, position: UVec3) -> Option<BlockKey> {
+		let i = self.index_of(position);
+		self.contents.as_ref().and_then(|c| c[i])
+	}
+	
+	pub fn insert(&mut self, position: UVec3, data: BlockKey) {
+		let i = self.index_of(position);
+		let c = self.contents.get_or_insert_with(|| vec![None; CHUNK_SIZE.pow(3) as usize].into_boxed_slice());
+		c[i] = Some(data);
+		self.contents_count += 1;
+	}
+
+	pub fn remove(&mut self, position: UVec3) {
+		let i = self.index_of(position);
+		if let Some(c) = self.contents.as_mut() {
+			if c[i].take().is_some() {
+				self.contents_count -= 1;
+				// If no contents remain, deallocate
+				if self.contents_count == 0 {
+					self.contents.take();
+				}
+			}
+		}
+	}
+
+	pub fn size(&self) -> usize {
+		let mut base = std::mem::size_of::<Self>();
+		if let Some(c) = self.contents.as_ref() {
+			base += c.len() * std::mem::size_of::<Option<BlockKey>>();
+		}
+		base
+	}
+
+	// Tip: you can compress the result with lz4
+	pub fn run_length_encode(&self) -> Vec<(Option<BlockKey>, u32)> {
+		let mut runs = Vec::new();
+		if let Some(c) = self.contents.as_ref() {
+			let mut last = c[0].clone();
+			let mut len = 1;
+			for curr in c[1..].iter() {
+				if last.eq(curr) {
+					len += 1;
+				} else {
+					runs.push((last, len));
+					last = curr.clone();
+					len = 1;
+				}
+			}
+			runs.push((last, len));
+		} else {
+			runs.push((None, CHUNK_SIZE.pow(3)));
+		}
+		
+		runs
+	}
+	
+	pub fn run_length_decode(rle: &Vec<(Option<BlockKey>, u32)>) -> Self {
+		let mut s = Self::new();
+
+		let mut i = 0;
+		for (id, length) in rle.iter() {
+			for _ in 0..*length {
+				if id.is_some() {
+					let c = s.contents.get_or_insert_with(|| vec![None; CHUNK_SIZE.pow(3) as usize].into_boxed_slice());
+					c[i] = id.clone();
+					s.contents_count += 1;
+				}
+				i += 1;
+			}
+		}
+		s
+	}
+}
+
+
+#[derive(Debug, Clone)]
+pub struct TerrainChunk {
+	contents: TerrainContents,
+	generation: KGeneration,
+}
+impl std::ops::Deref for TerrainChunk {
+	type Target = TerrainContents;
+	fn deref(&self) -> &Self::Target {
+		&self.contents
+	}
+}
+impl std::ops::DerefMut for TerrainChunk {
+	fn deref_mut(&mut self) -> &mut Self::Target {
+		&mut self.contents
+	}
+}
 
 
 // An entry in the mesh storage for a map component
@@ -14,7 +136,7 @@ use crate::{generator::NewTerrainGenerator, modification::VoxelModification};
 pub enum TerrainEntry {
 	Loading,	// Waiting for disk data done
 	Generating,	// Waiting for generation done
-	Complete(Arc<Chunk<BlockKey>>),
+	Complete(Arc<TerrainChunk>),
 }
 
 
@@ -35,7 +157,7 @@ impl TerrainResource {
 			.and_then(|entry| entry.complete_ref())
 			.cloned();
 
-		terrain_chunk.and_then(|tc| tc.contents.get(voxel).copied())
+		terrain_chunk.and_then(|tc| tc.contents.get(voxel))
 	}
 
 	pub fn modify_voxel(&self, modification: VoxelModification) {
@@ -74,8 +196,8 @@ impl StorageCommandExpose for TerrainResource {
 #[derive(Debug, Resource)]
 #[sda(commands = true)]
 pub struct TerrainLoadingResource {
-	pub chunk_sender: Sender<(IVec3, ArrayVolume<BlockKey>, Vec<VoxelModification>)>,
-	pub chunk_receiver: Receiver<(IVec3, ArrayVolume<BlockKey>, Vec<VoxelModification>)>,
+	pub chunk_sender: Sender<(IVec3, TerrainContents, Vec<VoxelModification>)>,
+	pub chunk_receiver: Receiver<(IVec3, TerrainContents, Vec<VoxelModification>)>,
 	pub max_generation_jobs: u8,
 	pub cur_generation_jobs: u8,
 	pub vec_generation_jobs: Vec<(IVec3, Instant)>, // For profiling
@@ -169,7 +291,10 @@ pub fn terrain_loading_system(
 			// loading.generation_durations.insert(t_start.elapsed());
 
 			if let Some(k) = chunks.get_position(position) {
-				terrain_chunks.insert(k, TerrainEntry::Complete(Arc::new(Chunk::new_with_contents(chunk))));
+				terrain_chunks.insert(k, TerrainEntry::Complete(Arc::new(TerrainChunk { 
+					contents: chunk, 
+					generation: KGeneration::new(), 
+				})));
 				terrain.modify_voxels(modifications.as_slice());
 				loading.cur_generation_jobs -= 1;
 			} else {
@@ -194,16 +319,16 @@ pub fn terrain_loading_system(
 				let generator = loading.generator.clone();
 				let sender = loading.chunk_sender.clone();
 				rayon::spawn(move || {
-					let mut c = Chunk::new();
+					let mut c = TerrainContents::new();
 	
 					// let tgen = TerrainGenerator::new(0);
 					// tgen.chunk_base_3d(position, &mut c, stone);
 					// tgen.cover_chunk(&mut c, position, grass, dirt, 3);
 	
-					generator.base(position, &mut c.contents, stone);
-					generator.cover(position, &mut c.contents, grass, dirt, 3);
+					generator.base(position, &mut c, stone);
+					generator.cover(position, &mut c, grass, dirt, 3);
 	
-					sender.send((position, c.contents, Vec::new())).unwrap();
+					sender.send((position, c, Vec::new())).unwrap();
 				});
 
 				loading.vec_generation_jobs.push((position, Instant::now()));
