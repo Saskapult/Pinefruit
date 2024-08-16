@@ -119,12 +119,13 @@ impl RenderInputStage {
 				items.iter()
 					.map(|&(mtl, mesh, e)| {
 						// (shader, bgs, mesh, entity)
-						let entry = materials.get(mtl)
-							.expect(&*format!("Material key {mtl:?} is not valid!"));
-						let shader = entry.shader_key
-							.expect(&*format!("Material '{}' has no shader key!", entry.specification.name));
-						let binding = context.material_bindings.get(mtl)
-							.expect(&*format!("Material '{}' is not bound for this context!", entry.specification.name));
+						let entry = materials.get(mtl).unwrap_or_else(||
+							panic!("Material key {mtl:?} is not valid!"));
+							// .expect(&*format!("Material key {mtl:?} is not valid!"));
+						let shader = entry.shader_key.unwrap_or_else(||
+							panic!("Material '{}' has no shader key!", entry.specification.name));
+						let binding = context.material_bindings.get(mtl).unwrap_or_else(||
+							panic!("Material '{}' is not bound for this context!", entry.specification.name));
 						(shader, binding.bind_groups, mesh, e)
 					})
 					.collect::<Vec<_>>()
