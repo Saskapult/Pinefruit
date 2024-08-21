@@ -216,6 +216,7 @@ impl MeshManager {
 		}
 	}
 
+	// I think that this is bad and should be removed 
 	pub fn read_or(&mut self, path: impl Into<PathBuf>, f: fn() -> Mesh) -> MeshKey {
 		let path = path.into().canonicalize().unwrap();
 		if let Some(key) = self.key_by_path.get(&path).cloned() {
@@ -223,6 +224,14 @@ impl MeshManager {
 		} else {
 			self.insert(f())
 		}
+	}
+
+	pub fn key_from_path(&self, path: impl AsRef<Path>) -> Option<MeshKey> {
+		self.key_by_path.get(path.as_ref()).copied()
+	}
+
+	pub fn key_from_label(&self, label: impl AsRef<str>) -> Option<MeshKey> {
+		self.key_by_name.get(label.as_ref()).copied()
 	}
 	
 	pub fn insert(&mut self, mesh: Mesh) -> MeshKey {

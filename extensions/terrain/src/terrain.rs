@@ -116,7 +116,7 @@ impl TerrainContents {
 #[derive(Debug, Clone)]
 pub struct TerrainChunk {
 	contents: TerrainContents,
-	generation: KGeneration,
+	pub generation: KGeneration,
 }
 impl std::ops::Deref for TerrainChunk {
 	type Target = TerrainContents;

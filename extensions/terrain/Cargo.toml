@@ -26,9 +26,11 @@ player = { path = "../player" }
 rayon = "1.10.0"
 controls = { path = "../controls" }
 rand = "0.8.5"
+mlua = { version = "0.9.9", features = ["luau-jit", "macros", "send"] }
+serde = "1.0.132"
 
-[profile.dev]
-# debug = 1
-opt-level = 2
+# [profile.dev]
+# # debug = 1
+# opt-level = 2
 
 # [workspace]

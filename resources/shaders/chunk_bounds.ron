@@ -1,0 +1,57 @@
+(
+    name: "chunk bounds shader",
+    base: Polygonal((
+		vertex: (
+			language: Glsl,
+			path: "camera_position.vert",
+			entry: "main",
+		),
+		fragment: Some(( // None is broken rn
+			language: Glsl,
+			path: "uv.frag",
+			entry: "main",
+		)),
+		polygon_input: Mesh([
+			(
+				name: "position",
+				source: "positions",
+				fields: [Float32x3],
+				default: None,
+			),
+		]),
+		polygon_mode: Line,
+		instance_attributes: [
+			(
+				name: "model matrix",
+				source: Component("TransformComponent"),
+				fields: [Float32x4, Float32x4, Float32x4, Float32x4],
+				default: None,
+			),
+		],
+		attachments: [
+			(
+				source: "albedo",
+				format: Rgba8Unorm,
+				blend_colour: Replace,
+				blend_alpha: Replace,
+			),
+		],
+		depth: Some((
+			source: "depth",
+			format: Depth32Float,
+			write: true,
+			comparison: Less,
+		)),
+		multisample_count: 1,
+		topology: TriangleList,
+		face_culling: None,
+		unclipped_depth: false,
+		conservative: false,
+	)),
+	bind_groups: {
+		0: {
+            0: UniformBuffer("camera", [Vertex]),
+		},
+	},
+	push_constant_range: [],
+)

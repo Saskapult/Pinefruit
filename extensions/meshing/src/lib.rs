@@ -1,7 +1,7 @@
 pub mod model;
 
 use eeks::prelude::*;
-use model::{map_rendering_system, map_modelling_system, model_wipe_system, MapMeshingComponent, MapModelResource};
+use model::{chunk_bounds_rendering_system, map_modelling_system, map_rendering_system, model_wipe_system, MapMeshingComponent, MapModelResource};
 use player::PlayerSpawnResource;
 
 
@@ -39,6 +39,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 		.run_after("torchlight_update_system");
 
 	loader.system("render", "map_rendering_system", map_rendering_system);
+	loader.system("render", "chunk_bounds_rendering_system", chunk_bounds_rendering_system);
 }
 
 

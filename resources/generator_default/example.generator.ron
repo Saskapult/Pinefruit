@@ -1,0 +1,13 @@
+[
+	Noise3D("density", "density.noise.ron"),
+
+	Noise2D("height", "height.noise.ron"),
+	Noise2D("height", "height", "height.spline.ron"),
+	
+	Noise2D("variance", "variance.noise.ron"),
+
+	Sub("height_difference", "height", "y"),
+	Div("height_difference", "height_difference", "variance"),
+	Spline("adjustment", "height_difference", "variance.spline.ron"),
+	Add("density", "density", "adjustment"),
+]

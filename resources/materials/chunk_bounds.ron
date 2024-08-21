@@ -1,0 +1,10 @@
+(
+	name: "chunk bounds material",
+	shader: "../shaders/chunk_bounds.ron",
+	mappings: {
+		"albedo": Context("albedo"),
+		"camera": Context("camera"),
+		"depth": Context("depth"),
+	},
+	array_mappings: {},
+)

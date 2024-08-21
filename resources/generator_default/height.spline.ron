@@ -1,0 +1,61 @@
+([
+    // Ocean island
+    (
+        t: 0.00,
+        value: 10.0,
+        interpolation: cosine,
+    ),
+    (
+        t: 0.05,
+        value: 3.0,
+        interpolation: cosine,
+    ),
+    // Ocean floor
+    (
+        t: 0.07,
+        value: -30.0,
+        interpolation: cosine,
+    ),
+    (
+        t: 0.35,
+        value: -30.0,
+        interpolation: cosine,
+    ),
+    // Ground
+    (
+        t: 0.37,
+        value: 3.0,
+        interpolation: cosine,
+    ),
+    (
+        t: 0.40,
+        value: 3.0,
+        interpolation: cosine,
+    ),
+    (
+        t: 0.45,
+        value: 7.0,
+        interpolation: cosine,
+    ),
+    (
+        t: 0.50,
+        value: 20.0,
+        interpolation: cosine,
+    ),
+    // Mountains
+    (
+        t: 0.80,
+        value: 30.0,
+        interpolation: cosine,
+    ),
+    (
+        t: 0.95,
+        value: 90.0,
+        interpolation: cosine,
+    ),
+    (
+        t: 1.0,
+        value: 100.0,
+        interpolation: cosine,
+    ),
+])

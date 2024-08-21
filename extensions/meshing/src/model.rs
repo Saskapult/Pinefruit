@@ -8,10 +8,10 @@ use glam::{IVec3, UVec3, Vec2, Vec3};
 use krender::{prelude::{AbstractRenderTarget, Mesh, RRID}, MaterialKey, MeshKey};
 use light::light::{LightRGBA, TorchLightChunksResource, TorchLightModifierComponent};
 use parking_lot::RwLock;
-use render::{MeshResource, RenderInputResource};
+use render::{MaterialManager, MaterialResource, MeshManager, MeshResource, RenderInputResource};
 use slotmap::SecondaryMap;
 use smallvec::{smallvec, SmallVec};
-use terrain::terrain::{TerrainEntry, TerrainResource};
+use terrain::terrain::{TerrainChunk, TerrainEntry, TerrainResource};
 use transform::TransformComponent;
 
 
@@ -460,7 +460,7 @@ fn chunk_quads_simple(
 		chunks: &ChunksResource, 
 		terrain_chunks: &Arc<RwLock<SecondaryMap<ChunkKey, TerrainEntry>>>,
 		pos: IVec3,
-	) -> Result<(ChunkKey, Arc<Chunk<BlockKey>>), MeshingError> {
+	) -> Result<(ChunkKey, Arc<TerrainChunk>), MeshingError> {
 		let key = chunks.read().get_position(pos).ok_or(MeshingError::ChunkUnloaded(pos))?;
 		let chunk = terrain_chunks.read().get(key).ok_or(MeshingError::ChunkUnloaded(pos))?
 			.complete_ref().ok_or(MeshingError::ChunkUnloaded(pos))?
@@ -480,7 +480,7 @@ fn chunk_quads_simple(
 		for y in 0..CHUNK_SIZE {
 			for z in 0..CHUNK_SIZE {
 				let b = chunk.get(UVec3::new(x, y, z));
-				let pe = b.and_then(|&key| blocks.get(key));
+				let pe = b.and_then(|key| blocks.get(key));
 
 				// Returns (positive face?), (negative face?)
 				let faces = |pe: Option<&BlockEntry>, ne: Option<&BlockEntry>| {
@@ -532,7 +532,7 @@ fn chunk_quads_simple(
 					chunk.get(UVec3::new(x-1, y, z))
 				}; 
 				// Get entries
-				let xne = xn.and_then(|&key| blocks.get(key));
+				let xne = xn.and_then(|key| blocks.get(key));
 				let (positive_face, negative_face) = faces(pe, xne);
 				if positive_face {
 					let m = match xne.as_ref().unwrap().render_type {
@@ -567,7 +567,7 @@ fn chunk_quads_simple(
 					chunk.get(UVec3::new(x, y-1, z))
 				}; 
 				// Get entries
-				let yne = yn.and_then(|&key| blocks.get(key));
+				let yne = yn.and_then(|key| blocks.get(key));
 				let (positive_face, negative_face) = faces(pe, yne);
 				if positive_face {
 					let m = match yne.as_ref().unwrap().render_type {
@@ -602,7 +602,7 @@ fn chunk_quads_simple(
 					chunk.get(UVec3::new(x, y, z-1))
 				}; 
 				// Get entries
-				let zne = zn.and_then(|&key| blocks.get(key));
+				let zne = zn.and_then(|key| blocks.get(key));
 				let (positive_face, negative_face) = faces(pe, zne);
 				if positive_face {
 					let m = match zne.as_ref().unwrap().render_type {
@@ -736,5 +736,59 @@ pub fn map_rendering_system(
 		for &(material, mesh) in entry.models.iter() {
 			items.push((material, Some(mesh), entry.entity));
 		}
+	}
+}
+
+
+pub fn chunk_bounds_rendering_system(
+	mut materials: ResMut<MaterialResource>,
+	mut meshes: ResMut<MeshResource>,
+	models: Res<MapModelResource>,
+	mut input: ResMut<RenderInputResource>,
+) {
+	let target = AbstractRenderTarget::new()
+		.with_colour(RRID::context("albedo"), None)
+		.with_depth(RRID::context("depth"));
+	let items = input
+		.stage("models")
+		.target(target);
+
+	let material = materials.read("resources/materials/chunk_bounds.ron");
+	let mesh = meshes.key_from_label("chunk cube mesh").unwrap_or_else(|| {
+		// let size = CHUNK_SIZE as f32;
+		// let positions = [
+		// 	-0.5, -0.5, 0.5,
+		// 	0.5, -0.5, 0.5,
+		// 	-0.5, 0.5, 0.5,
+		// 	0.5, 0.5, 0.5,
+		// 	-0.5, 0.5, -0.5,
+		// 	0.5, 0.5, -0.5,
+		// 	-0.5, -0.5, -0.5,
+		// 	0.5, -0.5, -0.5,
+		// ].map(|v| (v + 0.5) * size);
+		// let indices = [
+		// 	1, 2, 3,
+		// 	3, 2, 4,
+		// 	3, 4, 5,
+		// 	5, 4, 6,
+		// 	5, 6, 7,
+		// 	7, 6, 8,
+		// 	7, 8, 1,
+		// 	1, 8, 2,
+		// 	2, 8, 4,
+		// 	4, 8, 6,
+		// 	7, 1, 5,
+		// 	5, 1, 3,
+		// ].map(|v| v - 1).to_vec();
+		// let mesh = Mesh::new("chunk cube mesh")
+		// 	.with_data("positions", &positions)
+		// 	.with_vertex_count(8)
+		// 	.with_indices(indices);
+		let mesh = Mesh::read_obj("resources/meshes/cube.obj");
+		meshes.insert(mesh)
+	});
+
+	for entry in models.chunks.values().filter_map(|(_, _, g)| g.ref_complete()) {
+		items.push((material, Some(mesh), entry.entity));
 	}
 }

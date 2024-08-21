@@ -1,0 +1,12 @@
+([
+    (
+        t: 0.00,
+        value: 0.0,
+        interpolation: linear,
+    ),
+    (
+        t: 1.00,
+        value: 20.0,
+        interpolation: linear,
+    ),
+])

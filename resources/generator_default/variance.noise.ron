@@ -1,0 +1,6 @@
+(
+	frequency: 0.01,
+	lacunarity: 2.0, 
+	gain: 0.5,
+	octaves: 2, 
+)

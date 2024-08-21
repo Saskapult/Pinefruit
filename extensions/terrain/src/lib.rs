@@ -3,6 +3,8 @@
 pub mod generator;
 pub mod modification;
 pub mod terrain;
+pub mod liquids;
+pub mod script;
 
 use controls::ControlMap;
 use eeks::prelude::*;

@@ -5,6 +5,8 @@ use simdnoise::FbmSettings;
 use splines::Spline;
 use thiserror::Error;
 
+use crate::terrain::TerrainContents;
+
 
 
 
@@ -362,7 +364,7 @@ impl NewTerrainGenerator {
 	pub fn base(
 		&self, 
 		chunk_position: IVec3, 
-		volume: &mut ArrayVolume<BlockKey>,
+		volume: &mut TerrainContents,
 		base: BlockKey,
 	) {
 
@@ -383,7 +385,7 @@ impl NewTerrainGenerator {
 	pub fn carve(
 		&self, 
 		_chunk_position: IVec3, 
-		_volume: &mut ArrayVolume<BlockKey>,
+		_volume: &mut TerrainContents,
 	) {
 		todo!()
 	}
@@ -395,7 +397,7 @@ impl NewTerrainGenerator {
 	pub fn cover(
 		&self,
 		chunk_position: IVec3, 
-		volume: &mut ArrayVolume<BlockKey>,
+		volume: &mut TerrainContents,
 		top: BlockKey,
 		fill: BlockKey,
 		fill_depth: i32, // n following top placement
@@ -452,7 +454,7 @@ impl NewTerrainGenerator {
 	pub fn treeify(
 		&self, 
 		_chunk_position: IVec3, 
-		_volume: &ArrayVolume<BlockKey>,
+		_volume: &TerrainContents,
 	) -> bool { // Should return block modifications
 		todo!("Tree generation should be extended into a structure generation script")
 	}
