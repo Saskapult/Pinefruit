@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::client::GameInstance;
 
 
-const CONSOLE_HISTORY_FILE: &str = ".kkrc";
+const CONSOLE_HISTORY_FILE: &str = ".console_history";
 
 
 #[derive(Default)]
