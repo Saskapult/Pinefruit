@@ -178,6 +178,11 @@ impl MeshFormatManager {
 			k
 		} else {
 			debug!("New mesh index for attributes {:?}", attributes);
+			let total_size = attributes.iter().map(|a| a.size()).fold(0, |a, v| a + v);
+			if total_size % 4 != 0 {
+				warn!("Mesh format is not tetrabyte aligned");
+			}
+
 			let k = self.vertex_formats.insert(attributes.clone());
 			self.vertex_format_indices.insert(names, k);
 			k
