@@ -1,7 +1,7 @@
 # cargo-features = ["codegen-backend"] # Cranelift back-end
 
 [package]
-name = "kkraft"
+name = "pinefruit"
 version = "0.1.0"
 authors = ["Saskapult <“thekieransmith@gmail.com”>"]
 edition = "2021"

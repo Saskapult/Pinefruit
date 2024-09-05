@@ -1683,64 +1683,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
-name = "kkraft"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrayvec",
- "atomic_refcell",
- "bincode",
- "bytemuck",
- "chunks",
- "controls",
- "crossbeam-channel",
- "dashmap",
- "eeks",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "enumflags2",
- "env_logger 0.11.3",
- "glam",
- "hashbrown",
- "image 0.25.1",
- "krender",
- "light",
- "log",
- "lz4_flex",
- "meshing",
- "noise",
- "parking_lot",
- "player",
- "poisson",
- "pollster",
- "profiling",
- "puffin_egui",
- "puffin_http",
- "rand 0.8.5",
- "rand_xoshiro",
- "rayon",
- "render",
- "render2",
- "ron 0.8.1",
- "rustc-hash 1.1.0",
- "serde",
- "simdnoise",
- "slotmap",
- "smallvec",
- "splines",
- "terrain",
- "thiserror",
- "time 0.1.0",
- "tobj",
- "transform",
- "variantly",
- "wgpu",
- "wgpu-profiler",
- "winit 0.29.15",
-]
-
-[[package]]
 name = "krender"
 version = "0.1.0"
 dependencies = [
@@ -2534,6 +2476,64 @@ name = "pin-project-lite"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bda66fc9667c18cb2758a2ac84d1167245054bcf85d5d1aaa6923f45801bdd02"
+
+[[package]]
+name = "pinefruit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "atomic_refcell",
+ "bincode",
+ "bytemuck",
+ "chunks",
+ "controls",
+ "crossbeam-channel",
+ "dashmap",
+ "eeks",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "enumflags2",
+ "env_logger 0.11.3",
+ "glam",
+ "hashbrown",
+ "image 0.25.1",
+ "krender",
+ "light",
+ "log",
+ "lz4_flex",
+ "meshing",
+ "noise",
+ "parking_lot",
+ "player",
+ "poisson",
+ "pollster",
+ "profiling",
+ "puffin_egui",
+ "puffin_http",
+ "rand 0.8.5",
+ "rand_xoshiro",
+ "rayon",
+ "render",
+ "render2",
+ "ron 0.8.1",
+ "rustc-hash 1.1.0",
+ "serde",
+ "simdnoise",
+ "slotmap",
+ "smallvec",
+ "splines",
+ "terrain",
+ "thiserror",
+ "time 0.1.0",
+ "tobj",
+ "transform",
+ "variantly",
+ "wgpu",
+ "wgpu-profiler",
+ "winit 0.29.15",
+]
 
 [[package]]
 name = "pkg-config"
