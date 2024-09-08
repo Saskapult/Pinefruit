@@ -5,6 +5,8 @@
 /saved
 *.spv
 *.xcf
+*.kra
+*.kra~
 /resources/sounds/*
 !/resources/sounds/*.ogg
 .console_history

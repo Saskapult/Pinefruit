@@ -1,4 +1,4 @@
-# Pinefruit 
+# Pinefruit ![immature pinecone](resources/textures/pinefruit.png)
 ![image showcasing voxel terrain](example_1.png) 
 
 There comes a time in a programmer's life where they might feel the call. 
