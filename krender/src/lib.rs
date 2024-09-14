@@ -27,6 +27,7 @@ mod rendercontext;
 mod util;
 pub mod allocator;
 mod bundle;
+pub mod input_v2;
 
 pub mod prelude {
 	pub use crate::input::RenderInput;
