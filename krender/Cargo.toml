@@ -28,6 +28,7 @@ profiling = "1.0.11"
 eks = { path = "../eks" }
 atomic_refcell = "0.1.10"
 hashbrown = "0.14.5"
+variantly = "0.4.0"
 
 [dev-dependencies]
 pollster = "0.3.0"

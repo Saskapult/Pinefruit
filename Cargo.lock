@@ -1707,6 +1707,7 @@ dependencies = [
  "slotmap",
  "thiserror",
  "tobj",
+ "variantly",
  "wgpu",
  "wgpu-profiler",
  "winit 0.28.7",

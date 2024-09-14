@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, ops::Range, sync::Arc};
+use std::{intrinsics::unreachable, num::NonZeroU32, ops::Range, sync::Arc};
 
 use arrayvec::ArrayVec;
 use eks::{entity::Entity, World};
@@ -13,96 +13,126 @@ use crate::{*, bundle::{RenderBundleStage, MaybeOwned, RenderBundle}};
 type StageKey = u8;
 type TargetKey = u8;
 
-
-enum RenderClear {
-	Colour([f32; 4]),
-	Depth(f32),
+type RenderInputItem = (StageKey, StageItem);
+enum StageItem {
+	Clear(RRID, ClearValue),
+	Compute(MaterialKey, [u32; 3]),
+	Draw(TargetKey, DrawItem),
 }
-
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum RenderMesh {
-	// Draw range, account for it when grouping! 
-	// Would be so much easier with range 
-	Mesh(MeshKey, u32, u32),
-	// Uses a static draw range specified by the shader  
-	Static, 
-}
-
-
-enum RenderInputItem {
-	// Clears are immediately mapped to an abstract target 
-	// This is clever becuase it allows us to group clears during sorting 
-	// This is bad becuase we don't combine clears 
-	// If you clear albedo, for example, it will not be grouped in a pass 
-	// with both albedo and depth 
-	// Maybe we can have compunding targets? 
-	Clear(RenderClear), 
-	Compute(MaterialKey, [u32; 3]), 
-	Draw(MaterialKey, RenderMesh, Entity),
-	// Instance buffer? We need that! Unless we do manual stuff? 
+enum DrawItem {
+	Draw(MaterialKey, VertexSource, Entity), 
+	// Mesh draw range is controlled by indirect buffer, so full mesh is bound 
+	// Mesh decides if indexed or not, and if no mesh then not indexed
 	Indirect(MaterialKey, Option<MeshKey>, BufferKey), 
 	// Must be last because they reset the render pass' state
 	// How do we know that buffers will not have been re-bound since this bundle was created? 
 	Bundle(Arc<wgpu::RenderBundle>),
 }
 
-enum InstanceBuffer {
-	// Instance buffer start, for rebinding when shader changes 
-	// This data is duplicated but does not affect total size becuase Self::Indirect is larger 
-	Main(u32), 
-	Indirect(BufferKey),
-}
+// Stage, op[
+	// clear(t, c),
+	// targeted[
+		// draw(s, bgc, ?mesh, instance[main(range), indirect(buffer)]), 
+		// bundle(bundle), 
+		// ], 
+	// compute(s, bgc),
+	// ]
+type RenderBufferItem = (StageKey, StageOp);
 
-// The part that is sorted 
-enum RenderBufferItem {
-	// Do not deduplicate multiples, but have a warning 
-	Clear(RenderClear), 
+#[derive(Debug, Clone)]
+enum StageOp {
+	// Bool is for tacking if this has fulfilled during execution (init to false)
+	Clear(TextureKey, ClearValue, bool),
 	Compute(ShaderKey, [Option<BindGroupKey>; 4], [u32; 3]),
-	// Draw and Indirect both map to this
-	Polygon(ShaderKey, [Option<BindGroupKey>; 4], RenderMesh, InstanceBuffer),
-	// Must be last because they reset the render pass' state
-	Bundle(Arc<wgpu::RenderBundle>),
+	Draw(TargetKey, DrawOp),
 }
-impl RenderBufferItem {
+impl StageOp {
 	#[inline]
 	fn disc(s: &Self) -> u32 {
 		match s {
-			&Self::Clear(_) => 0,
+			&Self::Clear(_, _, _) => 0,
 			&Self::Compute(_, _, _) => 1,
-			&Self::Polygon(_, _, _, _) => 2,
-			&Self::Bundle(_) => 3,
+			&Self::Draw(_, _) => 2,
 		}
 	}
 }
-impl std::cmp::PartialEq for RenderBufferItem {
-	fn eq(&self, other: &Self) -> bool {
-		self.cmp(other).is_eq()
-	}
+impl std::cmp::PartialEq for StageOp {
+	fn eq(&self, other: &Self) -> bool { self.cmp(other).is_eq() }
 }
-impl std::cmp::Eq for RenderBufferItem {}
-impl std::cmp::PartialOrd for RenderBufferItem {
-	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-		Some(self.cmp(other))
-	}
+impl std::cmp::Eq for StageOp {}
+impl std::cmp::PartialOrd for StageOp {
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
 }
-impl std::cmp::Ord for RenderBufferItem {
+impl std::cmp::Ord for StageOp {
 	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
 		match (self, other) {
 			(Self::Compute(s0, bgc0, _), Self::Compute(s1, bgc1, _)) => (s0, bgc0).cmp(&(s1, bgc1)),
 			(
-				Self::Polygon(s0, bgc0, m0, _), 
-				Self::Polygon(s1, bgc1, m1, _),
-			) => (s0, bgc0, m0).cmp(&(s1, bgc1, m1)),
+				Self::Draw(t0, o0), 
+				Self::Draw(t1, o1),
+			) => (t0, o0).cmp(&(t1, o1)),
 			_ => Self::disc(self).cmp(&Self::disc(other)),
 		}
 	}
 }
-
-enum StageItem {
-	// Clears appear at the beginning of a stage 
-	Clear(NonZeroU32),
-	Target(TargetKey),
+#[derive(Debug, Clone, Copy)]
+enum ClearValue {
+	Colour([f32; 4]),
+	Depth(f32),
+}
+#[derive(Debug, Clone)]
+enum DrawOp {
+	Draw(ShaderKey, [Option<BindGroupKey>; 4], VertexSource, DrawInstance),
+	Bundle(Arc<wgpu::RenderBundle>),
+}
+impl DrawOp {
+	#[inline]
+	fn disc(s: &Self) -> u32 {
+		match s {
+			&Self::Draw(_, _, _, _) => 0,
+			&Self::Bundle(_) => 1,
+		}
+	}
+}
+impl std::cmp::PartialEq for DrawOp {
+	fn eq(&self, other: &Self) -> bool { self.cmp(other).is_eq() }
+}
+impl std::cmp::Eq for DrawOp {}
+impl std::cmp::PartialOrd for DrawOp {
+	fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+}
+impl std::cmp::Ord for DrawOp {
+	fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+		match (self, other) {
+			(
+				Self::Draw(s0, bgc0, vs0, dt0), 
+				Self::Draw(s1, bgc1, vs1, dt1),
+			) => (s0, bgc0, vs0, dt0).cmp(&(s1, bgc1, vs1, dt1)),
+			_ => Self::disc(self).cmp(&Self::disc(other)),
+		}
+	}
+}
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum VertexSource {
+	// A mesh and a draw range 
+	Mesh(MeshKey, DrawRange),
+	// Uses a static draw range specified by the shader  
+	Static, 
+}
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum DrawRange {
+	All, // Full draw range of a mesh
+	Some(u32, NonZeroU32),
+}
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+enum DrawInstance {
+	// Instance buffer start, for rebinding when shader changes 
+	// This data is duplicated but does not affect total size becuase Self::Indirect is larger 
+	Main(u32), 
+	// Indirect draw instance buffers do not include offset :(
+	// But if you're doing indirect draw calls you are likely using bindless
+	// stuff and don't need offsets anyway 'cause that's the whole point 
+	Indirect(BufferKey),
 }
 
 
@@ -120,7 +150,7 @@ pub struct RenderInput2 {
 	
 	// Could strip generation from keys? Map keys with secondary map 
 	// Can we reduce the size somehow? Is that needed? 
-	items_buffer: Vec<(StageKey, TargetKey, RenderBufferItem)>,
+	items_buffer: Vec<RenderBufferItem>,
 	// Used to create the instance buffer, retained to avoid reallocation 
 	instance_bytes: Vec<u8>,
 }
@@ -230,9 +260,10 @@ impl RenderInput2 {
 			let mut storages = ArrayVec::<_, 8>::new();
 			let mut cur_size = 0; 
 			let mut cur_count = 0;
-			for (i, (_, _, item)) in self.items_buffer.iter_mut().enumerate() {
-				match item {
-					RenderBufferItem::Polygon(shader, _, _, InstanceBuffer::Main(o)) => {
+			for (i, (_, op)) in self.items_buffer.iter_mut().enumerate() {
+				match op {
+					// StageOp::Draw(shader, _, _, DrawInstance::Main(o)) => {
+					StageOp::Draw(_, DrawOp::Draw(shader, _, _, DrawInstance::Main(o))) => {
 						if Some(*shader) != cur_shader {
 							let new_shader = shaders.get(*shader)
 								.expect("Failed to locate shader!");
@@ -340,24 +371,103 @@ struct StageStateMachine {
 /// This is as it is so that we can execute arbitrary sequences of commands. 
 /// We can split by some heuristic and parallelize encoding. 
 fn execute_sequence(
-	sequence: &[bool],
+	sequence: &[RenderBufferItem],
 	device: &wgpu::Device,
 ) -> wgpu::CommandBuffer {
 	let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 		label: Some("sequence encoder"),
 	});
 
-	let mut stage = None;
+	let mut cur_stage = None;
+	let mut cur_clears = None;
 	let mut pass_state = PassState::None;
 
-	// Stage, op[
-		// clear(t, c),
-		// targeted[
-			// draw(s, bgc, ?mesh, [main(range), indirect(buffer)]), 
-			// bundle(bundle), 
-			// ], 
-		// compute(s, bgc),
-		// ]
+	let mut i = 0;
+	while i < sequence.len() {
+		let (stage, op) = sequence[i];
+		if cur_stage != Some(stage) {
+			cur_stage = Some(stage);
+			trace!("Begin stage {}", stage);
+
+			// Find clears partition (it's from here until next non-clear)
+			let clears_end = sequence[i..].iter().position(|i| match i.1 {
+				StageOp::Clear(_, _, _) => false,
+				_ => true,
+			}).unwrap_or(sequence.len()-1);
+			cur_clears = Some(i..clears_end);
+			
+			// Look ahead until end of stage to find passes 
+			// Make passes for clears without passes 
+			// I, however, am stupid so I will just clear them all! 
+			for (_, clear) in sequence[cur_clears.unwrap()].iter_mut() {
+				match clear {
+					StageOp::Clear(t, v, f) => {
+						*f = true;
+						let view = todo!();
+						match v {
+							ClearValue::Colour([r, g, b, a]) => {
+								encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+									label: Some("clear pass"),
+									color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+										view, 
+										resolve_target: None,
+										ops: wgpu::Operations {
+											load: wgpu::LoadOp::Clear(wgpu::Color {
+												r: *r as f64, g: *g as f64, b: *b as f64, a: *a as f64,
+											}),
+											store: wgpu::StoreOp::Store, // unclear what this does
+										},
+									})],
+									depth_stencil_attachment: None,
+									timestamp_writes: None,
+									occlusion_query_set: None,
+								});
+							},
+							ClearValue::Depth(d) => {
+								encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+									label: Some("clear pass"),
+									color_attachments: &[],
+									depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+										view,
+										depth_ops: Some(wgpu::Operations {
+											load: wgpu::LoadOp::Clear(*d),
+											store: wgpu::StoreOp::Store, // see above
+										}),
+										stencil_ops: None,
+									}),
+									timestamp_writes: None,
+									occlusion_query_set: None,
+								});
+							},
+						},
+					}
+					_ => unreachable!(),
+				};
+			}
+			
+			// Skip over those clears
+			i = clears_end; 
+			continue
+		}
+
+		match op {
+			StageOp::Clear(_, _, _) => unreachable!(),
+			StageOp::Compute(shader, bgc, [x, y, z]) => {
+
+			},
+			StageOp::Draw(t, d) => {
+				// If state is not draw or target is not t, make new pass 
+
+				// Needs variantly
+				
+
+				match d {
+					DrawOp::Bundle(b) => 
+
+				}
+			}
+		}
+	}
 
 	// If stage change  
 		// Swap clears partition 
@@ -365,7 +475,6 @@ fn execute_sequence(
 		// Do passes for any that are not there 
 	// If target change 
 		// Look through clears partition for this 
-			// What if there are multiple passes with that attachment?? Fuck!! 
 		// Begin render pass 
 	
 
@@ -432,8 +541,8 @@ fn execute_sequence(
 					}
 				}
 				let (indexed, n) = match mesh {
-					RenderMesh::Static => todo!(),
-					RenderMesh::Mesh(k, st, en) => {
+					VertexSource::Static => todo!(),
+					VertexSource::Mesh(k, st, en) => {
 						if cur_mesh.is_none() || cur_mesh.unwrap() != k {
 							cur_mesh = Some(k)
 						}
@@ -445,10 +554,10 @@ fn execute_sequence(
 				// Skip ahead to find those with same params (indluding mesh range!)
 
 				let indirect = match buffer {
-					InstanceBuffer::Main(g) => {
+					DrawInstance::Main(g) => {
 						false
 					},
-					InstanceBuffer::Indirect(k) => {
+					DrawInstance::Indirect(k) => {
 						true
 					},
 				};
