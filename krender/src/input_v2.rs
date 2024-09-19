@@ -340,11 +340,14 @@ impl RenderInput2 {
 	}
 }
 
+#[derive(Debug, variantly::Variantly)]
 enum InstanceBufferState {
 	None,
 	Main(u32),
 	Indirect(BufferKey),
 }
+
+#[derive(Debug, variantly::Variantly)]
 enum PassState<'a> {
 	None,
 	Compute {
@@ -356,8 +359,9 @@ enum PassState<'a> {
 		pass: Option<wgpu::RenderPass<'a>>,
 		shader: Option<ShaderKey>,
 		bgc: [Option<BindGroupKey>; 4],
-		mesh: Option<(MeshKey, u32, u32)>,
-		instance: InstanceBufferState,
+		mesh: Option<MeshKey>,
+		instance: Option<DrawInstance>,
+		instance_st: u32, // Accumulated instance st
 	},
 }
 struct StageStateMachine {
@@ -368,11 +372,16 @@ struct StageStateMachine {
 
 
 /// Executes a sequence of commands. 
-/// This is as it is so that we can execute arbitrary sequences of commands. 
-/// We can split by some heuristic and parallelize encoding. 
+/// We can split the sequence by some heuristic and parallelize encoding. 
 fn execute_sequence(
 	sequence: &[RenderBufferItem],
+	targets: &Vec<AbstractRenderTarget>,
 	device: &wgpu::Device,
+	textures: &TextureManager,
+	bind_groups: &BindGroupManager,
+	shaders: &ShaderManager,
+	meshes: &MeshManager,
+	buffers: &BufferManager,
 ) -> wgpu::CommandBuffer {
 	let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 		label: Some("sequence encoder"),
@@ -380,7 +389,7 @@ fn execute_sequence(
 
 	let mut cur_stage = None;
 	let mut cur_clears = None;
-	let mut pass_state = PassState::None;
+	let mut state = PassState::None;
 
 	let mut i = 0;
 	while i < sequence.len() {
@@ -403,7 +412,7 @@ fn execute_sequence(
 				match clear {
 					StageOp::Clear(t, v, f) => {
 						*f = true;
-						let view = todo!();
+						let view = textures.get(*t).unwrap().view().unwrap();
 						match v {
 							ClearValue::Colour([r, g, b, a]) => {
 								encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -439,10 +448,10 @@ fn execute_sequence(
 									occlusion_query_set: None,
 								});
 							},
-						},
+						}
 					}
-					_ => unreachable!(),
-				};
+					_ => unreachable!("Non-StageOp::Clear variant in clears segment!"),
+				}
 			}
 			
 			// Skip over those clears
@@ -457,14 +466,174 @@ fn execute_sequence(
 			},
 			StageOp::Draw(t, d) => {
 				// If state is not draw or target is not t, make new pass 
-
-				// Needs variantly
-				
-
-				match d {
-					DrawOp::Bundle(b) => 
-
+				if state.is_not_render() {
+					state = PassState::Render { 
+						target: None, 
+						pass: None, 
+						shader: None, 
+						bgc: [None; 4], 
+						mesh: None, 
+						instance: None, 
+						instance_st: 0,
+					};
 				}
+
+				match &mut state {
+					PassState::Render { 
+						target, pass, shader, bgc, mesh, instance, instance_st, 
+					} => {
+						if *target != Some(t) {
+							*target = Some(t);
+
+							let target = &targets[t as usize];
+							trace!("Begin render pass for target {}", t);
+
+							// Find unsatisfied clears 
+							let mut color_attachments = ArrayVec::<_, 8>::new();
+							for (t, r) in target.colour_attachments.iter() {
+
+							}
+
+							let mut depth_stencil_attachment = None;
+
+							if let Some(d) = target.depth_attachment.as_ref() {
+
+							}
+
+							trace!("Depth attachment: ");
+
+
+							for (t, v, s) in sequence[cur_clears.unwrap()].iter_mut().filter_map(|(_, op)| match op {
+								StageOp::Clear(t, v, s) => (!*s).then_some((t, v, s)),
+								_ => unreachable!("Non-clear op in ops thing"),
+							}) {
+								todo!("Look to see if this texture is part of the target pass");
+								// If texture in this pass, clear and set as satisfied 
+							}
+							trace!("Clears: ")
+							
+							
+							*pass = Some(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+								label: None, 
+								color_attachments: color_attachments.as_slice(),
+								depth_stencil_attachment,
+								timestamp_writes: None,
+								occlusion_query_set: None,
+							}));
+						}
+
+						let pass = pass.as_ref().unwrap();
+						match d {
+							DrawOp::Bundle(b) => {
+								trace!("Execute render bundle");
+								pass.execute_bundles([&*b]);
+								// Wipe the pass' state 
+								*shader = None;
+								*bgc = [None; 4];
+								*mesh = None;
+								*instance = None;
+							},
+							DrawOp::Draw(ds, dbgc, dvs, dinstance) => {
+								if *shader != Some(ds) {
+									*shader = Some(ds);
+									let shader = shaders.get(ds).unwrap();
+									trace!("Set shader to {:?}", shader.specification.name);
+									let pipeline = shader.pipeline.as_ref().unwrap()
+										.polygon().unwrap();
+									pass.set_pipeline(pipeline);
+								}
+								for i in 0..bgc.len() {
+									if let Some(bg) = dbgc[i] {
+										if bgc[i].is_none() || bgc[i].unwrap() != bg {
+											bgc[i] = Some(bg);
+											let entry = bind_groups.get(bg).unwrap();
+											trace!("Set bind group {}", i);
+											let bind_group = entry.binding.as_ref().unwrap();
+											pass.set_bind_group(i as u32, bind_group, &[]);
+										}
+									}
+								}
+
+								let (indexed, dr) = match dvs {
+									VertexSource::Static => {
+										// Draw vertices based on shader range 
+										// false
+										todo!()
+									},
+									VertexSource::Mesh(k, dr) => {
+										let m = meshes.get(k).unwrap();
+										if *mesh != Some(k) {
+											trace!("Set mesh {:?}", m.name);
+											*mesh = Some(k);
+										}
+										let dr = match dr {
+											DrawRange::Some(st, en) => st..en.get(),
+											DrawRange::All => 0..m.n_vertices,
+										};
+										(true, dr)
+									},
+								};
+
+								if *instance != Some(dinstance) {
+									*instance = Some(dinstance);
+									match dinstance {
+										DrawInstance::Main(st) => {
+											trace!("Set instance buffer to main at offset {}", st);
+
+											// pass.set_vertex_buffer(1, buffer_slice);
+										},
+										DrawInstance::Indirect(k) => {
+											let b = buffers.get(k).unwrap();
+											trace!("Set instance buffer to {:?}", b.name);
+											pass.set_vertex_buffer(1, b.binding.as_ref().unwrap().slice(..));
+											*instance_st = 0;
+										},
+									};
+								}
+								let indirect = match instance.unwrap() {
+									DrawInstance::Indirect(_) => true,
+									DrawInstance::Main(_) => false,
+								};
+				
+								if !indirect {
+									// Find instances to draw
+									let instance_count = sequence[i..].iter()
+										.position(|(_, oop)| op != *oop)
+										.unwrap_or(sequence[i..].len());
+									let instance_range = (*instance_st)..(*instance_st + (instance_count as u32)); 
+									*instance_st += instance_count as u32;
+									i = instance_count; // Skip over! 
+									trace!("Batch {} instances", instance_count);
+
+									// Draw
+									if !indexed {
+										trace!("Draw vertices {:?} instances {:?}", dr, instance_range);
+										// trace!("Draw vertices {}..{} instances {}..{}", instance_range.start, instance_range.end);
+
+										pass.draw(dr, instance_range);
+									} else {
+										trace!("Draw indexed");
+										pass.draw_indexed(dr, 0, instance_range);
+									}
+									// Add to count 
+								} else {
+									// YOU HAVE A MESH BUFFER(S), AN INSTANCE BUFFER, BUT WHERE IS THE INDIRECT BUFFER???
+									// Can we add it along with the instance buffer? Sounds good to me 
+									if !indexed {
+										trace!("Draw indirect");
+										pass.draw_indirect(indirect_buffer, 0);
+									} else {
+										trace!("Draw indexed indirect");
+										pass.draw_indexed_indirect(indirect_buffer, 0)
+									}
+								}
+							},
+						}
+
+					},
+					_ => unreachable!(),
+				}
+
 			}
 		}
 	}
@@ -530,66 +699,7 @@ fn execute_sequence(
 					trace!("Set shader to {:?}", shader.specification.name);
 					pass.set_pipeline(shader.pipeline.as_ref().unwrap().polygon().unwrap());
 				}
-				for i in 0..cur_bgc.len() {
-					if let Some(bg) = bgc[i] {
-						if cur_bgc[i].is_none() || cur_bgc[i].unwrap() != bg {
-							cur_bgc[i] = Some(bg);
-							let entry = bind_groups.get(bg).unwrap();
-							let bind_group = entry.binding.as_ref().unwrap();
-							pass.set_bind_group(i as u32, bind_group, &[]);
-						}
-					}
-				}
-				let (indexed, n) = match mesh {
-					VertexSource::Static => todo!(),
-					VertexSource::Mesh(k, st, en) => {
-						if cur_mesh.is_none() || cur_mesh.unwrap() != k {
-							cur_mesh = Some(k)
-						}
-						(true, 32)
-					},
-				};
-
-				let mut instance_count = 0;
-				// Skip ahead to find those with same params (indluding mesh range!)
-
-				let indirect = match buffer {
-					DrawInstance::Main(g) => {
-						false
-					},
-					DrawInstance::Indirect(k) => {
-						true
-					},
-				};
-
-				// match (indexed, indirect) {
-				// 	(false, false) => 
-				// }
-				if !indirect {
-					// Draw
-					if !indexed {
-						pass.draw(vertices, instances);
-					} else {
-						pass.draw_indexed(indices, base_vertex, instances);
-					}
-					// Add to count  
-				} else {
-					if !indexed {
-						pass.draw_indirect(indirect_buffer, indirect_offset);
-					} else {
-						pass.draw_indexed_indirect(indirect_buffer, indirect_offset)
-					}
-				}
-
-				if indexed {
-					if indirect {
-						pass.draw_indexed_indirect(indirect_buffer, indirect_offset);
-					} else {
-						pass.draw_indexed(indices, base_vertex, instances);
-					}
-				} else {
-					if indirect
-				}
+				
 				
 				
 			}
