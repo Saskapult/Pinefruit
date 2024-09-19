@@ -378,6 +378,7 @@ fn execute_sequence(
 	bind_groups: &BindGroupManager,
 	shaders: &ShaderManager,
 	meshes: &MeshManager,
+	instance_buffer: &wgpu::Buffer,
 ) -> wgpu::CommandBuffer {
 	let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 		label: Some("sequence encoder"),
@@ -500,23 +501,25 @@ fn execute_sequence(
 			StageOp::Draw(t, ref d) => {
 				// If state is not draw or target is not t, make new pass 
 				// OR state.as_ref().unwrap().render().target is wrong
-				if state.is_none() || state.as_ref().unwrap().is_not_render() {
+				let target_is_wrong = || {
+					match state.as_ref().unwrap() {
+						PassState::Render { target, .. } => target != t,
+						_ => unreachable!(),
+					}
+				};
+				if state.is_none() || state.as_ref().unwrap().is_not_render() || target_is_wrong() {
 					let target = &targets[*t as usize];
 					trace!("Begin render pass for target {}", t);
 
-					
 					let mut color_attachments = ArrayVec::<_, 8>::new();
 					for (t, r) in target.colour_attachments.iter() {
-
+						trace!("Colour attachment");
 					}
 
 					let mut depth_stencil_attachment = None;
-
 					if let Some(d) = target.depth_attachment.as_ref() {
-
+						trace!("Depth attachment");
 					}
-
-					trace!("Depth attachment: ");
 
 					// Find unsatisfied clears 
 					// for (t, v, s) in sequence[cur_clears.unwrap()].iter_mut().filter_map(|(_, op)| match op {
@@ -527,6 +530,7 @@ fn execute_sequence(
 					// 	// If texture in this pass, clear and set as satisfied 
 					// }
 					// trace!("Clears: ");
+
 					drop(state);
 					let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 						label: None, 
@@ -535,7 +539,6 @@ fn execute_sequence(
 						timestamp_writes: None,
 						occlusion_query_set: None,
 					});
-
 					state = Some(PassState::Render { 
 						target: *t, 
 						pass, 
@@ -549,7 +552,7 @@ fn execute_sequence(
 
 				match &mut state.as_mut().unwrap() {
 					PassState::Render { 
-						target, pass, shader, bgc, mesh, instance, instance_st, 
+						target: _, pass, shader, bgc, mesh, instance, instance_st, 
 					} => {
 						match d {
 							DrawOp::Bundle(b) => {
@@ -606,8 +609,7 @@ fn execute_sequence(
 									match dinstance {
 										DrawInstance::Main(st) => {
 											trace!("Set instance buffer to main at offset {}", st);
-
-											// pass.set_vertex_buffer(1, buffer_slice);
+											pass.set_vertex_buffer(1, instance_buffer.slice((st as u64)..));
 										},
 										DrawInstance::Indirect(k, _) => {
 											let b = buffers.get(k).unwrap();
@@ -649,11 +651,9 @@ fn execute_sequence(
 								}
 							},
 						}
-
 					},
 					_ => unreachable!(),
 				}
-
 			}
 		}
 		i += 1;
