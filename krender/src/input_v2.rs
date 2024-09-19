@@ -349,25 +349,21 @@ enum InstanceBufferState {
 }
 
 #[derive(Debug, variantly::Variantly)]
-enum PassState {
+enum PassState<'a> {
 	Compute {
+		pass: wgpu::ComputePass<'a>,
 		shader: Option<ShaderKey>,
 		bgc: [Option<BindGroupKey>; 4],
 	},
 	Render {
-		target: Option<TargetKey>,
-		// pass: Option<wgpu::RenderPass<'a>>,
+		target: TargetKey,
+		pass: wgpu::RenderPass<'a>,
 		shader: Option<ShaderKey>,
 		bgc: [Option<BindGroupKey>; 4],
 		mesh: Option<MeshKey>,
 		instance: Option<DrawInstance>,
 		instance_st: u32, // Accumulated instance st
 	},
-}
-struct StageStateMachine {
-	// Pass state 
-	// Clears 
-	// encoder 
 }
 
 
@@ -378,10 +374,10 @@ fn execute_sequence(
 	targets: &Vec<AbstractRenderTarget>,
 	device: &wgpu::Device,
 	textures: &TextureManager,
+	buffers: &BufferManager,
 	bind_groups: &BindGroupManager,
 	shaders: &ShaderManager,
 	meshes: &MeshManager,
-	buffers: &BufferManager,
 ) -> wgpu::CommandBuffer {
 	let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 		label: Some("sequence encoder"),
@@ -390,7 +386,6 @@ fn execute_sequence(
 	let mut cur_stage = None;
 	let mut cur_clears = None;
 	let mut state: Option<PassState> = None;
-	let mut pass = None; // Cannot include in state becuase liftimes stuff
 
 	let mut i = 0;
 	while i < sequence.len() {
@@ -399,7 +394,6 @@ fn execute_sequence(
 			cur_stage = Some(stage);
 			trace!("Begin stage {}", stage);
 			state = None;
-			pass = None;
 
 			// Find clears partition (it's from here until next non-clear)
 			let clears_end = sequence[i..].iter().position(|i| match i.1 {
@@ -468,15 +462,83 @@ fn execute_sequence(
 		let op = &sequence[i].1;
 		match op {
 			StageOp::Clear(_, _, _) => unreachable!(),
-			StageOp::Compute(shader, bgc, [x, y, z]) => {
-
+			&StageOp::Compute(os, obgc, [x, y, z]) => {
+				if state.is_none() || state.as_ref().unwrap().is_not_compute() {
+					drop(state);
+					let pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+						label: None,
+						timestamp_writes: None,
+					});
+					state = Some(PassState::Compute { pass, shader: None, bgc: [None; 4], });
+				}
+				match state.as_mut().unwrap() {
+					PassState::Compute { pass, shader, bgc } => {
+						if *shader != Some(os) {
+							*shader = Some(os);
+							let shader = shaders.get(os).unwrap();
+							trace!("Set shader to {:?}", shader.specification.name);
+							let pipeline = shader.pipeline.as_ref().unwrap()
+								.compute().unwrap();
+							pass.set_pipeline(pipeline);
+						}
+						for i in 0..obgc.len() {
+							if let Some(bg) = obgc[i] {
+								if bgc[i].is_none() || bgc[i].unwrap() != bg {
+									bgc[i] = Some(bg);
+									let entry = bind_groups.get(bg).unwrap();
+									trace!("Set bind group {}", i);
+									let bind_group = entry.binding.as_ref().unwrap();
+									pass.set_bind_group(i as u32, bind_group, &[]);
+								}
+							}
+						}
+						pass.dispatch_workgroups(x, y, z);
+					},
+					_ => unreachable!(),
+				}
 			},
 			StageOp::Draw(t, ref d) => {
 				// If state is not draw or target is not t, make new pass 
+				// OR state.as_ref().unwrap().render().target is wrong
 				if state.is_none() || state.as_ref().unwrap().is_not_render() {
+					let target = &targets[*t as usize];
+					trace!("Begin render pass for target {}", t);
+
+					
+					let mut color_attachments = ArrayVec::<_, 8>::new();
+					for (t, r) in target.colour_attachments.iter() {
+
+					}
+
+					let mut depth_stencil_attachment = None;
+
+					if let Some(d) = target.depth_attachment.as_ref() {
+
+					}
+
+					trace!("Depth attachment: ");
+
+					// Find unsatisfied clears 
+					// for (t, v, s) in sequence[cur_clears.unwrap()].iter_mut().filter_map(|(_, op)| match op {
+					// 	StageOp::Clear(t, v, s) => (!*s).then_some((t, v, s)),
+					// 	_ => unreachable!("Non-clear op in ops thing"),
+					// }) {
+					// 	todo!("Look to see if this texture is part of the target pass");
+					// 	// If texture in this pass, clear and set as satisfied 
+					// }
+					// trace!("Clears: ");
+					drop(state);
+					let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+						label: None, 
+						color_attachments: color_attachments.as_slice(),
+						depth_stencil_attachment,
+						timestamp_writes: None,
+						occlusion_query_set: None,
+					});
+
 					state = Some(PassState::Render { 
-						target: None, 
-						// pass: None, 
+						target: *t, 
+						pass, 
 						shader: None, 
 						bgc: [None; 4], 
 						mesh: None, 
@@ -487,48 +549,8 @@ fn execute_sequence(
 
 				match &mut state.as_mut().unwrap() {
 					PassState::Render { 
-						target, shader, bgc, mesh, instance, instance_st, 
+						target, pass, shader, bgc, mesh, instance, instance_st, 
 					} => {
-						if *target != Some(*t) {
-							*target = Some(*t);
-
-							let target = &targets[*t as usize];
-							trace!("Begin render pass for target {}", t);
-
-							// Find unsatisfied clears 
-							let mut color_attachments = ArrayVec::<_, 8>::new();
-							for (t, r) in target.colour_attachments.iter() {
-
-							}
-
-							let mut depth_stencil_attachment = None;
-
-							if let Some(d) = target.depth_attachment.as_ref() {
-
-							}
-
-							trace!("Depth attachment: ");
-
-
-							// for (t, v, s) in sequence[cur_clears.unwrap()].iter_mut().filter_map(|(_, op)| match op {
-							// 	StageOp::Clear(t, v, s) => (!*s).then_some((t, v, s)),
-							// 	_ => unreachable!("Non-clear op in ops thing"),
-							// }) {
-							// 	todo!("Look to see if this texture is part of the target pass");
-							// 	// If texture in this pass, clear and set as satisfied 
-							// }
-							// trace!("Clears: ");
-							pass = None;
-							pass = Some(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-								label: None, 
-								color_attachments: color_attachments.as_slice(),
-								depth_stencil_attachment,
-								timestamp_writes: None,
-								occlusion_query_set: None,
-							}));
-						}
-
-						let pass = pass.as_mut().unwrap();
 						match d {
 							DrawOp::Bundle(b) => {
 								trace!("Execute render bundle");
@@ -636,7 +658,7 @@ fn execute_sequence(
 		}
 		i += 1;
 	}
-	drop(pass);
+	drop(state);
 	encoder.finish()
 }
 
