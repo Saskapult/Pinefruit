@@ -14,29 +14,26 @@ type StageKey = u8;
 type TargetKey = u8;
 
 type RenderInputItem = (StageKey, StageItem);
+
+#[derive(variantly::Variantly)]
 enum StageItem {
 	Clear(RRID, ClearValue),
 	Compute(MaterialKey, [u32; 3]),
 	Draw(TargetKey, DrawItem),
 }
+#[derive(variantly::Variantly)]
+
 enum DrawItem {
 	Draw(MaterialKey, VertexSource, Entity), 
 	// Mesh draw range is controlled by indirect buffer, so full mesh is bound 
 	// Mesh decides if indexed or not, and if no mesh then not indexed
-	Indirect(MaterialKey, Option<MeshKey>, BufferKey), 
+	// Indirect buffer, instance buffer 
+	Indirect(MaterialKey, Option<MeshKey>, BufferKey, BufferKey), 
 	// Must be last because they reset the render pass' state
 	// How do we know that buffers will not have been re-bound since this bundle was created? 
 	Bundle(Arc<wgpu::RenderBundle>),
 }
 
-// Stage, op[
-	// clear(t, c),
-	// targeted[
-		// draw(s, bgc, ?mesh, instance[main(range), indirect(buffer)]), 
-		// bundle(bundle), 
-		// ], 
-	// compute(s, bgc),
-	// ]
 type RenderBufferItem = (StageKey, StageOp);
 
 #[derive(Debug, Clone)]
@@ -144,7 +141,7 @@ pub struct RenderInput2 {
 	// Indices into this should start at 1 
 	targets: Vec<AbstractRenderTarget>,
 
-	items: Vec<(StageKey, TargetKey, MaterialKey, Option<MeshKey>, Entity)>,
+	items: Vec<RenderInputItem>,
 	// A count of how many items have been inserted since the last sort
 	// If it is big, then we do some heap allocation and a faster sort 
 	// n_inserted: usize,
@@ -183,14 +180,45 @@ impl RenderInput2 {
 		self.stages.get_mut(stage as usize).unwrap().1.push(depends_on);
 	}
 
-	pub fn build(
+	pub fn run(
 		&mut self,
 		device: &wgpu::Device,
 		queue: &wgpu::Queue,
-		shaders: &ShaderManager,
-		bind_groups: &BindGroupManager,
+		textures: &mut TextureManager,
+		buffers: &mut BufferManager,
+		materials: &mut MaterialManager,
+		shaders: &mut ShaderManager,
+		bind_groups: &mut BindGroupManager,
+		meshes: &mut MeshManager,
+		context: &mut RenderContext,
 		world: &World,
-	) {
+	) -> Vec<wgpu::CommandBuffer> {
+		{
+			profiling::scope!("reource preparation");
+
+			materials.read_shaders_and_fetch_keys(shaders);
+			
+			shaders.load_and_register(meshes, bind_groups);
+			
+			bind_groups.build_layouts(device);
+			
+			materials.read_specified_resources(shaders, textures, buffers).unwrap();
+
+			context.bind_materials(
+				materials, 
+				shaders, 
+				textures, 
+				buffers, 
+				bind_groups,
+			).unwrap();
+
+			textures.update_bindings(device, queue, bind_groups);
+			buffers.update_bindings(device, bind_groups);
+	
+			bind_groups.update_bindings(device, textures, buffers);
+			shaders.build_pipelines(device, bind_groups);
+		}
+
 		{
 			profiling::scope!("find render stage order");
 			// Find stage order if any changed
@@ -223,8 +251,46 @@ impl RenderInput2 {
 		{
 			profiling::scope!("map render items to render buffer");
 			self.items_buffer.clear();
-			for (stage, target, material, mesh, entity) in self.items.iter().copied() {
-				self.items_buffer.push(todo!());
+			let additional = self.items.len().saturating_sub(self.items_buffer.capacity());
+			self.items_buffer.reserve(additional);
+
+			for (stage, item) in self.items.iter() {
+				self.items_buffer.push((*stage, match item {
+					StageItem::Clear(rrid, v) => {
+						let t = rrid.texture(context, textures).expect("Failed to locate target texture (todo: give more information)");
+						StageOp::Clear(t, *v, false)
+					},
+					StageItem::Compute(mtl, s) => {
+						let m = materials.get(*mtl).unwrap();
+						let shader = m.shader_key.unwrap();
+						// Make accessor function for this please 
+						let bgc = context.material_bindings.get(*mtl).unwrap().bind_groups;
+						StageOp::Compute(shader, bgc, *s)
+					},
+					StageItem::Draw(t, d) => StageOp::Draw(*t, match d {
+						DrawItem::Bundle(b) => DrawOp::Bundle(b.clone()),
+						DrawItem::Indirect(mtl, mesh, ind, ins) => {
+							let m = materials.get(*mtl).unwrap();
+							let shader = m.shader_key.unwrap();
+							let bgc = context.material_bindings.get(*mtl).unwrap().bind_groups;
+							let vs = match mesh {
+								// TODO: let the user specifiy the draw range 
+								Some(m) => VertexSource::Mesh(*m, DrawRange::All),
+								None => VertexSource::Static,
+							};
+							// Confusing order swap here
+							let di = DrawInstance::Indirect(*ins, *ind);
+							DrawOp::Draw(shader, bgc, vs, di)
+						},
+						DrawItem::Draw(mtl, vs, e) => {
+							let m = materials.get(*mtl).unwrap();
+							let shader = m.shader_key.unwrap();
+							let bgc = context.material_bindings.get(*mtl).unwrap().bind_groups;
+							let di = DrawInstance::Main(0);
+							DrawOp::Draw(shader, bgc, *vs, di)
+						}
+					}),
+				}));
 			}
 		}
 
@@ -296,8 +362,8 @@ impl RenderInput2 {
 						for (_, s) in storages.iter() {
 							match s.as_ref().unwrap() {
 								FetchedInstanceAttributeSource::Component(storage) => {
-									let entity = self.items[i].4;
-									storage.render_extend(entity, &mut self.instance_bytes);
+									let entity = self.items[i].1.draw_ref().unwrap().1.draw_ref().unwrap().2;
+									storage.render_extend(*entity, &mut self.instance_bytes);
 								},
 								FetchedInstanceAttributeSource::Resource(r) => {
 									r.render_extend(&mut self.instance_bytes);
@@ -313,40 +379,61 @@ impl RenderInput2 {
 				trace!("Created instance segment of {} bytes for shader {:?}", cur_count * cur_size, shader.specification.name);
 			}
 		}
+		let instance_buffer = {
+			// If profiling reveals that this is slow, we can try retaining it until the contents do not fit
+			profiling::scope!("create instance buffer");
+			device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+				label: Some("main instance buffer"),
+				contents: self.instance_bytes.as_slice(),
+				usage: wgpu::BufferUsages::VERTEX,
+			})
+		};
 
-		// Bind all meshes here
+		meshes.bind_unbound(device);
 
-		
+		if false {
+			let n_cores = 8;
+			let segment_size = self.items_buffer.len() / n_cores;
+			if segment_size < 32 {
+				warn!("Parallel encoding is likely doing more harm than good (low batch size)");
+			}
 
-		// Parallel 
+			// Can find draw call count of sequence 
+			// Can find target count of sequence 
+			// Can combine into split heuristic 
+			// We can split clears, it just incurs extra passes 
 
-		// Can find draw call count of sequence 
-		// Can find target count of sequence 
-		// Can combine into split heuristic 
+			// At least 8 draw calls? 
+			// self.items_buffer.split_at_mut(mid)
 
-		// We can only split once without a lot of reallocation 
-		// Cannot split stages becuase of clears? No we can, it just means we need extra passes 
-		// Split with heuristic 
-		// I want to not do this yet so just have an execution function that makes a command buffer 
-		// fn par_stage_exec(slice: &[bool]) -> Vec<wgpu::CommandBuffer> {
-		// 	// Find this partition 
-		// 	// While below capacity
-		// 	// Find size of next partition 
-		// 	let (buff, mut buffs) = (excute(your_bit), par_exec(other_bit));
-		// 	buffs.push_front(buff);
-		// 	buffs
-		// }
-		
+			// fn par_stage_exec(slice: &[bool]) -> Vec<wgpu::CommandBuffer> {
+			// 	// Find this partition 
+			// 	// While below capacity
+			// 	// Find size of next partition 
+			// 	let (buff, mut buffs) = (excute(your_bit), par_exec(other_bit));
+			// 	buffs.push_front(buff);
+			// 	buffs
+			// }
+
+			todo!("Parallel encoding")
+		} else {
+			vec![execute_sequence(
+				&mut self.items_buffer, 
+				&self.targets, 
+				device, 
+				textures, 
+				buffers, 
+				bind_groups, 
+				shaders, 
+				meshes, 
+				&instance_buffer, 
+				context,
+			)]
+		}
 
 	}
 }
 
-#[derive(Debug, variantly::Variantly)]
-enum InstanceBufferState {
-	None,
-	Main(u32),
-	Indirect(BufferKey),
-}
 
 #[derive(Debug, variantly::Variantly)]
 enum PassState<'a> {
@@ -379,7 +466,10 @@ fn execute_sequence(
 	shaders: &ShaderManager,
 	meshes: &MeshManager,
 	instance_buffer: &wgpu::Buffer,
+	context: &RenderContext,
 ) -> wgpu::CommandBuffer {
+	profiling::scope!("sequence execution");
+
 	let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
 		label: Some("sequence encoder"),
 	});
@@ -392,6 +482,7 @@ fn execute_sequence(
 	while i < sequence.len() {
 		let stage = sequence[i].0;
 		if cur_stage != Some(stage) {
+			profiling::scope!("stage swap (lookahead)");
 			cur_stage = Some(stage);
 			trace!("Begin stage {}", stage);
 			state = None;
@@ -510,16 +601,39 @@ fn execute_sequence(
 				if state.is_none() || state.as_ref().unwrap().is_not_render() || target_is_wrong() {
 					let target = &targets[*t as usize];
 					trace!("Begin render pass for target {}", t);
+					let starget = target.specify(context, textures);
 
-					let mut color_attachments = ArrayVec::<_, 8>::new();
-					for (t, r) in target.colour_attachments.iter() {
+					let color_attachments = starget.colour_attachments.into_iter().map(|(t, r, _)| {
 						trace!("Colour attachment");
-					}
+						let view = {
+							let t = textures.get(t).unwrap();
+							t.view().unwrap()
+						};
+						let resolve_target = r.map(|r| {
+							let r = textures.get(r).unwrap();
+							r.view().unwrap()
+						});
+						Some(wgpu::RenderPassColorAttachment {
+							view, resolve_target, ops: wgpu::Operations {
+								load: wgpu::LoadOp::Load,
+								store: wgpu::StoreOp::Store,
+							},
+						})
+					}).collect::<ArrayVec<_, 8>>();
 
-					let mut depth_stencil_attachment = None;
-					if let Some(d) = target.depth_attachment.as_ref() {
+					let depth_stencil_attachment = starget.depth_attachment.map(|(d, _)| {
 						trace!("Depth attachment");
-					}
+						let view = {
+							let d = textures.get(d).unwrap();
+							d.view().unwrap()
+						};
+						wgpu::RenderPassDepthStencilAttachment {
+							view, stencil_ops: None, depth_ops: Some(wgpu::Operations {
+								load: wgpu::LoadOp::Load,
+								store: wgpu::StoreOp::Store,
+							}),
+						}
+					});
 
 					// Find unsatisfied clears 
 					// for (t, v, s) in sequence[cur_clears.unwrap()].iter_mut().filter_map(|(_, op)| match op {
@@ -722,14 +836,12 @@ pub struct TargetQueue<'a> {
 }
 impl<'a> TargetQueue<'a> {
 	pub fn add_pass(self, material: MaterialKey, entity: Entity) -> Self {
-		let stage = self.stage_builder.stage;
-		let target = self.target;
-		self.stage_builder.input.items.push((stage, target, material, None, entity));
+		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Draw(material, VertexSource::Static, entity))));
 		self
 	}
 
 	pub fn add_model(self, material: MaterialKey, mesh: MeshKey, entity: Entity) -> Self {
-		self.stage_builder.input.items.push((self.stage_builder.stage, self.target, material, Some(mesh), entity));
+		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Draw(material, VertexSource::Mesh(mesh, DrawRange::All), entity))));
 		self
 	}
 
