@@ -1,13 +1,15 @@
-use std::{num::NonZeroU32, ops::Range, sync::Arc};
-
+use std::{num::NonZeroU32, sync::Arc};
 use arrayvec::ArrayVec;
 use eks::{entity::Entity, World};
-use hashbrown::HashMap;
-use prelude::{AbstractRenderTarget, RenderContext, InstanceAttributeSource};
-use rendertarget::RRID;
-use slotmap::{SlotMap, SecondaryMap};
-use wgpu::util::RenderEncoder;
-use crate::{*, bundle::{RenderBundleStage, MaybeOwned, RenderBundle}};
+use crate::buffer::BufferManager;
+use crate::mesh::MeshManager;
+use crate::prelude::{AbstractRenderTarget, BindGroupManager, InstanceAttributeSource, MaterialManager, RenderContext};
+use crate::rendertarget::RRID;
+use crate::shader::ShaderManager;
+use crate::texture::TextureManager;
+use crate::vertex::FetchedInstanceAttributeSource;
+use crate::{BindGroupKey, BufferKey, MaterialKey, MeshKey, ShaderKey, TextureKey};
+use wgpu::util::DeviceExt;
 
 
 type StageKey = u8;
@@ -282,13 +284,13 @@ impl RenderInput2 {
 							let di = DrawInstance::Indirect(*ins, *ind);
 							DrawOp::Draw(shader, bgc, vs, di)
 						},
-						DrawItem::Draw(mtl, vs, e) => {
+						DrawItem::Draw(mtl, vs, _) => {
 							let m = materials.get(*mtl).unwrap();
 							let shader = m.shader_key.unwrap();
 							let bgc = context.material_bindings.get(*mtl).unwrap().bind_groups;
 							let di = DrawInstance::Main(0);
 							DrawOp::Draw(shader, bgc, *vs, di)
-						}
+						},
 					}),
 				}));
 			}
@@ -311,6 +313,7 @@ impl RenderInput2 {
 			profiling::scope!("render sort (std)");
 			todo!("Std sort render sort");
 			// Useful if we have barely-sorted data and don't mind paying the heap allocation cost 
+			// Ooor if I turns out that insertion sort is generally slower 
 			// Allocate additional vecs with indices, sort with std, re-order base
 			// We are unable to not remap the base because instance data pulling 
 			// relies on it following the same order as the buffer items 
@@ -320,7 +323,7 @@ impl RenderInput2 {
 			profiling::scope!("fetch instance data");
 			// Pull instance data 
 			// TODO: precalculate total instance data size
-			// - create buffer ahead of time to parallelize fetch and commands 
+			// - create buffer ahead of time to parallelize fetch and encoding 
 			self.instance_bytes.clear();
 			let mut cur_st = 0;
 			let mut cur_shader = None;
@@ -329,9 +332,9 @@ impl RenderInput2 {
 			let mut cur_count = 0;
 			for (i, (_, op)) in self.items_buffer.iter_mut().enumerate() {
 				match op {
-					// StageOp::Draw(shader, _, _, DrawInstance::Main(o)) => {
 					StageOp::Draw(_, DrawOp::Draw(shader, _, _, DrawInstance::Main(o))) => {
 						if Some(*shader) != cur_shader {
+							cur_shader = Some(*shader);
 							let new_shader = shaders.get(*shader)
 								.expect("Failed to locate shader!");
 							let new_attributes = &new_shader.specification.base.polygonal().instance_attributes;
@@ -475,7 +478,7 @@ fn execute_sequence(
 	});
 
 	let mut cur_stage = None;
-	let mut cur_clears = None;
+	let mut cur_clears;
 	let mut state: Option<PassState> = None;
 
 	let mut i = 0;
@@ -777,37 +780,6 @@ fn execute_sequence(
 }
 
 
-
-
-
-/// Finds partitions of different keys and returns their slices. 
-struct PartitionIterator<'a, T, K> {
-	f: Box<dyn Fn(&T) -> K>,
-	slice: &'a [T],
-	idx: usize,
-}
-impl<'a, T, K> PartitionIterator<'a, T, K> {
-	pub fn new<F: Fn(&T) -> K + 'static>(slice: &'a [T], f: F) -> Self {
-		Self { f: Box::new(f), slice, idx: 0, }
-	}
-}
-impl<'a, T, K: Eq> Iterator for PartitionIterator<'a, T, K> {
-	type Item = (K, &'a [T]);
-	fn next(&mut self) -> Option<Self::Item> {
-		if self.idx == self.slice.len() {
-			None
-		} else {
-			let st = self.idx;
-			let k = (self.f)(&self.slice[st]);
-			let en = self.slice[st..].iter().position(|v| (self.f)(v) != k)?;
-			self.idx = en;
-
-			Some((k, &self.slice[st..en]))
-		}
-	}
-}
-
-
 pub struct StageBuilder<'a> {
 	stage: StageKey,
 	input: &'a mut RenderInput2,
@@ -825,6 +797,29 @@ impl<'a> StageBuilder<'a> {
 		self
 	}
 
+	pub fn clear_texture(self, texture: RRID, value: [f32; 4]) -> Self {
+		self.input.items.push((self.stage, StageItem::Clear(texture, ClearValue::Colour(value))));
+		self
+	}
+
+	pub fn clear_depth(self, texture: RRID, value: f32) -> Self {
+		self.input.items.push((self.stage, StageItem::Clear(texture, ClearValue::Depth(value))));
+		self
+	}
+
+	pub fn target(self, target: AbstractRenderTarget) -> TargetQueue<'a> {
+		let target = self.input.make_or_get_target(target);
+		TargetQueue {
+			stage_builder: self,
+			target,
+		}
+	}
+
+	pub fn compute(self, material: MaterialKey, size: [u32; 3]) -> Self {
+		self.input.items.push((self.stage, StageItem::Compute(material, size)));
+		todo!()
+	}
+
 	pub fn key(self) -> StageKey {
 		self.stage
 	}
@@ -835,17 +830,36 @@ pub struct TargetQueue<'a> {
 	target: TargetKey,
 }
 impl<'a> TargetQueue<'a> {
-	pub fn add_pass(self, material: MaterialKey, entity: Entity) -> Self {
+	pub fn pass(self, material: MaterialKey, entity: Entity) -> Self {
 		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Draw(material, VertexSource::Static, entity))));
 		self
 	}
 
-	pub fn add_model(self, material: MaterialKey, mesh: MeshKey, entity: Entity) -> Self {
+	pub fn mesh(self, material: MaterialKey, mesh: MeshKey, entity: Entity) -> Self {
 		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Draw(material, VertexSource::Mesh(mesh, DrawRange::All), entity))));
 		self
 	}
 
-	// pub fn add_batch(self, material, mesh, buffer, count)
+	pub fn mesh_range(self, material: MaterialKey, mesh: MeshKey, st: u32, en: u32, entity: Entity) -> Self {
+		let en = NonZeroU32::new(en).unwrap();
+		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Draw(material, VertexSource::Mesh(mesh, DrawRange::Some(st, en)), entity))));
+		self
+	}
+
+	pub fn bundle(self, bundle: Arc<wgpu::RenderBundle>) -> Self {
+		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Bundle(bundle))));
+		todo!()
+	}
+
+	pub fn indirect(self, material: MaterialKey, indirect: BufferKey, instance: BufferKey) -> Self {
+		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Indirect(material, None, indirect, instance))));
+		self
+	}
+
+	pub fn indirect_mesh(self, material: MaterialKey, mesh: MeshKey, indirect: BufferKey, instance: BufferKey) -> Self {
+		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Indirect(material, Some(mesh), indirect, instance))));
+		self
+	}
 
 	pub fn finish(self) -> StageBuilder<'a> {
 		self.stage_builder
