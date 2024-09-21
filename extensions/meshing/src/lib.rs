@@ -2,7 +2,7 @@ pub mod model;
 
 use eeks::prelude::*;
 use model::{chunk_bounds_rendering_system, map_modelling_system, map_rendering_system, model_wipe_system, MapMeshingComponent, MapModelResource};
-use player::PlayerSpawnResource;
+use pinecore::player::PlayerSpawnResource;
 
 
 #[macro_use]

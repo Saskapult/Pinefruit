@@ -1,5 +1,5 @@
 [package]
-name = "render"
+name = "pinecore"
 version = "0.1.0"
 edition = "2021"
 
@@ -9,9 +9,15 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 bytemuck = "1.15.0"
 eeks = { path = "../../eeks" }
-glam = { version = "0.27.0", features = ["bytemuck"] }
+glam = { version = "0.27.0", features = ["bytemuck", "serde"] }
 rand = "0.8.5"
-transform = { path = "../transform" }
 wgpu = "0.19.0"
 krender = { path = "../../krender" }
 log = "0.4.21"
+arrayvec = "0.7.6"
+crossbeam-channel = "0.5.13"
+enumflags2 = "0.7.10"
+slotmap = "1.0.7"
+winit = "0.29.15"
+serde = "1.0.210"
+egui = "0.27.2"

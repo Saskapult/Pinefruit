@@ -238,9 +238,9 @@ checksum = "6b4930d2cb77ce62f89ee5d5289b4ac049559b1c45539271f5ed4fdc7db34545"
 
 [[package]]
 name = "arrayvec"
-version = "0.7.4"
+version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 dependencies = [
  "serde",
 ]
@@ -394,7 +394,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae85a0696e7ea3b835a453750bf002770776609115e6d25c6d2ff28a8200f7e7"
 dependencies = [
- "objc-sys 0.3.3",
+ "objc-sys 0.3.5",
 ]
 
 [[package]]
@@ -514,7 +514,7 @@ dependencies = [
  "calloop 0.12.4",
  "rustix",
  "wayland-backend",
- "wayland-client 0.31.2",
+ "wayland-client 0.31.6",
 ]
 
 [[package]]
@@ -573,12 +573,10 @@ dependencies = [
  "krender",
  "log",
  "parking_lot",
- "player",
- "render",
+ "pinecore",
  "ron 0.8.1",
  "serde",
  "slotmap",
- "transform",
 ]
 
 [[package]]
@@ -682,20 +680,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "controls"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "crossbeam-channel",
- "eeks",
- "egui",
- "enumflags2",
- "log",
- "slotmap",
- "winit 0.29.15",
-]
-
-[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -759,9 +743,9 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-channel"
-version = "0.5.12"
+version = "0.5.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab3db02a9c5b5121e1e42fbdb1aeb65f5e02624cc58c43f2884c6ccac0b82f95"
+checksum = "33480d6946193aa8033910124896ca395333cae7e2d1113d1fef6c3272217df2"
 dependencies = [
  "crossbeam-utils",
 ]
@@ -1067,18 +1051,18 @@ dependencies = [
 
 [[package]]
 name = "enumflags2"
-version = "0.7.9"
+version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3278c9d5fb675e0a51dabcf4c0d355f692b064171535ba72361be1528a9d8e8d"
+checksum = "d232db7f5956f3f14313dc2f87985c58bd2c695ce124c8cdd984e08e15ac133d"
 dependencies = [
  "enumflags2_derive",
 ]
 
 [[package]]
 name = "enumflags2_derive"
-version = "0.7.9"
+version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c785274071b1b420972453b306eeca06acf4633829db4223b58a2a8c5953bc4"
+checksum = "de0d48a183585823424a4ce1aa132d174a6a81bd540895822eb4c8373a8e49e8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1785,20 +1769,16 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "chunks",
- "controls",
  "eeks",
  "env_logger 0.11.3",
  "glam",
  "log",
  "parking_lot",
- "player",
- "render",
+ "pinecore",
  "ron 0.8.1",
  "slotmap",
  "splines",
  "terrain",
- "time 0.1.0",
- "transform",
 ]
 
 [[package]]
@@ -1914,7 +1894,6 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "chunks",
- "controls",
  "crossbeam-channel",
  "eeks",
  "env_logger 0.11.3",
@@ -1923,14 +1902,12 @@ dependencies = [
  "light",
  "log",
  "parking_lot",
- "player",
+ "pinecore",
  "rayon",
- "render",
  "slotmap",
  "smallvec",
  "terrain",
  "thiserror",
- "transform",
 ]
 
 [[package]]
@@ -2336,9 +2313,9 @@ checksum = "df3b9834c1e95694a05a828b59f55fa2afec6288359cda67146126b3f90a55d7"
 
 [[package]]
 name = "objc-sys"
-version = "0.3.3"
+version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da284c198fb9b7b0603f8635185e85fbd5b64ee154b1ed406d489077de2d6d60"
+checksum = "cdb91bdd390c7ce1a8607f35f3ca7151b65afc0ff5ff3b34fa350f7d7c7e4310"
 
 [[package]]
 name = "objc2"
@@ -2357,7 +2334,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "559c5a40fdd30eb5e344fbceacf7595a81e242529fb4e21cf5f43fb4f11ff98d"
 dependencies = [
- "objc-sys 0.3.3",
+ "objc-sys 0.3.5",
  "objc2-encode 3.0.0",
 ]
 
@@ -2479,6 +2456,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bda66fc9667c18cb2758a2ac84d1167245054bcf85d5d1aaa6923f45801bdd02"
 
 [[package]]
+name = "pinecore"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "bytemuck",
+ "crossbeam-channel",
+ "eeks",
+ "egui",
+ "enumflags2",
+ "glam",
+ "krender",
+ "log",
+ "rand 0.8.5",
+ "serde",
+ "slotmap",
+ "wgpu",
+ "winit 0.29.15",
+]
+
+[[package]]
 name = "pinefruit"
 version = "0.1.0"
 dependencies = [
@@ -2488,7 +2485,6 @@ dependencies = [
  "bincode",
  "bytemuck",
  "chunks",
- "controls",
  "crossbeam-channel",
  "dashmap",
  "eeks",
@@ -2507,7 +2503,7 @@ dependencies = [
  "meshing",
  "noise",
  "parking_lot",
- "player",
+ "pinecore",
  "poisson",
  "pollster",
  "profiling",
@@ -2516,8 +2512,6 @@ dependencies = [
  "rand 0.8.5",
  "rand_xoshiro",
  "rayon",
- "render",
- "render2",
  "ron 0.8.1",
  "rustc-hash 1.1.0",
  "serde",
@@ -2527,9 +2521,7 @@ dependencies = [
  "splines",
  "terrain",
  "thiserror",
- "time 0.1.0",
  "tobj",
- "transform",
  "variantly",
  "wgpu",
  "wgpu-profiler",
@@ -2541,17 +2533,6 @@ name = "pkg-config"
 version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d231b230927b5e4ad203db57bbcbee2802f6bce620b1e4a9024a07d94e2907ec"
-
-[[package]]
-name = "player"
-version = "0.1.0"
-dependencies = [
- "controls",
- "eeks",
- "env_logger 0.11.3",
- "log",
- "transform",
-]
 
 [[package]]
 name = "png"
@@ -2716,7 +2697,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "puffin",
- "time 0.3.36",
+ "time",
  "vec1",
  "web-time",
 ]
@@ -2751,9 +2732,9 @@ checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quick-xml"
-version = "0.31.0"
+version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1004a344b30a54e2ee58d66a71b32d2db2feb0a31f9a2d302bf0536f15de2a33"
+checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
 dependencies = [
  "memchr",
 ]
@@ -3066,36 +3047,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adad44e29e4c806119491a7f06f03de4d1af22c3a680dd47f1e6e179439d1f56"
 
 [[package]]
-name = "render"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "eeks",
- "glam",
- "krender",
- "log",
- "rand 0.8.5",
- "transform",
- "wgpu",
-]
-
-[[package]]
-name = "render2"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "eeks",
- "env_logger 0.11.3",
- "glam",
- "krender",
- "log",
- "rand 0.8.5",
- "render",
- "transform",
- "wgpu",
-]
-
-[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3207,18 +3158,18 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.201"
+version = "1.0.210"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "780f1cebed1629e4753a1a38a3c72d30b97ec044f0aef68cb26650a3c5cf363c"
+checksum = "c8e3592472072e6e22e0a54d5904d9febf8508f65fb8552499a1abc7d1078c3a"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.201"
+version = "1.0.210"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5e405930b9796f1c00bee880d03fc7e0bb4b9a11afc776885ffe84320da2865"
+checksum = "243902eda00fad750862fc144cea25caca5e20d615af0a81bee94ca738f1df1f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3327,12 +3278,12 @@ dependencies = [
  "rustix",
  "thiserror",
  "wayland-backend",
- "wayland-client 0.31.2",
+ "wayland-client 0.31.6",
  "wayland-csd-frame",
  "wayland-cursor 0.31.1",
  "wayland-protocols 0.31.2",
  "wayland-protocols-wlr",
- "wayland-scanner 0.31.1",
+ "wayland-scanner 0.31.5",
  "xkeysym",
 ]
 
@@ -3466,7 +3417,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chunks",
- "controls",
  "crossbeam-channel",
  "eeks",
  "env_logger 0.11.3",
@@ -3474,7 +3424,7 @@ dependencies = [
  "log",
  "mlua",
  "parking_lot",
- "player",
+ "pinecore",
  "rand 0.8.5",
  "rayon",
  "ron 0.8.1",
@@ -3483,7 +3433,6 @@ dependencies = [
  "slotmap",
  "splines",
  "thiserror",
- "transform",
  "variantly",
 ]
 
@@ -3516,18 +3465,6 @@ dependencies = [
  "flate2",
  "jpeg-decoder",
  "weezl",
-]
-
-[[package]]
-name = "time"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "eeks",
- "env_logger 0.11.3",
- "krender",
- "log",
- "render",
 ]
 
 [[package]]
@@ -3695,18 +3632,6 @@ name = "tracing-core"
 version = "0.1.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
-
-[[package]]
-name = "transform"
-version = "0.1.0"
-dependencies = [
- "controls",
- "eeks",
- "env_logger 0.11.3",
- "glam",
- "log",
- "serde",
-]
 
 [[package]]
 name = "ttf-parser"
@@ -3931,16 +3856,16 @@ checksum = "af190c94f2773fdb3729c55b007a722abb5384da03bc0986df4c289bf5567e96"
 
 [[package]]
 name = "wayland-backend"
-version = "0.3.3"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d50fa61ce90d76474c87f5fc002828d81b32677340112b4ef08079a9d459a40"
+checksum = "056535ced7a150d45159d3a8dc30f91a2e2d588ca0b23f70e56033622b8016f6"
 dependencies = [
  "cc",
  "downcast-rs",
  "rustix",
  "scoped-tls",
  "smallvec",
- "wayland-sys 0.31.1",
+ "wayland-sys 0.31.5",
 ]
 
 [[package]]
@@ -3961,14 +3886,14 @@ dependencies = [
 
 [[package]]
 name = "wayland-client"
-version = "0.31.2"
+version = "0.31.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82fb96ee935c2cea6668ccb470fb7771f6215d1691746c2d896b447a00ad3f1f"
+checksum = "e3f45d1222915ef1fd2057220c1d9d9624b7654443ea35c3877f7a52bd0a5a2d"
 dependencies = [
  "bitflags 2.5.0",
  "rustix",
  "wayland-backend",
- "wayland-scanner 0.31.1",
+ "wayland-scanner 0.31.5",
 ]
 
 [[package]]
@@ -4012,7 +3937,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71ce5fa868dd13d11a0d04c5e2e65726d0897be8de247c0c5a65886e283231ba"
 dependencies = [
  "rustix",
- "wayland-client 0.31.2",
+ "wayland-client 0.31.6",
  "xcursor",
 ]
 
@@ -4036,8 +3961,8 @@ checksum = "8f81f365b8b4a97f422ac0e8737c438024b5951734506b0e1d775c73030561f4"
 dependencies = [
  "bitflags 2.5.0",
  "wayland-backend",
- "wayland-client 0.31.2",
- "wayland-scanner 0.31.1",
+ "wayland-client 0.31.6",
+ "wayland-scanner 0.31.5",
 ]
 
 [[package]]
@@ -4048,9 +3973,9 @@ checksum = "23803551115ff9ea9bce586860c5c5a971e360825a0309264102a9495a5ff479"
 dependencies = [
  "bitflags 2.5.0",
  "wayland-backend",
- "wayland-client 0.31.2",
+ "wayland-client 0.31.6",
  "wayland-protocols 0.31.2",
- "wayland-scanner 0.31.1",
+ "wayland-scanner 0.31.5",
 ]
 
 [[package]]
@@ -4061,9 +3986,9 @@ checksum = "ad1f61b76b6c2d8742e10f9ba5c3737f6530b4c243132c2a2ccc8aa96fe25cd6"
 dependencies = [
  "bitflags 2.5.0",
  "wayland-backend",
- "wayland-client 0.31.2",
+ "wayland-client 0.31.6",
  "wayland-protocols 0.31.2",
- "wayland-scanner 0.31.1",
+ "wayland-scanner 0.31.5",
 ]
 
 [[package]]
@@ -4079,9 +4004,9 @@ dependencies = [
 
 [[package]]
 name = "wayland-scanner"
-version = "0.31.1"
+version = "0.31.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63b3a62929287001986fb58c789dce9b67604a397c15c611ad9f747300b6c283"
+checksum = "597f2001b2e5fc1121e3d5b9791d3e78f05ba6bfa4641053846248e3a13661c3"
 dependencies = [
  "proc-macro2",
  "quick-xml",
@@ -4101,9 +4026,9 @@ dependencies = [
 
 [[package]]
 name = "wayland-sys"
-version = "0.31.1"
+version = "0.31.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15a0c8eaff5216d07f226cb7a549159267f3467b289d9a2e52fd3ef5aae2b7af"
+checksum = "efa8ac0d8e8ed3e3b5c9fc92c7881406a268e11555abe36493efabe649a29e09"
 dependencies = [
  "dlib",
  "log",
@@ -4605,7 +4530,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "wayland-backend",
- "wayland-client 0.31.2",
+ "wayland-client 0.31.6",
  "wayland-protocols 0.31.2",
  "wayland-protocols-plasma",
  "web-sys",

@@ -4,11 +4,11 @@ use chunks::{chunk_of_voxel, chunks::{ChunkKey, ChunksResource}, generation::KGe
 use eeks::prelude::*;
 use glam::{IVec3, Mat4, UVec3};
 use parking_lot::RwLock;
-use render::{AbstractRenderTarget, Buffer, BufferKey, BufferResource, MaterialResource, QueueResource, RenderInputResource, RRID};
+use pinecore::render::{AbstractRenderTarget, Buffer, BufferKey, BufferResource, MaterialResource, QueueResource, RenderInputResource, RRID};
 use slotmap::SecondaryMap;
 use splines::Spline;
 use terrain::terrain::TerrainResource;
-use time::TimeResource;
+use pinecore::time::TimeResource;
 
 
 

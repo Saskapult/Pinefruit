@@ -9,7 +9,7 @@ use blocks::BlockResource;
 use chunks::{chunk_loading_system, ChunkLoadingComponent, ChunksResource};
 use eeks::prelude::*;
 use glam::{Vec3, IVec3, UVec3};
-use player::PlayerSpawnResource;
+use pinecore::player::PlayerSpawnResource;
 
 #[macro_use]
 extern crate log;

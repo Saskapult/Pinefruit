@@ -3,11 +3,11 @@ pub mod profiling;
 pub mod viewport;
 
 use std::time::Instant;
-use controls::{ControlComponent, InputEvent, LocalInputComponent};
+use pinecore::controls::{ControlComponent, InputEvent, LocalInputComponent};
 use crossbeam_channel::Sender;
 use eeks::prelude::*;
-use player::PlayerSpawnResource;
-use render::{CameraComponent, ContextResource, SSAOComponent};
+use pinecore::player::PlayerSpawnResource;
+use pinecore::render::{CameraComponent, ContextResource, SSAOComponent};
 use crate::window::WindowPropertiesAndSettings;
 use self::viewport::{ViewportManager, ViewportWidget};
 

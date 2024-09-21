@@ -8,20 +8,16 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 eeks = { path = "../../eeks" }
+pinecore = { path = "../pinecore" }
 log = "0.4.21"
 env_logger = "0.11.3"
 chunks = { path = "../chunks" }
 terrain = { path = "../terrain" }
-transform = { path = "../transform" }
-controls = { path = "../controls" }
-player = { path = "../player" }
 slotmap = "1.0.7"
 glam = "0.27.0"
 parking_lot = "0.12.2"
 splines = { version = "4.0.3", features = ["serde"] }
 ron = "0.8.0"
-render = { path = "../render" }
-time = { path = "../time" }
 bytemuck = { version = "1.4", features = ["derive"] }
 
 # [workspace]

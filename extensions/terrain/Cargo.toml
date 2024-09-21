@@ -8,9 +8,10 @@ crate-type = ["rlib", "cdylib"]
 
 [dependencies]
 eeks = { path = "../../eeks" }
+pinecore = { path = "../pinecore" }
+chunks ={ path = "../chunks" }
 log = "0.4.21"
 env_logger = "0.11.3"
-chunks = { path = "../chunks" }
 simdnoise = "3.1.6"
 splines = { version = "4.3.1", features = ["serde"] }
 glam = { version = "0.27.0", features = ["rand"] }
@@ -21,10 +22,7 @@ variantly = "0.4.0"
 crossbeam-channel = "0.5.12"
 slotmap = "1.0.7"
 parking_lot = "0.12.2"
-transform = { path = "../transform" }
-player = { path = "../player" }
 rayon = "1.10.0"
-controls = { path = "../controls" }
 rand = "0.8.5"
 mlua = { version = "0.9.9", features = ["luau-jit", "macros", "send"] }
 serde = "1.0.132"

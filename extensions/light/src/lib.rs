@@ -1,10 +1,10 @@
 pub mod light;
 pub mod sun;
 
-use controls::ControlMap;
+use pinecore::controls::ControlMap;
 use eeks::prelude::*;
 use light::{torchlight_chunk_init_system, torchlight_debug_place_system, torchlight_update_system, TorchLightChunksResource, TorchLightModifierComponent};
-use player::PlayerSpawnResource;
+use pinecore::player::PlayerSpawnResource;
 use sun::{sun_buffer_system, sun_render_system, SunResource};
 
 #[macro_use]

@@ -6,12 +6,12 @@ pub mod terrain;
 pub mod liquids;
 pub mod script;
 
-use controls::ControlMap;
+use pinecore::controls::ControlMap;
 use eeks::prelude::*;
 use modification::{terrain_modification_application, terrain_placement_queue, VoxelModifierComponent};
-use player::PlayerSpawnResource;
+use pinecore::player::PlayerSpawnResource;
 use terrain::{terrain_loading_system, TerrainLoadingResource, TerrainResource};
-use transform::TransformComponent;
+use pinecore::transform::TransformComponent;
 
 #[macro_use]
 extern crate log;

@@ -1,10 +1,6 @@
 use eeks::prelude::*;
 use glam::*;
-use controls::*;
-
-// #[macro_use]
-// extern crate log;
-
+use crate::controls::*;
 
 
 #[repr(C)]
@@ -209,25 +205,4 @@ pub fn movement_system(
 
 		transform.translation += transform.rotation * kpdv * movement.max_speed;
 	}
-}
-
-
-#[info]
-pub fn dependencies() -> Vec<String> {
-	env_logger::init();
-	vec![]
-}
-
-
-#[systems]
-pub fn systems(loader: &mut ExtensionSystemsLoader) {
-	loader.system("client_tick", "movement_system", movement_system)
-		.run_after("local_control_system");
-}
-
-
-#[load]
-pub fn load(p: &mut eeks::ExtensionStorageLoader) {
-	p.component::<TransformComponent>();
-	p.component::<MovementComponent>();
 }

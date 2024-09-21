@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use eeks::{prelude::*, load_extensions};
 use krender::prelude::{BindGroupManager, BufferManager, MaterialManager, MeshManager, ShaderManager, TextureManager};
-use render::{BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, QueueResource, TextureResource};
+use pinecore::render::{BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, QueueResource, TextureResource};
 
 
 // Called GameInstance, but used as Client

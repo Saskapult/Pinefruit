@@ -1,18 +1,18 @@
 use std::{collections::HashMap, sync::Arc, time::{Duration, Instant}};
 use arrayvec::ArrayVec;
 use chunks::{blocks::{BlockEntry, BlockKey, BlockManager, BlockRenderType, BlockResource}, chunk::Chunk, chunk_of_point, chunks::{ChunkKey, ChunksResource}, generation::KGeneration, VoxelCube, CHUNK_SIZE};
-use controls::ControlComponent;
+use pinecore::controls::ControlComponent;
 use crossbeam_channel::{Receiver, Sender};
 use eeks::prelude::*;
 use glam::{IVec3, UVec3, Vec2, Vec3};
 use krender::{prelude::{AbstractRenderTarget, Mesh, RRID}, MaterialKey, MeshKey};
 use light::light::{LightRGBA, TorchLightChunksResource, TorchLightModifierComponent};
 use parking_lot::RwLock;
-use render::{MaterialManager, MaterialResource, MeshManager, MeshResource, RenderInputResource};
+use pinecore::render::{MaterialManager, MaterialResource, MeshManager, MeshResource, RenderInputResource};
 use slotmap::SecondaryMap;
 use smallvec::{smallvec, SmallVec};
 use terrain::terrain::{TerrainChunk, TerrainEntry, TerrainResource};
-use transform::TransformComponent;
+use pinecore::transform::TransformComponent;
 
 
 

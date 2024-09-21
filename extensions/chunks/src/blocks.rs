@@ -9,7 +9,7 @@ use std::sync::Arc;
 use krender::prelude::*;
 use krender::MaterialKey;
 use parking_lot::RwLock;
-use render::MaterialResource;
+use pinecore::render::MaterialResource;
 use serde::{Serialize, Deserialize};
 use slotmap::SlotMap;
 use slotmap::new_key_type;

@@ -1,9 +1,9 @@
 use std::{time::{Instant, Duration}, sync::Arc};
 use chunks::{blocks::{BlockKey, BlockResource}, chunk_of_voxel, chunks::ChunksResource, fvt::FVTIterator, CHUNK_SIZE};
-use controls::{ControlComponent, ControlKey, ControlMap, KeyCode, KeyCombo, KeyKey, KeyModifiers};
+use pinecore::controls::{ControlComponent, ControlKey, ControlMap, KeyCode, KeyCombo, KeyKey, KeyModifiers};
 use eeks::prelude::*;
 use glam::{IVec3, Vec3};
-use transform::TransformComponent;
+use pinecore::transform::TransformComponent;
 use crate::terrain::{TerrainEntry, TerrainResource};
 
 

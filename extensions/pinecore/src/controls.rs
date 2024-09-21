@@ -4,10 +4,6 @@ use arrayvec::ArrayVec;
 use crossbeam_channel::{Receiver, Sender};
 use enumflags2::{bitflags, BitFlags};
 use slotmap::{new_key_type, SlotMap};
-
-#[macro_use]
-extern crate log;
-
 pub use winit::keyboard::PhysicalKey;
 pub use winit::keyboard::KeyCode;
 pub use winit::event::MouseButton;
@@ -408,25 +404,4 @@ pub fn local_control_system(
 		control.next_tick(Instant::now());
 		events.iter().for_each(|&(event, when)| control.input(event, when, &map));
 	}
-}
-
-
-#[info]
-pub fn dependencies() -> Vec<String> {
-	vec![]
-}
-
-
-#[systems]
-pub fn systems(loader: &mut ExtensionSystemsLoader) {	
-	loader.system("client_tick", "local_control_system", local_control_system);
-}
-
-
-#[load]
-pub fn load(p: &mut ExtensionStorageLoader) {
-	p.component::<ControlComponent>();
-	p.component::<LocalInputComponent>();
-
-	p.resource::<ControlMap>(ControlMap::new());
 }

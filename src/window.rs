@@ -1,4 +1,4 @@
-use controls::{ControlMap, InputEvent, KeyKey};
+use pinecore::controls::{ControlMap, InputEvent, KeyKey};
 use egui::{Context, ViewportId};
 use egui_wgpu::{preferred_framebuffer_format, Renderer, ScreenDescriptor};
 use eeks::prelude::*;
@@ -427,7 +427,7 @@ impl GameWindow {
 			Event::WindowEvent { event: window_event, ..} => {
 				// Console activation and deactivation 
 				if let WindowEvent::KeyboardInput { event, .. } = window_event {
-					if !event.repeat && event.physical_key == controls::PhysicalKey::Code(controls::KeyCode::Backquote) && event.state.is_pressed() {
+					if !event.repeat && event.physical_key == winit::keyboard::PhysicalKey::Code(winit::keyboard::KeyCode::Backquote) && event.state.is_pressed() {
 						self.console_show = !self.console_show;
 						self.settings.cursor_captured = false;
 						self.window_surface.window.set_cursor_visible(true);

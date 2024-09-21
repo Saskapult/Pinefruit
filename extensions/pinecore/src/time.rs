@@ -1,11 +1,7 @@
 use eeks::prelude::*;
-use render::{BufferResource, QueueResource};
+use crate::render::{BufferResource, QueueResource};
 use std::time::Instant;
 use krender::prelude::Buffer;
-
-#[macro_use]
-extern crate log;
-
 
 
 #[derive(Debug, Clone, Copy, Resource)]
@@ -53,25 +49,4 @@ pub fn time_buffer_system(
 
 	let b = buffers.get_mut(k).unwrap();
 	b.write(&queue, 0, bytemuck::bytes_of(&tb));
-}
-
-
-#[info]
-pub fn dependencies() -> Vec<String> {
-	env_logger::init();
-	vec![]
-}
-
-
-#[systems]
-pub fn systems(loader: &mut ExtensionSystemsLoader) {	
-	loader.system("client_tick", "time_buffer_system", time_buffer_system)
-		.run_after("time_update_system");
-	loader.system("client_tick", "time_update_system", time_update_system);
-}
-
-
-#[load]
-pub fn load(storages: &mut eeks::ExtensionStorageLoader) {
-	storages.resource(TimeResource::new());
 }
