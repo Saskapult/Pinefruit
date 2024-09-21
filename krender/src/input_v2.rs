@@ -225,6 +225,7 @@ impl RenderInput2 {
 			profiling::scope!("find render stage order");
 			// Find stage order if any changed
 			if self.stages.iter().any(|(_, _, o)| *o == u8::MAX) {
+				trace!("Rebuild stages order");
 				let mut stage_i = 0;
 				self.stages.iter_mut().for_each(|(_, _, o)| *o = u8::MAX);
 				while let Some(i) = self.stages.iter().position(|(_, d, o)| {
