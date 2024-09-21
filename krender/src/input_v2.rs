@@ -196,7 +196,7 @@ impl RenderInput2 {
 		world: &World,
 	) -> Vec<wgpu::CommandBuffer> {
 		{
-			profiling::scope!("reource preparation");
+			profiling::scope!("resource preparation");
 
 			materials.read_shaders_and_fetch_keys(shaders);
 			
@@ -433,7 +433,6 @@ impl RenderInput2 {
 				context,
 			)]
 		}
-
 	}
 }
 
