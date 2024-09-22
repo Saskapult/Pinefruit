@@ -393,3 +393,25 @@ impl<'s, S: ComponentStorage> Iterator for ComponentEntityIterator<'s, S> {
 		None
 	}
 }
+
+
+/// A borrow of the entire world! 
+/// 
+/// We cannot borrow this mutably because of previous architectural decisions. 
+/// You can still, however, borrow anything from here. 
+/// This means that you can run workloads and hopefully that will be enough. 
+pub struct WorldRef<'s> {
+	world: &'s World,
+}
+impl<'s> std::ops::Deref for WorldRef<'s> {
+	type Target = World;
+	fn deref(&self) -> &Self::Target {
+		&self.world
+	}
+}
+impl<'s> Queriable<'s> for WorldRef<'s> {
+	type Item = Self;
+	fn query(world: &'s World) -> Self {
+		WorldRef { world }
+	}
+}

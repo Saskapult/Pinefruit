@@ -10,7 +10,7 @@ pub mod prelude {
 	pub use crate::entity::Entity;
 	pub use crate::{World, Component, Resource, Storage, StorageRenderData, StorageSerde, StorageLuaExpose, StorageCommandExpose, StorageRenderDataFn, SerdeFns};
 	pub use component_derive::*;
-	pub use crate::query::{Queriable, ComponentStorage, Comp, CompMut, Res, ResMut, ResOptMut, EntitiesMut};
+	pub use crate::query::{Queriable, ComponentStorage, Comp, CompMut, Res, ResMut, ResOptMut, EntitiesMut, WorldRef};
 	pub use bincode;
 	pub use anyhow; 
 	pub use mlua;
