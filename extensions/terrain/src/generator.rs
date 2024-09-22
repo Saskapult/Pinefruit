@@ -1,5 +1,5 @@
 use std::path::Path;
-use chunks::{array_volume::ArrayVolume, blocks::BlockKey, cube_iterator_xyz_uvec, CHUNK_SIZE};
+use chunks::{blocks::BlockKey, cube_iterator_xyz_uvec, CHUNK_SIZE};
 use glam::{IVec2, IVec3, UVec2, UVec3};
 use simdnoise::FbmSettings;
 use splines::Spline;
