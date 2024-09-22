@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
-use krender::{prelude::RenderInput, prepare_for_render, RenderContextKey};
-use pinecore::render::{ActiveContextResource, BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, OutputResolutionComponent, QueueResource, RenderInputResource, TextureResource};
+use krender::{prelude::RenderInput2, RenderContextKey};
+use pinecore::render::{BufferResource, ContextResource, DeviceResource, MaterialResource, MeshResource, OutputResolutionComponent, QueueResource, RenderFrame, TextureResource};
 use slotmap::SecondaryMap;
 use wgpu_profiler::{GpuProfiler, GpuProfilerSettings, GpuTimerQueryResult};
 use eeks::prelude::*;
@@ -88,7 +88,7 @@ impl ViewportEntry {
 		&'a mut self, 
 		graphics: &mut GraphicsHandle,
 		instance: &mut GameInstance, // Replace with (render)world? 
-	) -> (wgpu::CommandBuffer, &'a mut wgpu_profiler::GpuProfiler) {
+	) -> (Vec<wgpu::CommandBuffer>, &'a mut wgpu_profiler::GpuProfiler) {
 		profiling::scope!("Viewport Update");
 
 		// Record update
@@ -110,14 +110,16 @@ impl ViewportEntry {
 		});
 
 		// Render game
-		instance.world.insert_resource(ActiveContextResource { key: self.context });
-		instance.world.insert_resource(RenderInputResource(RenderInput::new()));
+		instance.world.insert_resource(RenderFrame {
+			input: RenderInput2::new(),
+			context: self.context,
+		});
 
 		instance.extensions.run(&mut instance.world, "render").unwrap();
 
-		let input = instance.world.remove_resource_typed::<RenderInputResource>().unwrap().0;
+		let mut input = instance.world.remove_resource_typed::<RenderFrame>().unwrap().input;
 		
-		let b = {
+		let command_buffers = {
 			let device = instance.world.query::<Res<DeviceResource>>();
 			let queue = instance.world.query::<Res<QueueResource>>();
 			let mut materials = instance.world.query::<ResMut<MaterialResource>>();
@@ -125,59 +127,30 @@ impl ViewportEntry {
 			let mut textures = instance.world.query::<ResMut<TextureResource>>();
 			let mut buffers = instance.world.query::<ResMut<BufferResource>>();
 			let mut contexts = instance.world.query::<ResMut<ContextResource>>();
-
-			prepare_for_render(
+			
+			let context = contexts.get_mut(self.context).unwrap();
+			let mut buffers = input.run(
 				&device, 
 				&queue, 
-				&mut instance.shaders, 
-				&mut materials, 
-				&mut meshes, 
 				&mut textures, 
 				&mut buffers, 
+				&mut materials, 
+				&mut instance.shaders, 
 				&mut instance.bind_groups, 
-				&mut contexts,
+				&mut meshes, 
+				context,
+				&instance.world,
 			);
-			
-			let context = contexts.get(self.context).unwrap();
-			let bundle = {
-				profiling::scope!("Render Bundle");
-				input.bundle(
-					&device, 
-					&textures, 
-					&mut meshes, 
-					&materials, 
-					&instance.shaders, 
-					&instance.world, 
-					&context, 
-					true,
-				)
-			};
 
-			meshes.bind_unbound(&device);
-			
-			let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-				label: None,
+			buffers.push({
+				let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+					label: Some("profiler resolve encoder"),
+				});
+				self.profiler.resolve_queries(&mut encoder);
+				encoder.finish()
 			});
 
-			buffers.do_writes(&queue, &mut encoder);
-			textures.do_writes(&queue, &mut encoder);
-
-			{
-				profiling::scope!("Render Execute");
-				bundle.execute(
-					&device, 
-					&mut instance.shaders, 
-					&mut instance.bind_groups, 
-					&meshes, 
-					&textures, 
-					&mut encoder, 
-					&mut self.profiler,
-				);
-			}
-
-			self.profiler.resolve_queries(&mut encoder);
-
-			encoder.finish()
+			buffers
 		};
 
 		// (Re)Register texture
@@ -204,7 +177,7 @@ impl ViewportEntry {
 		}
 
 		// `end_frame` must be called only after work has been submitted
-		(b, &mut self.profiler)
+		(command_buffers, &mut self.profiler)
 	}
 }
 
@@ -226,7 +199,7 @@ impl ViewportManager {
 		&mut self, 
 		graphics: &mut GraphicsHandle, 
 		instance: &mut GameInstance,
-	) -> Vec<(wgpu::CommandBuffer, &mut wgpu_profiler::GpuProfiler)> {
+	) -> Vec<(Vec<wgpu::CommandBuffer>, &mut wgpu_profiler::GpuProfiler)> {
 		self.contexts.iter_mut()
 			.filter(|(_, v)| v.should_update())
 			.map(|(_, v)| v.update(graphics, instance))

@@ -31,6 +31,7 @@ pub mod input_v2;
 
 pub mod prelude {
 	pub use crate::input::RenderInput;
+	pub use crate::input_v2::RenderInput2;
 	pub use tobj;
 	pub use crate::texture::{Texture, TextureManager, TextureFormat};
 	pub use crate::mesh::{Mesh, MeshManager};

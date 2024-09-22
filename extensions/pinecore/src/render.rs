@@ -110,23 +110,23 @@ impl DerefMut for ContextResource {
 }
 
 
-/// Becuase we cannot pass arguments directly into extension systems, we store the active context in a resource. 
+/// The render work that will be exectuted for a frame. 
+/// We cannot pass it to the systems as an argument, so it is a resource. 
+/// Also stores the key of the context of this frame. 
 #[derive(Debug, Resource)]
-pub struct ActiveContextResource { pub key: RenderContextKey }
-
-
-/// This exists fro the same resaons descibed in [ActiveContextResource]. 
-#[derive(Debug, Resource)]
-pub struct RenderInputResource (pub RenderInput);
-impl Deref for RenderInputResource {
-	type Target = RenderInput;
+pub struct RenderFrame {
+	pub input: RenderInput2,
+	pub context: RenderContextKey,
+}
+impl Deref for RenderFrame {
+	type Target = RenderInput2;
 	fn deref(&self) -> &Self::Target {
-		&self.0
+		&self.input
 	}
 }
-impl DerefMut for RenderInputResource {
+impl DerefMut for RenderFrame {
 	fn deref_mut(&mut self) -> &mut Self::Target {
-		&mut self.0
+		&mut self.input
 	}
 }
 
@@ -174,14 +174,14 @@ impl CameraComponent {
 
 /// Writes camera buffer for the active context. 
 pub fn context_camera_system(
-	context: Res<ActiveContextResource>,
+	frame: Res<RenderFrame>,
 	mut contexts: ResMut<ContextResource>,
 	transforms: Comp<TransformComponent>,
 	mut cameras: CompMut<CameraComponent>,
 	mut buffers: ResMut<BufferResource>,
 	textures: Res<TextureResource>,
 ) {
-	let context = contexts.get_mut(context.key).unwrap();
+	let context = contexts.get_mut(frame.context).unwrap();
 
 	#[repr(C)]
 	#[derive(Debug, Pod, Zeroable, Clone, Copy)]
@@ -278,12 +278,12 @@ pub struct OutputResolutionComponent {
 
 
 pub fn output_texture_system(
-	context: Res<ActiveContextResource>,
+	frame: Res<RenderFrame>,
 	mut contexts: ResMut<ContextResource>,
 	mut textures: ResMut<TextureResource>,
 	output_resolutions: Comp<OutputResolutionComponent>,
 ) {
-	let context = contexts.get_mut(context.key).unwrap();
+	let context = contexts.get_mut(frame.context).unwrap();
 	
 	if let Some(entity) = context.entity {
 		if let Some(resolution) = output_resolutions.get(entity) {
@@ -399,15 +399,14 @@ impl Default for SSAOOutputTextureSettings {
 
 // Todo: write new data to settings instread of making new buffer
 pub fn ssao_system(
-	context: Res<ActiveContextResource>,
 	mut contexts: ResMut<ContextResource>,
-	mut input: ResMut<RenderInputResource>,
+	mut frame: ResMut<RenderFrame>,
 	mut buffers: ResMut<BufferResource>,
 	mut textures: ResMut<TextureResource>,
 	mut ssaos: CompMut<SSAOComponent>,
 	mut materials: ResMut<MaterialResource>,
 ) {
-	let context = contexts.get_mut(context.key).unwrap();
+	let context = contexts.get_mut(frame.context).unwrap();
 
 	if let Some(ssao) = context.entity.and_then(|entity| ssaos.get_mut(entity)) {
 		let kernel_dirty = ssao.kernel.is_none();
@@ -533,19 +532,18 @@ pub fn ssao_system(
 			info!("Insert ssao generate material");
 			materials.read("resources/materials/ssao_generate.ron")
 		});
-		input.stage("ssao generate")
+		frame.stage("ssao generate")
 			.target(AbstractRenderTarget::new().with_colour(RRID::context("ssao output"), None))
-			.push((ssao_generate_mtl, None, Entity::default()));
+			.pass(ssao_generate_mtl, Entity::default());
 
 		let ssao_apply_mtl = *ssao.apply_mtl.get_or_insert_with(|| {
 			info!("Insert ssao apply material");
 			materials.read("resources/materials/ssao_apply.ron")
 		});
-		input.stage("ssao apply")
+		frame.stage("ssao apply")
+			.run_after("ssao generate")
 			.target(AbstractRenderTarget::new().with_colour(RRID::context("output_texture"), None))
-			.push((ssao_apply_mtl, None, Entity::default()));
-
-		input.add_dependency("ssao apply", "ssao generate");
+			.pass(ssao_apply_mtl, Entity::default());
 	}
 }
 
@@ -601,13 +599,13 @@ pub struct AlbedoOutputComponent {
 
 // The albedo output should have a resolution equal to the output texture. 
 pub fn context_albedo_system(
-	context: Res<ActiveContextResource>,
+	frame: Res<RenderFrame>,
 	mut contexts: ResMut<ContextResource>,
 	mut textures: ResMut<TextureResource>,
 	mut albedos: CompMut<AlbedoOutputComponent>,
 	ouput_textures: Comp<OutputResolutionComponent>,
 ) {
-	let context = contexts.get_mut(context.key).unwrap();
+	let context = contexts.get_mut(frame.context).unwrap();
 
 	if let Some(entity) = context.entity {
 		if let Some(output_texture) = ouput_textures.get(entity) {
@@ -662,20 +660,19 @@ pub struct ModelComponent {
 
 pub fn skybox_render_system(
 	mut materials: ResMut<MaterialResource>,
-	mut input: ResMut<RenderInputResource>,
+	mut frame: ResMut<RenderFrame>,
 ) {
-	input.stage("skybox")
-		.clear_depth(RRID::context("depth"))
-		.clear_colour(RRID::context("albedo"));
+	let stage = frame.stage("skybox")
+		.run_before("models")
+		.clear_depth(RRID::context("depth"), 1.0)
+		.clear_texture(RRID::context("albedo"), [0.0; 4]);
 
 	let skybox_mtl = materials.read("resources/materials/skybox.ron");
-	input.stage("skybox")
+	stage
 		.target(AbstractRenderTarget::new()
 			.with_colour(RRID::context("albedo"), None)
 			.with_depth(RRID::context("depth")))
-		.push((skybox_mtl, None, Entity::default()));	
-
-	input.add_dependency("models", "skybox");
+		.pass(skybox_mtl, Entity::default());
 }
 
 
@@ -683,20 +680,18 @@ pub fn model_render_system(
 	// context: Res<ActiveContextResource>,
 	// mut contexts: ResMut<ContextResource>, 
 	models: Comp<ModelComponent>,
-	mut input: ResMut<RenderInputResource>,
+	mut input: ResMut<RenderFrame>,
 ) {
 	// let context = contexts.get_mut(context.key).unwrap();
 
-	let items = input.stage("models")
+	let mut target = input
+		.stage("models")
+		.run_before("ssao generate")
 		.target(AbstractRenderTarget::new()
 			.with_colour(RRID::context("albedo"), None)
 			.with_depth(RRID::context("depth")));
 	for (entity, (model,)) in (&models,).iter().with_entities() {
-		items.push((model.material, Some(model.mesh), entity));
-	}
-
-	if models.len() != 0 {
-		input.add_dependency("ssao generate", "models");
+		target.mesh(model.material, model.mesh, entity);
 	}
 }
 

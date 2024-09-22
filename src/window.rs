@@ -206,7 +206,7 @@ impl GameWindow {
 		// If we can lock the instance, then there is no reload happening in another thread
 		// This never occurs due to gamewidget creation requiring a lock immediately after spawning the setup thread
 		// I've left it this way so that you can find a way to make it work later
-		let (mut command_buffers, mut profilers): (Vec<_>, Vec<_>) = if let Some(mut instance) = self.client.try_lock() {
+		let (command_buffers, mut profilers): (Vec<_>, Vec<_>) = if let Some(mut instance) = self.client.try_lock() {
 			self.profiling_widget.display_bug_workaround(&self.context);
 
 			// profiling::scope!("Window Update");
@@ -406,10 +406,10 @@ impl GameWindow {
 
 		self.profiler.resolve_queries(&mut encoder);
 
-		// Add egui command buffer to game command buffers
-		command_buffers.push(encoder.finish());
-
-		queue.submit(command_buffers);
+		// Flatten command buffers, add egui buffer, and submit to gpu 
+		let mut flattened_command_buffers = command_buffers.into_iter().flatten().collect::<Vec<_>>();
+		flattened_command_buffers.push(encoder.finish());
+		queue.submit(flattened_command_buffers);
 
 		self.profiler.end_frame().unwrap();
 		profilers.iter_mut().for_each(|p| p.end_frame().unwrap());

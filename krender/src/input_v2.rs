@@ -1,6 +1,7 @@
 use std::{num::NonZeroU32, sync::Arc};
 use arrayvec::ArrayVec;
 use eks::{entity::Entity, World};
+use hashbrown::HashSet;
 use crate::buffer::BufferManager;
 use crate::mesh::MeshManager;
 use crate::prelude::{AbstractRenderTarget, BindGroupManager, InstanceAttributeSource, MaterialManager, RenderContext};
@@ -17,13 +18,13 @@ type TargetKey = u8;
 
 type RenderInputItem = (StageKey, StageItem);
 
-#[derive(variantly::Variantly)]
+#[derive(variantly::Variantly, Debug)]
 enum StageItem {
 	Clear(RRID, ClearValue),
 	Compute(MaterialKey, [u32; 3]),
 	Draw(TargetKey, DrawItem),
 }
-#[derive(variantly::Variantly)]
+#[derive(variantly::Variantly, Debug)]
 
 enum DrawItem {
 	Draw(MaterialKey, VertexSource, Entity), 
@@ -136,6 +137,7 @@ enum DrawInstance {
 }
 
 
+#[derive(Debug)]
 pub struct RenderInput2 {
 	// Stage name, depends_on, order in queue (max for not in queue) 
 	stages: Vec<(String, Vec<StageKey>, u8)>,
@@ -155,6 +157,24 @@ pub struct RenderInput2 {
 	instance_bytes: Vec<u8>,
 }
 impl RenderInput2 {
+	pub fn new() -> Self {
+		Self {
+			stages: Vec::new(),
+			targets: Vec::new(),
+			items: Vec::new(),
+			items_buffer: Vec::new(),
+			instance_bytes: Vec::new(),
+		}
+	}
+
+	pub fn clear(&mut self) {
+		self.stages.clear(); // Not strictly needed
+		self.targets.clear();
+		self.items.clear();
+		self.items_buffer.clear();
+		self.instance_bytes.clear();
+	}
+
 	pub fn stage(&mut self, id: impl AsRef<str>) -> StageBuilder {
 		// let l = self.stages.len();
 		// self.stages.entry_ref(id.as_ref()).or_insert_with(|| (l, vec![])).0
@@ -172,7 +192,7 @@ impl RenderInput2 {
 		if let Some(k) = self.targets.iter().position(|e| e == &art) {
 			k as TargetKey
 		} else {
-			let k = self.stages.len();
+			let k = self.targets.len();
 			self.targets.push(art);
 			k as TargetKey
 		} 
@@ -232,10 +252,13 @@ impl RenderInput2 {
 					*o == u8::MAX && d.iter().copied().all(|d| self.stages[d as usize].2 != u8::MAX)
 				}) {
 					let (stage, _, o) = &mut self.stages[i];
-					trace!("{}: stage {:?}", stage_i, stage);
+					// trace!("{}: stage {:?}", stage_i, stage);
 					*o = stage_i;
 					stage_i += 1;
 				}
+				// for i in 0..self.stages.len() {
+				// 	trace!("{}: stage {:?}", i, self.stages[i].0);
+				// }
 			}
 			// Helpful error 
 			if self.stages.iter().any(|(_, _, s)| *s == u8::MAX) {
@@ -335,7 +358,6 @@ impl RenderInput2 {
 				match op {
 					StageOp::Draw(_, DrawOp::Draw(shader, _, _, DrawInstance::Main(o))) => {
 						if Some(*shader) != cur_shader {
-							cur_shader = Some(*shader);
 							let new_shader = shaders.get(*shader)
 								.expect("Failed to locate shader!");
 							let new_attributes = &new_shader.specification.base.polygonal().instance_attributes;
@@ -356,6 +378,7 @@ impl RenderInput2 {
 								let shader = shaders.get(cur_shader.unwrap()).unwrap();
 								trace!("Created instance segment of {} bytes for shader {:?}", segment_size, shader.specification.name);
 							}
+							cur_shader = Some(*shader);
 							cur_count = 0;
 							cur_st += segment_size;
 							cur_size = new_size;
@@ -374,7 +397,7 @@ impl RenderInput2 {
 								},
 							}
 						}
-					}
+					},
 					_ => {},
 				}
 			}
@@ -394,6 +417,32 @@ impl RenderInput2 {
 		};
 
 		meshes.bind_unbound(device);
+
+		let writes_buffer = {
+			let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+				label: Some("resource write encoder"),
+			});
+			buffers.do_writes(&queue, &mut encoder);
+			textures.do_writes(&queue, &mut encoder);
+			encoder.finish()
+		};
+
+		// for (i, t) in self.targets.iter().enumerate() {
+		// 	trace!("Target {}:", i);
+		// 	for (rrid, _) in t.colour_attachments.iter() {
+		// 		trace!("\t{:?}", rrid);
+		// 	}
+		// 	if let Some(rrid) = t.depth_attachment.as_ref() {
+		// 		trace!("\t{:?}", rrid);	
+		// 	}
+		// }
+		// let mut targval = HashSet::new();
+		// for (_, op) in self.items_buffer.iter() {
+		// 	if let StageOp::Draw(t, _) = op {
+		// 		targval.insert(*t);
+		// 	}
+		// }
+		// trace!("{:?}", targval);
 
 		if false {
 			let n_cores = 8;
@@ -421,7 +470,7 @@ impl RenderInput2 {
 
 			todo!("Parallel encoding")
 		} else {
-			vec![execute_sequence(
+			vec![writes_buffer, execute_sequence(
 				&mut self.items_buffer, 
 				&self.targets, 
 				device, 
@@ -481,6 +530,7 @@ fn execute_sequence(
 	let mut cur_clears;
 	let mut state: Option<PassState> = None;
 
+	trace!("Executing sequence of length {}", sequence.len());
 	let mut i = 0;
 	while i < sequence.len() {
 		let stage = sequence[i].0;
@@ -494,7 +544,7 @@ fn execute_sequence(
 			let clears_end = sequence[i..].iter().position(|i| match i.1 {
 				StageOp::Clear(_, _, _) => false,
 				_ => true,
-			}).unwrap_or(sequence.len()-1);
+			}).map(|v| i + v).unwrap_or(sequence.len());
 			cur_clears = Some(i..clears_end);
 			
 			// Look ahead until end of stage to find passes 
@@ -712,6 +762,14 @@ fn execute_sequence(
 										if *mesh != Some(k) {
 											trace!("Set mesh {:?}", m.name);
 											*mesh = Some(k);
+											let mfk = shaders.get(shader.unwrap()).unwrap().mesh_format_key.unwrap();
+											let mesh_buffer = meshes.vertex_bindings.get(mfk)
+												.expect("mesh bindings doesn't contain this format!")
+												.get(k)
+												.expect("Mesh was not queued for binding!")
+												.as_ref()
+												.expect("Mesh not bound!");
+											pass.set_vertex_buffer(0, mesh_buffer.slice(..));
 										}
 										let dr = match dr {
 											DrawRange::Some(st, en) => st..en.get(),
@@ -754,7 +812,7 @@ fn execute_sequence(
 										.unwrap_or(sequence[i..].len());
 									let instance_range = (*instance_st)..(*instance_st + (instance_count as u32)); 
 									*instance_st += instance_count as u32;
-									i = instance_count; // Skip over! 
+									i += instance_count; // Skip over! 
 									trace!("Batch {} instances", instance_count);
 
 									if !indexed {
@@ -766,6 +824,8 @@ fn execute_sequence(
 										pass.draw_indexed(dr, 0, instance_range);
 									}
 								}
+
+								std::thread::sleep(std::time::Duration::from_millis(10));
 							},
 						}
 					},
@@ -775,6 +835,7 @@ fn execute_sequence(
 		}
 		i += 1;
 	}
+	trace!("Done?");
 	drop(state);
 	encoder.finish()
 }
@@ -830,33 +891,33 @@ pub struct TargetQueue<'a> {
 	target: TargetKey,
 }
 impl<'a> TargetQueue<'a> {
-	pub fn pass(self, material: MaterialKey, entity: Entity) -> Self {
+	pub fn pass(&mut self, material: MaterialKey, entity: Entity) -> &mut Self {
 		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Draw(material, VertexSource::Static, entity))));
 		self
 	}
 
-	pub fn mesh(self, material: MaterialKey, mesh: MeshKey, entity: Entity) -> Self {
+	pub fn mesh(&mut self, material: MaterialKey, mesh: MeshKey, entity: Entity) -> &mut Self {
 		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Draw(material, VertexSource::Mesh(mesh, DrawRange::All), entity))));
 		self
 	}
 
-	pub fn mesh_range(self, material: MaterialKey, mesh: MeshKey, st: u32, en: u32, entity: Entity) -> Self {
+	pub fn mesh_range(&mut self, material: MaterialKey, mesh: MeshKey, st: u32, en: u32, entity: Entity) -> &mut Self {
 		let en = NonZeroU32::new(en).unwrap();
 		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Draw(material, VertexSource::Mesh(mesh, DrawRange::Some(st, en)), entity))));
 		self
 	}
 
-	pub fn bundle(self, bundle: Arc<wgpu::RenderBundle>) -> Self {
+	pub fn bundle(&mut self, bundle: Arc<wgpu::RenderBundle>) -> &mut Self {
 		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Bundle(bundle))));
 		todo!()
 	}
 
-	pub fn indirect(self, material: MaterialKey, indirect: BufferKey, instance: BufferKey) -> Self {
+	pub fn indirect(&mut self, material: MaterialKey, indirect: BufferKey, instance: BufferKey) -> &mut Self {
 		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Indirect(material, None, indirect, instance))));
 		self
 	}
 
-	pub fn indirect_mesh(self, material: MaterialKey, mesh: MeshKey, indirect: BufferKey, instance: BufferKey) -> Self {
+	pub fn indirect_mesh(&mut self, material: MaterialKey, mesh: MeshKey, indirect: BufferKey, instance: BufferKey) -> &mut Self {
 		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Indirect(material, Some(mesh), indirect, instance))));
 		self
 	}

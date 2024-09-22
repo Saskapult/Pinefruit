@@ -4,7 +4,7 @@ use chunks::{chunk_of_voxel, chunks::{ChunkKey, ChunksResource}, generation::KGe
 use eeks::prelude::*;
 use glam::{IVec3, Mat4, UVec3};
 use parking_lot::RwLock;
-use pinecore::render::{AbstractRenderTarget, Buffer, BufferKey, BufferResource, MaterialResource, QueueResource, RenderInputResource, RRID};
+use pinecore::render::{AbstractRenderTarget, Buffer, BufferKey, BufferResource, MaterialResource, QueueResource, RenderFrame, RRID};
 use slotmap::SecondaryMap;
 use splines::Spline;
 use terrain::terrain::TerrainResource;
@@ -407,16 +407,14 @@ pub fn sun_buffer_system(
 
 pub fn sun_render_system(
 	mut materials: ResMut<MaterialResource>,
-	mut input: ResMut<RenderInputResource>,
+	mut input: ResMut<RenderFrame>,
 ) {
-	
-	let skybox_mtl = materials.read("resources/materials/sunbox.ron");
+	let sunbox_mtl = materials.read("resources/materials/sunbox.ron");
 	input.stage("sunbox")
+		.run_after("skybox")
+		.run_before("models")
 		.target(AbstractRenderTarget::new()
 			.with_colour(RRID::context("albedo"), None)
 			.with_depth(RRID::context("depth")))
-		.push((skybox_mtl, None, Entity::default()));	
-
-	input.add_dependency("models", "sunbox");
-	input.add_dependency("sunbox", "skybox");
+		.pass(sunbox_mtl, Entity::default());	
 }

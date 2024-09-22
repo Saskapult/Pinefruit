@@ -8,7 +8,7 @@ use glam::{IVec3, UVec3, Vec2, Vec3};
 use krender::{prelude::{AbstractRenderTarget, Mesh, RRID}, MaterialKey, MeshKey};
 use light::light::{LightRGBA, TorchLightChunksResource, TorchLightModifierComponent};
 use parking_lot::RwLock;
-use pinecore::render::{MaterialResource, MeshResource, RenderInputResource};
+use pinecore::render::{MaterialResource, MeshResource, RenderFrame};
 use slotmap::SecondaryMap;
 use smallvec::{smallvec, SmallVec};
 use terrain::terrain::{TerrainChunk, TerrainEntry, TerrainResource};
@@ -722,19 +722,19 @@ pub fn map_rendering_system(
 	// context: Res<ActiveContextResource>,
 	// mut contexts: ResMut<ContextResource>, 
 	models: Res<MapModelResource>,
-	mut input: ResMut<RenderInputResource>,
+	mut input: ResMut<RenderFrame>,
 ) {
 
 	let target = AbstractRenderTarget::new()
 		.with_colour(RRID::context("albedo"), None)
 		.with_depth(RRID::context("depth"));
-	let items = input
+	let mut items = input
 		.stage("models")
 		.target(target);
 
 	for entry in models.chunks.values().filter_map(|(_, _, g)| g.ref_complete()) {
 		for &(material, mesh) in entry.models.iter() {
-			items.push((material, Some(mesh), entry.entity));
+			items.mesh(material, mesh, entry.entity);
 		}
 	}
 }
@@ -744,12 +744,12 @@ pub fn chunk_bounds_rendering_system(
 	mut materials: ResMut<MaterialResource>,
 	mut meshes: ResMut<MeshResource>,
 	models: Res<MapModelResource>,
-	mut input: ResMut<RenderInputResource>,
+	mut input: ResMut<RenderFrame>,
 ) {
 	let target = AbstractRenderTarget::new()
 		.with_colour(RRID::context("albedo"), None)
 		.with_depth(RRID::context("depth"));
-	let items = input
+	let mut items = input
 		.stage("models")
 		.target(target);
 
@@ -789,6 +789,6 @@ pub fn chunk_bounds_rendering_system(
 	});
 
 	for entry in models.chunks.values().filter_map(|(_, _, g)| g.ref_complete()) {
-		items.push((material, Some(mesh), entry.entity));
+		items.mesh(material, mesh, entry.entity);
 	}
 }
