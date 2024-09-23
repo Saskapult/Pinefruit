@@ -20,10 +20,10 @@ uniform Camera {
 layout(location = 0) in vec3 position;
 
 // Instance input
-layout(location = 2) in vec4 model_matrix_0;
-layout(location = 3) in vec4 model_matrix_1;
-layout(location = 4) in vec4 model_matrix_2;
-layout(location = 5) in vec4 model_matrix_3;
+layout(location = 1) in vec4 model_matrix_0;
+layout(location = 2) in vec4 model_matrix_1;
+layout(location = 3) in vec4 model_matrix_2;
+layout(location = 4) in vec4 model_matrix_3;
 
 layout(location = 0) out vec2 tc_f;
 
