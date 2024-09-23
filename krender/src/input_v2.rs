@@ -2,8 +2,9 @@ use std::{num::NonZeroU32, sync::Arc};
 use arrayvec::ArrayVec;
 use eks::{entity::Entity, World};
 use hashbrown::HashSet;
+use slotmap::SecondaryMap;
 use crate::buffer::BufferManager;
-use crate::mesh::MeshManager;
+use crate::mesh::{IndexBufferType, MeshManager};
 use crate::prelude::{AbstractRenderTarget, BindGroupManager, InstanceAttributeSource, MaterialManager, RenderContext};
 use crate::rendertarget::RRID;
 use crate::shader::ShaderManager;
@@ -416,7 +417,27 @@ impl RenderInput2 {
 			})
 		};
 
-		meshes.bind_unbound(device);
+		{
+			profiling::scope!("mesh binding");
+			for (_, op) in self.items_buffer.iter() {
+				if let StageOp::Draw(_, DrawOp::Draw(s, _, VertexSource::Mesh(m, _), _)) = op {
+					let mfk = shaders.get(*s).unwrap().mesh_format_key.unwrap();
+					if !meshes.index_bindings.contains_key(*m) {
+						trace!("Mark mesh {:?} for vertex binding ({:?})", m, mfk);
+						meshes.index_bindings.insert(*m, None);
+					}
+					if !meshes.vertex_bindings.contains_key(mfk) {
+						meshes.vertex_bindings.insert(mfk, SecondaryMap::new());
+					}
+					let vertex_bindings = meshes.vertex_bindings.get_mut(mfk).unwrap();
+					if !vertex_bindings.contains_key(*m) {
+						trace!("Mark mesh {:?} for index binding", m);
+						vertex_bindings.insert(*m, None);
+					}
+				}
+			}
+			meshes.bind_unbound(device);
+		}
 
 		let writes_buffer = {
 			let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -770,17 +791,29 @@ fn execute_sequence(
 												.as_ref()
 												.expect("Mesh not bound!");
 											pass.set_vertex_buffer(0, mesh_buffer.slice(..));
+
+											let index_buffer = meshes.index_bindings.get(k)
+												.expect("Mesh was not queued for binding!")
+												.as_ref()
+												.expect("Mesh not bound!");
+											match index_buffer {
+												IndexBufferType::U32(b) => pass.set_index_buffer(b.slice(..), wgpu::IndexFormat::Uint32),
+												IndexBufferType::U16(b) => pass.set_index_buffer(b.slice(..), wgpu::IndexFormat::Uint16),
+												IndexBufferType::None => {},
+											}
 										}
+										let indexed = m.indices.is_some();
 										let dr = match dr {
 											DrawRange::Some(st, en) => st..en.get(),
-											DrawRange::All => 0..m.n_vertices,
+											DrawRange::All => 0..m.indices.as_ref().map(|i| i.len() as u32).unwrap_or(m.n_vertices),
 										};
-										(true, dr)
+										(indexed, dr)
 									},
 								};
 
 								if *instance != Some(dinstance) {
 									*instance = Some(dinstance);
+									*instance_st = 0;
 									match dinstance {
 										DrawInstance::Main(st) => {
 											trace!("Set instance buffer to main at offset {}", st);
@@ -790,9 +823,8 @@ fn execute_sequence(
 											let b = buffers.get(k).unwrap();
 											trace!("Set instance buffer to {:?}", b.name);
 											pass.set_vertex_buffer(1, b.binding.as_ref().unwrap().slice(..));
-											*instance_st = 0;
 										},
-									};
+									}
 								}
 
 								if let DrawInstance::Indirect(_, ib) = instance.unwrap() {
@@ -817,7 +849,6 @@ fn execute_sequence(
 
 									if !indexed {
 										trace!("Draw vertices {:?} instances {:?}", dr, instance_range);
-										// trace!("Draw vertices {}..{} instances {}..{}", instance_range.start, instance_range.end);
 										pass.draw(dr, instance_range);
 									} else {
 										trace!("Draw (indexed) vertices {:?} instances {:?}", dr, instance_range);
@@ -825,7 +856,7 @@ fn execute_sequence(
 									}
 								}
 
-								std::thread::sleep(std::time::Duration::from_millis(10));
+								// std::thread::sleep(std::time::Duration::from_millis(10));
 							},
 						}
 					},

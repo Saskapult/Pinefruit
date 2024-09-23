@@ -665,7 +665,7 @@ pub fn skybox_render_system(
 	let stage = frame.stage("skybox")
 		.run_before("models")
 		.clear_depth(RRID::context("depth"), 1.0)
-		.clear_texture(RRID::context("albedo"), [0.0; 4]);
+		.clear_texture(RRID::context("albedo"), [1.0; 4]);
 
 	let skybox_mtl = materials.read("resources/materials/skybox.ron");
 	stage
