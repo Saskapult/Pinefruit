@@ -18,13 +18,13 @@ type TargetKey = u8;
 
 type RenderInputItem = (StageKey, StageItem);
 
-#[derive(variantly::Variantly, Debug)]
+#[derive(variantly::Variantly, Debug, Clone)]
 enum StageItem {
 	Clear(RRID, ClearValue),
 	Compute(MaterialKey, [u32; 3]),
 	Draw(TargetKey, DrawItem),
 }
-#[derive(variantly::Variantly, Debug)]
+#[derive(variantly::Variantly, Debug, Clone, Copy)]
 
 enum DrawItem {
 	Draw(MaterialKey, VertexSource, Entity), 
@@ -34,12 +34,12 @@ enum DrawItem {
 	Indirect(MaterialKey, Option<MeshKey>, BufferKey, BufferKey), 
 	// Must be last because they reset the render pass' state
 	// How do we know that buffers will not have been re-bound since this bundle was created? 
-	Bundle(Arc<wgpu::RenderBundle>),
+	Bundle(usize),
 }
 
 type RenderBufferItem = (StageKey, StageOp);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum StageOp {
 	// Bool is for tacking if this has fulfilled during execution (init to false)
 	Clear(TextureKey, ClearValue, bool),
@@ -80,10 +80,10 @@ enum ClearValue {
 	Colour([f32; 4]),
 	Depth(f32),
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 enum DrawOp {
 	Draw(ShaderKey, [Option<BindGroupKey>; 4], VertexSource, DrawInstance),
-	Bundle(Arc<wgpu::RenderBundle>),
+	Bundle(usize),
 }
 impl DrawOp {
 	#[inline]
@@ -144,6 +144,8 @@ pub struct RenderInput2 {
 	// Targets[0] is a dummy target for compute shaders 
 	// Indices into this should start at 1 
 	targets: Vec<AbstractRenderTarget>,
+	// Held here so that enums can be Copy 
+	bundles: Vec<Arc<wgpu::RenderBundle>>,
 
 	items: Vec<RenderInputItem>,
 	// A count of how many items have been inserted since the last sort
@@ -161,6 +163,7 @@ impl RenderInput2 {
 		Self {
 			stages: Vec::new(),
 			targets: Vec::new(),
+			bundles: Vec::new(),
 			items: Vec::new(),
 			items_buffer: Vec::new(),
 			instance_bytes: Vec::new(),
@@ -322,7 +325,7 @@ impl RenderInput2 {
 			}
 		}
 
-		if true {
+		if false {
 			profiling::scope!("render sort (insertion)");
 			// Double-action insertion sort!
 			// Great for retained mode 
@@ -337,12 +340,23 @@ impl RenderInput2 {
 			}
 		} else {
 			profiling::scope!("render sort (std)");
-			todo!("Std sort render sort");
 			// Useful if we have barely-sorted data and don't mind paying the heap allocation cost 
 			// Ooor if I turns out that insertion sort is generally slower 
 			// Allocate additional vecs with indices, sort with std, re-order base
 			// We are unable to not remap the base because instance data pulling 
 			// relies on it following the same order as the buffer items 
+
+			let mut indexed_buffer = self.items_buffer.iter()
+				.cloned()
+				.enumerate()
+				.collect::<Vec<_>>();
+			indexed_buffer.sort_by_key(|e| e.1);
+
+			let mut old_items = self.items.clone();
+			for (i_new, (i_old, op)) in indexed_buffer.into_iter().enumerate() {
+				std::mem::swap(&mut self.items[i_new], &mut old_items[i_old]);
+				self.items_buffer[i_new] = op;
+			}
 		}
 		
 		{
@@ -495,6 +509,7 @@ impl RenderInput2 {
 			vec![writes_buffer, execute_sequence(
 				&mut self.items_buffer, 
 				&self.targets, 
+				&self.bundles,
 				device, 
 				textures, 
 				buffers, 
@@ -533,6 +548,7 @@ enum PassState<'a> {
 fn execute_sequence(
 	sequence: &mut [RenderBufferItem],
 	targets: &Vec<AbstractRenderTarget>,
+	bundles: &Vec<Arc<wgpu::RenderBundle>>,
 	device: &wgpu::Device,
 	textures: &TextureManager,
 	buffers: &BufferManager,
@@ -748,7 +764,7 @@ fn execute_sequence(
 						match d {
 							DrawOp::Bundle(b) => {
 								trace!("Execute render bundle");
-								pass.execute_bundles([b.as_ref()]);
+								pass.execute_bundles([bundles[*b].as_ref()]);
 								// Wipe the pass' state 
 								*shader = None;
 								*bgc = [None; 4];
@@ -940,7 +956,9 @@ impl<'a> TargetQueue<'a> {
 	}
 
 	pub fn bundle(&mut self, bundle: Arc<wgpu::RenderBundle>) -> &mut Self {
-		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Bundle(bundle))));
+		let i = self.stage_builder.input.bundles.len();
+		self.stage_builder.input.bundles.push(bundle);
+		self.stage_builder.input.items.push((self.stage_builder.stage, StageItem::Draw(self.target, DrawItem::Bundle(i))));
 		todo!()
 	}
 
