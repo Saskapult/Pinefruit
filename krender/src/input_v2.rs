@@ -1,7 +1,6 @@
 use std::{num::NonZeroU32, sync::Arc};
 use arrayvec::ArrayVec;
 use eks::{entity::Entity, World};
-use hashbrown::HashSet;
 use slotmap::SecondaryMap;
 use crate::buffer::BufferManager;
 use crate::mesh::{IndexBufferType, MeshManager};
@@ -246,20 +245,22 @@ impl RenderInput2 {
 			profiling::scope!("find render stage order");
 			// Find stage order if any changed
 			if self.stages.iter().any(|(_, _, o)| *o == u8::MAX) {
-				trace!("Rebuild stages order");
+				trace!("Rebuild stages order:");
 				let mut stage_i = 0;
 				self.stages.iter_mut().for_each(|(_, _, o)| *o = u8::MAX);
 				while let Some(i) = self.stages.iter().position(|(_, d, o)| {
 					*o == u8::MAX && d.iter().copied().all(|d| self.stages[d as usize].2 != u8::MAX)
 				}) {
 					let (stage, _, o) = &mut self.stages[i];
-					// trace!("{}: stage {:?}", stage_i, stage);
+					trace!("\t{}: {:?}", stage_i, stage);
 					*o = stage_i;
 					stage_i += 1;
 				}
-				// for i in 0..self.stages.len() {
-				// 	trace!("{}: stage {:?}", i, self.stages[i].0);
-				// }
+				trace!("Input was:");
+				for (s, d, _) in self.stages.iter() {
+					let d = d.iter().copied().map(|i| &self.stages[i as usize].0).collect::<Vec<_>>();
+					trace!("\t{:?}: {:?}", s, d);
+				}
 			}
 			// Helpful error 
 			if self.stages.iter().any(|(_, _, s)| *s == u8::MAX) {
@@ -540,6 +541,8 @@ fn execute_sequence(
 	meshes: &MeshManager,
 	instance_buffer: &wgpu::Buffer,
 	context: &RenderContext,
+	// Problem: blocks parallel encoding (but we are not doing that now)
+	// profiler: &mut wgpu_profiler::GpuProfiler,
 ) -> wgpu::CommandBuffer {
 	profiling::scope!("sequence execution");
 
@@ -855,8 +858,6 @@ fn execute_sequence(
 										pass.draw_indexed(dr, 0, instance_range);
 									}
 								}
-
-								// std::thread::sleep(std::time::Duration::from_millis(10));
 							},
 						}
 					},
@@ -879,13 +880,13 @@ pub struct StageBuilder<'a> {
 impl<'a> StageBuilder<'a> {
 	pub fn run_before(self, other: impl AsRef<str>) -> Self {
 		let other = self.input.stage(other).key();
-		self.input.add_stage_dep(self.stage, other);
+		self.input.add_stage_dep(other, self.stage);
 		self
 	}
 
 	pub fn run_after(self, other: impl AsRef<str>) -> Self {
 		let other = self.input.stage(other).key();
-		self.input.add_stage_dep(other, self.stage);
+		self.input.add_stage_dep(self.stage, other);
 		self
 	}
 
