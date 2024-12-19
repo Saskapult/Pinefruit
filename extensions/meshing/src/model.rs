@@ -755,36 +755,36 @@ pub fn chunk_bounds_rendering_system(
 
 	let material = materials.read("resources/materials/chunk_bounds.ron");
 	let mesh = meshes.key_from_label("chunk cube mesh").unwrap_or_else(|| {
-		// let size = CHUNK_SIZE as f32;
-		// let positions = [
-		// 	-0.5, -0.5, 0.5,
-		// 	0.5, -0.5, 0.5,
-		// 	-0.5, 0.5, 0.5,
-		// 	0.5, 0.5, 0.5,
-		// 	-0.5, 0.5, -0.5,
-		// 	0.5, 0.5, -0.5,
-		// 	-0.5, -0.5, -0.5,
-		// 	0.5, -0.5, -0.5,
-		// ].map(|v| (v + 0.5) * size);
-		// let indices = [
-		// 	1, 2, 3,
-		// 	3, 2, 4,
-		// 	3, 4, 5,
-		// 	5, 4, 6,
-		// 	5, 6, 7,
-		// 	7, 6, 8,
-		// 	7, 8, 1,
-		// 	1, 8, 2,
-		// 	2, 8, 4,
-		// 	4, 8, 6,
-		// 	7, 1, 5,
-		// 	5, 1, 3,
-		// ].map(|v| v - 1).to_vec();
-		// let mesh = Mesh::new("chunk cube mesh")
-		// 	.with_data("positions", &positions)
-		// 	.with_vertex_count(8)
-		// 	.with_indices(indices);
-		let mesh = Mesh::read_obj("resources/meshes/cube.obj");
+		let size = CHUNK_SIZE as f32;
+		let positions = [
+			-0.5, -0.5, 0.5,
+			0.5, -0.5, 0.5,
+			-0.5, 0.5, 0.5,
+			0.5, 0.5, 0.5,
+			-0.5, 0.5, -0.5,
+			0.5, 0.5, -0.5,
+			-0.5, -0.5, -0.5,
+			0.5, -0.5, -0.5,
+		].map(|v| (v + 0.5) * size);
+		let indices = [
+			1, 2, 3,
+			3, 2, 4,
+			3, 4, 5,
+			5, 4, 6,
+			5, 6, 7,
+			7, 6, 8,
+			7, 8, 1,
+			1, 8, 2,
+			2, 8, 4,
+			4, 8, 6,
+			7, 1, 5,
+			5, 1, 3,
+		].map(|v| v - 1).to_vec();
+		let mesh = Mesh::new("chunk cube mesh")
+			.with_data("positions", &positions)
+			.with_vertex_count(8)
+			.with_indices(indices);
+		// let mesh = Mesh::read_obj("resources/meshes/cube.obj");
 		meshes.insert(mesh)
 	});
 
