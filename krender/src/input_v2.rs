@@ -1,6 +1,7 @@
 use std::{num::NonZeroU32, sync::Arc};
 use arrayvec::ArrayVec;
 use eks::{entity::Entity, World};
+use rand::seq;
 use slotmap::SecondaryMap;
 use crate::buffer::BufferManager;
 use crate::mesh::{IndexBufferType, MeshManager};
@@ -567,7 +568,7 @@ fn execute_sequence(
 	});
 
 	let mut cur_stage = None;
-	let mut cur_clears;
+	let mut cur_clears_segment;
 	let mut state: Option<PassState> = None;
 
 	trace!("Executing sequence of length {}", sequence.len());
@@ -581,16 +582,16 @@ fn execute_sequence(
 			state = None;
 
 			// Find clears partition (it's from here until next non-clear)
-			let clears_end = sequence[i..].iter().position(|i| match i.1 {
+			let next_non_clear = sequence[i..].iter().position(|i: &(u8, StageOp)| match i.1 {
 				StageOp::Clear(_, _, _) => false,
 				_ => true,
 			}).map(|v| i + v).unwrap_or(sequence.len());
-			cur_clears = Some(i..clears_end);
+			cur_clears_segment = i..next_non_clear;
 			
 			// Look ahead until end of stage to find passes 
 			// Make passes for clears that are not in upcoming passes 
 			// I, however, am stupid so I will just clear them all! 
-			for (_, clear) in sequence[cur_clears.unwrap()].iter_mut() {
+			for (_, clear) in sequence[cur_clears_segment].iter_mut() {
 				match clear {
 					StageOp::Clear(t, v, f) => {
 						*f = true;
@@ -639,8 +640,10 @@ fn execute_sequence(
 			}
 			
 			// Skip over those clears
-			trace!("Skipped over {} clear operations", clears_end - i);
-			i = clears_end; 
+			trace!("Skipped over {} clear operations", next_non_clear - i);
+			trace!("those being: {:?}", &sequence[i..next_non_clear]);
+			i = next_non_clear; 
+			// Loop back around in case this stage contained only clears
 			continue
 		}
 
@@ -858,13 +861,14 @@ fn execute_sequence(
 									}
 								} else {
 									// Find batches to draw
-									let instance_count = sequence[i..].iter()
+									let instance_end = sequence[i..].iter()
 										.position(|(_, oop)| op != oop)
 										.unwrap_or(sequence[i..].len());
-									let instance_range = (*instance_st)..(*instance_st + (instance_count as u32)); 
-									*instance_st += instance_count as u32;
-									i += instance_count; // Skip over! 
-									trace!("Batch {} instances", instance_count);
+									let instance_range = (*instance_st)..(*instance_st + (instance_end as u32)); 
+									*instance_st += instance_end as u32;
+									// Subtract one becuase we will add one at the bottom of the loop
+									i += instance_end - 1; // Skip over! 
+									trace!("Batch {} instances", instance_end);
 
 									if !indexed {
 										trace!("Draw vertices {:?} instances {:?}", dr, instance_range);
