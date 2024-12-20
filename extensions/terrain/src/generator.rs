@@ -312,16 +312,14 @@ impl NewTerrainGenerator {
 					p.y * x_extent +
 					p.x
 				) as usize];
-				// let height = heights[(
-				// 	p.z * x_extent +
-				// 	p.x
-				// ) as usize];
-				let height = 0.0;
-				// let height_difference = height_differences[(
-				// 	p.z * x_extent +
-				// 	p.x
-				// ) as usize];
-				let height_difference = 0.25;
+				let height = heights[(
+					p.z * x_extent +
+					p.x
+				) as usize];
+				let height_difference = height_differences[(
+					p.z * x_extent +
+					p.x
+				) as usize];
 
 				let height_diff = (height - world_pos.y as f32) * height_difference;
 				let density_adjustment = self.density_spline.clamped_sample(height_diff).unwrap();
