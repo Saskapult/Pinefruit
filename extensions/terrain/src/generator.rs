@@ -288,41 +288,18 @@ impl NewTerrainGenerator {
 		// We might not do that! (floating islands, caves)
 		// Given the speed of my benchmarks, it should not be needed either
 
-		// Outputs in zyx order
-		let density_scale = self.density_noise.compute_scale();
-		// let densities = 
-		// simdnoise::NoiseBuilder::fbm_3d_offset(
-		// 	x_offset as f32 + 0.5, x_extent as usize, 
-		// 	y_offset as f32 + 0.5, y_extent as usize, 
-		// 	z_offset as f32 + 0.5, z_extent as usize,
-		// ).apply_raw_settings(self.density_noise).generate().0
-		// // vec![0.0; 32768]
-		// .into_iter()
-		// 	.map(|d| (d * density_scale + 1.0) / 2.0) // Normalize
-		// 	.collect::<Vec<_>>();
-		// let densities = 
-		// InteroplatedGeneratorNoise::generate(
-		// 	self.density_noise, 
-		// 	x_offset, x_extent, 4, 
-		// 	y_offset, y_extent, 8, 
-		// 	z_offset, z_extent, 4,
-		// )
-		// // vec![0.0; 32768]
-		// .into_iter()
-		// 	.map(|d| (d * density_scale + 1.0) / 2.0) // Normalize
-		// 	.collect::<Vec<_>>();
 		let lerp_scale = UVec3::splat(4);
 		let densities = fbm_scaled_linear(self.density_noise, world_position, extent / lerp_scale, lerp_scale);
 		for d in densities.iter().copied() {
 			const ERR: f32 = 0.05;
 			// assert!(d <= 1.0, "a density value {d} > 1.0 ({})", ((d * 2.0) - 1.0) / density_scale);
 			if d > 1.0 + ERR {
-				println!("a density value {d} > 1.0 ({})", ((d * 2.0) - 1.0) / density_scale);
+				println!("a density value {d} > 1.0");
 				break
 			}
 			// assert!(d >= 0.0, "a density value {d} < 0.0 ({})", ((d * 2.0) - 1.0) / density_scale);
 			if d < 0.0 - ERR {
-				println!("a density value {d} < 0.0 ({})", ((d * 2.0) - 1.0) / density_scale);
+				println!("a density value {d} < 0.0");
 				break
 			}
 		}

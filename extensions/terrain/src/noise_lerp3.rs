@@ -49,7 +49,7 @@ fn xyz_major_index(x: u32, y: u32, z: u32, scale: UVec3) -> u32 {
 /// This constant dictates the maximum scale. 
 /// 
 /// TODO: const generics
-const MAX_SCALE: usize = 8;
+const MAX_SCALE: usize = 4;
 
 
 /// Generates FBM noise and scales it by a factor. 
@@ -63,10 +63,12 @@ pub fn fbm_scaled_linear(
 	settings: RawFbmSettings, 
 	pos: IVec3,
 	// output size will be size * scale
-	size: UVec3, 
+	extent: UVec3, 
 	scale: UVec3,
 ) -> Vec<f32> {
 	assert!(scale.to_array().into_iter().all(|v| v <= MAX_SCALE as u32), "Max scale exceeded!");
+
+	let size = extent / scale;
 
 	let adjusted_pos = pos / scale.as_ivec3();
 	let [xf, yf, zf] = (adjusted_pos.as_vec3() + Vec3::splat(0.5)).to_array();
@@ -140,4 +142,90 @@ pub fn fbm_scaled_linear(
 	}
 
 	interpolated
+}
+
+
+#[cfg(test)]
+pub mod tests {
+	use super::*;
+	use glam::UVec3;
+	use test::Bencher;
+
+	/// Tests that my magic scaling number is still working 
+	#[test]
+	fn test_noise_normalization() {
+		let settings = RawFbmSettings {
+			seed: 0,
+			freq: 1.0,
+			lacunarity: 1.0,
+			gain: 2.5,
+			octaves: 6,
+		};
+
+		let extent = 256;
+		let noise = fbm_scaled_linear(settings, IVec3::ZERO, UVec3::splat(extent), UVec3::ONE);
+		
+		assert!(noise.iter().copied().all(|v| v <= 1.0));
+		assert!(noise.iter().copied().all(|v| v >= 0.0));
+	}
+
+	fn get_bench_settings() -> RawFbmSettings {
+		RawFbmSettings {
+			seed: 42,
+			freq: 1.0 / 50.0,
+			lacunarity: 2.0,
+			gain: 0.5,
+			octaves: 3,
+		}
+	}
+
+	fn bench_fbm_lerp(settings: RawFbmSettings, extent: UVec3, scale: UVec3, b: &mut Bencher) {
+		b.iter(|| {
+			let world_pos = rand::random::<IVec3>();
+			fbm_scaled_linear(settings, world_pos, extent, scale)
+		});
+	}
+
+	#[bench]
+	fn bench_fbm_16_lerp_8(b: &mut Bencher) {
+		bench_fbm_lerp(get_bench_settings(), UVec3::splat(16), UVec3::splat(2), b);
+	}
+
+	#[bench]
+	fn bench_fbm_32_lerp_8(b: &mut Bencher) {
+		bench_fbm_lerp(get_bench_settings(), UVec3::splat(32), UVec3::splat(4), b);
+	}
+
+	#[bench]
+	fn bench_fbm_32_lerp_16(b: &mut Bencher) {
+		bench_fbm_lerp(get_bench_settings(), UVec3::splat(32), UVec3::splat(2), b);
+	}
+
+	fn bench_fbm_base(settings: RawFbmSettings, extent: UVec3, b: &mut Bencher) {
+		b.iter(|| {
+			let pos = rand::random::<IVec3>();
+			let [xf, yf, zf] = (pos.as_vec3() + Vec3::splat(0.5)).to_array();
+			let [width, height, depth] = extent.to_array();
+			let mut samples = simdnoise::NoiseBuilder::fbm_3d_offset(
+				xf, width as usize + 1,
+				yf, height as usize + 1,
+				zf, depth as usize + 1,
+			).apply_raw_settings(settings).generate().0;
+			{
+				let scale = settings.compute_scale();
+				samples.iter_mut().for_each(|v| *v *= scale);
+			}
+			samples
+		});
+	}
+
+	#[bench]
+	fn bench_fbm_16_base(b: &mut Bencher) {
+		bench_fbm_base(get_bench_settings(), UVec3::splat(16), b);
+	}	
+
+	#[bench]
+	fn bench_fbm_32_base(b: &mut Bencher) {
+		bench_fbm_base(get_bench_settings(), UVec3::splat(32), b);
+	}
 }
