@@ -49,7 +49,7 @@ fn xyz_major_index(x: u32, y: u32, z: u32, scale: UVec3) -> u32 {
 /// This constant dictates the maximum scale. 
 /// 
 /// TODO: const generics
-const MAX_SCALE: usize = 4;
+const MAX_SCALE: usize = 8;
 
 
 /// Generates FBM noise and scales it by a factor. 
@@ -59,20 +59,24 @@ const MAX_SCALE: usize = 4;
 //  clamp samiling positions to scaled grid
 //  adjust settings frequency to generate the same shapes at different resolutions
 pub fn fbm_scaled_linear(
-	settings: RawFbmSettings, 
+	mut settings: RawFbmSettings, 
 	pos: IVec3,
 	extent: UVec3, 
-	// rename to chonkularity? 
-	scale: UVec3,
+	chonkularity: UVec3,
 ) -> Vec<f32> {
-	assert!(scale.to_array().into_iter().all(|v| v <= MAX_SCALE as u32), "Max scale exceeded!");
+	assert!(chonkularity.to_array().into_iter().all(|v| v <= MAX_SCALE as u32), "Max chonkularity exceeded!");
+	assert!((extent % chonkularity).to_array().into_iter().all(|v| v == 0), "Extent must be divisible by chonkularity!");
 
-	let size = extent / scale;
+	// Adjust frequency to account for chonkulation
+	// TODO: Update simdnoise to allow for per-axis frequency scaling
+	settings.freq *= chonkularity.x as f32;
 
-	let adjusted_pos = pos / scale.as_ivec3();
+	let inner_size = extent / chonkularity;
+
+	let adjusted_pos = pos / chonkularity.as_ivec3();
 	let [xf, yf, zf] = (adjusted_pos.as_vec3() + Vec3::splat(0.5)).to_array();
 	// Samples are extended by one 
-	let samples_size = size + UVec3::ONE;
+	let samples_size = inner_size + UVec3::ONE;
 	let [width, height, depth] = samples_size.to_array();
 	let mut samples = simdnoise::NoiseBuilder::fbm_3d_offset(
 		xf, width as usize,
@@ -90,7 +94,7 @@ pub fn fbm_scaled_linear(
 	// division, so I tried precomputing them! 
 	// Profiling has revealed that this was a good idea 
 	let mut precomputed_t = [[0.0; MAX_SCALE]; 3];
-	for (i, sz) in scale.to_array().into_iter().enumerate() {
+	for (i, sz) in chonkularity.to_array().into_iter().enumerate() {
 		for j in 0..sz {
 			precomputed_t[i][j as usize] = j as f32 / sz as f32;
 		}
@@ -100,13 +104,13 @@ pub fn fbm_scaled_linear(
 		// Option to skip at base values
 		// Profiling has shown this to be detrimental! (weird!)
 		if false {
-			if (pos % size).element_sum() == 0 {
+			if (pos % inner_size).element_sum() == 0 {
 				continue 
 			}
 		}
 
 		// Base sample position
-		let [x, y, z] = (pos / scale).to_array();
+		let [x, y, z] = (pos / chonkularity).to_array();
 		let q000 = samples[xyz_major_index(x, y, z, samples_size) as usize];
 		let q001 = samples[xyz_major_index(x, y, z+1, samples_size) as usize];
 		let q010 = samples[xyz_major_index(x, y+1, z, samples_size) as usize];
@@ -127,7 +131,7 @@ pub fn fbm_scaled_linear(
 			]
 		} else {
 			// Distance to the base sample cell 
-			let d = pos - (pos / scale) * scale;
+			let d = pos - (pos / chonkularity) * chonkularity;
 			[
 				precomputed_t[0][d.x as usize],
 				precomputed_t[1][d.y as usize],

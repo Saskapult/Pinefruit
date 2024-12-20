@@ -288,8 +288,7 @@ impl NewTerrainGenerator {
 		// We might not do that! (floating islands, caves)
 		// Given the speed of my benchmarks, it should not be needed either
 
-		let lerp_scale = UVec3::splat(4);
-		let densities = fbm_scaled_linear(self.density_noise, world_position, extent, lerp_scale);
+		let densities = fbm_scaled_linear(self.density_noise, world_position, extent, UVec3::splat(8));
 		for d in densities.iter().copied() {
 			const ERR: f32 = 0.05;
 			// assert!(d <= 1.0, "a density value {d} > 1.0 ({})", ((d * 2.0) - 1.0) / density_scale);
@@ -322,7 +321,7 @@ impl NewTerrainGenerator {
 				// 	p.z * x_extent +
 				// 	p.x
 				// ) as usize];
-				let height_difference = 1.0;
+				let height_difference = 0.25;
 
 				let height_diff = (height - world_pos.y as f32) * height_difference;
 				let density_adjustment = self.density_spline.clamped_sample(height_diff).unwrap();
