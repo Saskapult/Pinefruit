@@ -5,6 +5,7 @@ pub mod modification;
 pub mod terrain;
 pub mod liquids;
 pub mod script;
+mod noise_lerp3;
 
 use pinecore::controls::ControlMap;
 use eeks::prelude::*;
