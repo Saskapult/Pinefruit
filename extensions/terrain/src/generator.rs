@@ -289,7 +289,7 @@ impl NewTerrainGenerator {
 		// Given the speed of my benchmarks, it should not be needed either
 
 		let lerp_scale = UVec3::splat(4);
-		let densities = fbm_scaled_linear(self.density_noise, world_position, extent / lerp_scale, lerp_scale);
+		let densities = fbm_scaled_linear(self.density_noise, world_position, extent, lerp_scale);
 		for d in densities.iter().copied() {
 			const ERR: f32 = 0.05;
 			// assert!(d <= 1.0, "a density value {d} > 1.0 ({})", ((d * 2.0) - 1.0) / density_scale);

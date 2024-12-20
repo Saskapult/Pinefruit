@@ -32,10 +32,10 @@ fn lerp3(
 	let x01 = lerp(q001, q101, xt);
 	let x11 = lerp(q011, q111, xt);
 
-	let r0 = lerp(x00, x01, yt);
-	let r1 = lerp(x10, x11, yt);
+	let r0 = lerp(x00, x01, zt);
+	let r1 = lerp(x10, x11, zt);
 	
-	lerp(r0, r1, zt)
+	lerp(r0, r1, yt)
 }
 
 
@@ -57,13 +57,12 @@ const MAX_SCALE: usize = 4;
 /// Returns a flattened xyz-major 3d vector of values in (approximately) [0, 1]. 
 // TODO: 
 //  clamp samiling positions to scaled grid
-//  have only an output size and scale parameter
 //  adjust settings frequency to generate the same shapes at different resolutions
 pub fn fbm_scaled_linear(
 	settings: RawFbmSettings, 
 	pos: IVec3,
-	// output size will be size * scale
 	extent: UVec3, 
+	// rename to chonkularity? 
 	scale: UVec3,
 ) -> Vec<f32> {
 	assert!(scale.to_array().into_iter().all(|v| v <= MAX_SCALE as u32), "Max scale exceeded!");
@@ -85,8 +84,7 @@ pub fn fbm_scaled_linear(
 		samples.iter_mut().for_each(|v| *v = (*v * scale + 1.0) / 2.0);
 	}
 
-	let final_size = size * scale;
-	let mut interpolated = vec![0.0; final_size.element_product() as usize];
+	let mut interpolated = vec![0.0; extent.element_product() as usize];
 
 	// We only operate on fixed values of t and each involves a floating-point
 	// division, so I tried precomputing them! 
@@ -98,7 +96,7 @@ pub fn fbm_scaled_linear(
 		}
 	}
 
-	for (i, pos) in xyz_major_iterator(final_size).enumerate() {
+	for (i, pos) in xyz_major_iterator(extent).enumerate() {
 		// Option to skip at base values
 		// Profiling has shown this to be detrimental! (weird!)
 		if false {
