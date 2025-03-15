@@ -43,7 +43,7 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 	loader.system("render", "output_texture", output_texture_system);
 	loader.system("render", "model_render_system", model_render_system);
 	loader.system("render", "skybox_render_system", skybox_render_system);
-	loader.system("client_init", "spawn_test_model", spawn_test_model);
+	// loader.system("client_init", "spawn_test_model", spawn_test_model);
 
 	loader.system("client_tick", "time_buffer_system", time_buffer_system)
 		.run_after("time_update_system");
