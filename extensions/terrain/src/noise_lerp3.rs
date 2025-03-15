@@ -61,8 +61,8 @@ const MAX_SCALE: usize = 8;
 pub fn fbm_scaled_linear(
 	mut settings: RawFbmSettings, 
 	pos: IVec3,
-	extent: UVec3, 
-	chonkularity: UVec3,
+	extent: UVec3, // Final extent of the noise
+	chonkularity: UVec3, // Scaling factor to reach the final extent
 ) -> Vec<f32> {
 	assert!(chonkularity.to_array().into_iter().all(|v| v <= MAX_SCALE as u32), "Max chonkularity exceeded!");
 	assert!((extent % chonkularity).to_array().into_iter().all(|v| v == 0), "Extent must be divisible by chonkularity!");

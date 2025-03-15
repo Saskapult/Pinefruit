@@ -115,7 +115,7 @@ impl SunlightVolume {
 			},
 			Self::Gradient((contents, maxc, minc)) => {
 				if is_tinted(value) {
-					let s = contents.into_iter().map(|&v| splat(v as u16)).collect::<Vec<_>>();
+					let s = contents.into_iter().map(|v| splat(*v as u16)).collect::<Vec<_>>();
 					let tinc = s.iter().filter(|&&v| is_tinted(v)).count() as u32;
 					trace!("Gradient sun chunk becomes Tinted");
 					*self = Self::Tinted((s.into_boxed_slice(), *maxc, *minc, tinc));
@@ -172,7 +172,7 @@ impl SunlightVolume {
 					*self = Self::Light;					
 				} else if *tinc == 0 {
 					trace!("Tinted sun chunk becomes Gradient");
-					let s = contents.into_iter().map(|&v| v as u8).collect::<Vec<_>>();
+					let s = contents.into_iter().map(|v| *v as u8).collect::<Vec<_>>();
 					*self = Self::Gradient((s.into_boxed_slice(), *maxc, *minc));
 				}
 			},

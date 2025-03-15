@@ -1,11 +1,13 @@
-use std::path::Path;
-use chunks::{blocks::BlockKey, cube_iterator_xyz_uvec, CHUNK_SIZE};
+use std::{path::Path, sync::Arc};
+use chunks::{blocks::{BlockKey, BlockManager}, chunks::ChunkKey, cube_iterator_xyz_uvec, CHUNK_SIZE};
 use glam::{IVec2, IVec3, UVec2, UVec3};
+use pinecore::pollthread::PollThread;
 use simdnoise::FbmSettings;
+use slotmap::SecondaryMap;
 use splines::Spline;
 use thiserror::Error;
 
-use crate::{noise_lerp3::fbm_scaled_linear, terrain::TerrainContents};
+use crate::{modification::VoxelModification, noise_lerp3::fbm_scaled_linear, terrain::TerrainContents};
 
 
 
@@ -62,131 +64,205 @@ impl ConfigureRawFbm for FbmSettings {
 }
 
 
-#[inline]
-fn lerp(x: f32, x1: f32, x2: f32, q00: f32, q01: f32) -> f32 {
-	((x2 - x) / (x2 - x1)) * q00 + ((x - x1) / (x2 - x1)) * q01
-}
-// #[inline]
-// fn lerp2(
-// 	x: f32, y: f32, 
-// 	q11: f32, q12: f32, q21: f32, q22: f32, 
-// 	x1: f32, x2: f32, y1: f32, y2: f32,
-// ) -> f32 {
-// 	let r1 = lerp(x, x1, x2, q11, q21);
-// 	let r2 = lerp(x, x1, x2, q12, q22);
-// 	lerp(y, y1, y2, r1, r2)
-// }
-#[inline]
-fn lerp3(
-	x: f32, y: f32, z: f32, 
-	q000: f32, q001: f32, q010: f32, q011: f32, q100: f32, q101: f32, q110: f32, q111: f32, 
-	x1: f32, x2: f32, y1: f32, y2: f32, z1: f32, z2: f32, 
-) -> f32 {
-	let x00 = lerp(x, x1, x2, q000, q100);
-	let x10 = lerp(x, x1, x2, q010, q110);
-	let x01 = lerp(x, x1, x2, q001, q101);
-	let x11 = lerp(x, x1, x2, q011, q111);
-
-	let r0 = lerp(y, y1, y2, x00, x01);
-	let r1 = lerp(y, y1, y2, x10, x11);
-   
-	lerp(z, z1, z2, r0, r1)
+#[derive(Debug)]
+enum ThisOrThat<A, B> {
+	This(A),
+	That(B),
 }
 
 
-pub struct InteroplatedGeneratorNoise {
-	scale: UVec3, // One sample every scale voxels 
-	samples: Vec<f32>, 
-	samples_extent: UVec3, // Extent of noise in sample space 
-	samples_origin: IVec3, // Origin of noise in sample space 
+#[derive(Debug)]
+enum TerrainGeneratorChunkStatus {
+	// This job generates desnity data 
+	// It might also need to make biome data 
+	// Then it decides what's solid or not (and discards the density data)
+	Shaping(PollThread<TerrainContents>),
+	CoverWait, // Waits for the chunk above it
+	Covering(PollThread<TerrainContents>),
+	DecorationWait(Vec<IVec3>), // Waits for covering of chunks which affect potential stuctures
+	Decorating(PollThread<ThisOrThat<TerrainContents, Vec<IVec3>>>), // Can halt and revert to wait
 }
-impl InteroplatedGeneratorNoise {
-	pub fn generate(
-		settings: RawFbmSettings,
-		x_offset: i32, x_extent: u32, x_scale: u32,
-		y_offset: i32, y_extent: u32, y_scale: u32,
-		z_offset: i32, z_extent: u32, z_scale: u32,
-	) -> Vec<f32> {
-		let scale = UVec3::new(x_scale, y_scale, z_scale);
-		let world_offset = IVec3::new(x_offset, y_offset, z_offset);
-		let world_extent = UVec3::new(x_extent, y_extent, z_extent);
-		let samples_extent = (world_extent / scale) + UVec3::ONE;	
-		let samples_origin = world_offset.div_euclid(scale.as_ivec3());
 
-		let [x_offset_f, y_offset_f, z_offset_f] = samples_origin.as_vec3().to_array();
-		let [width, height, depth] = samples_extent.to_array();
-		// println!("Noise {}x{}x{}", width, height, depth);
-		let samples = simdnoise::NoiseBuilder::fbm_3d_offset(
-			x_offset_f + 0.5, width as usize,
-			y_offset_f + 0.5, height as usize,
-			z_offset_f + 0.5, depth as usize,
-		).apply_raw_settings(settings).generate().0;
-		assert_eq!(width * height * depth, samples.len() as u32);
-	
-		let interp = Self {
-			scale,
-			samples,
-			samples_extent,
-			samples_origin,
-		};
-	
-		let output = cube_iterator_xyz_uvec(world_extent)
-			.map(|p| interp.get(world_offset + p.as_ivec3()))
-			.collect::<Vec<_>>();
-		assert_eq!(x_extent * y_extent * z_extent, output.len() as u32);
+// Want castle here 
+// Must flatten terrain 
+// Oh wait maybe jsut place castles on flat areas (high flat -> scan area for max)
+// Adjust height for all near it? 
+// Prevent tree genration? 
+// Maybe decorations have added influence over the world 
+// But how could they blend without density access? 
 
-		// let smax = interp.samples.iter().copied().reduce(|a, v| f32::max(a, v)).unwrap();
-		// let omax = output.iter().copied().reduce(|a, v| f32::max(a, v)).unwrap();
-		// assert!(smax >= omax, "{smax} >= {omax}");
 
-		output
-	}
+// So it's always polling the next 
+// And the next is variable 
+// Next is A becuase of spiral iterator (up from bottom pls)
+// A is shaped but not covered, so we should do b 
+// Then The adjacents for decoration? 
+// Basically we just do whatever this chunk is waiting for 
+// Or maybe we jsut follow the spiral iterator until something is not blocked
 
-	#[inline]
-	fn index_of(&self, pos: UVec3) -> usize {
-		let [x, y, z] = pos.to_array();
-		(z * self.samples_extent.y * self.samples_extent.x + y * self.samples_extent.x + x) as usize
-	}
 
-	#[inline]
-	pub fn get(&self, pos: IVec3) -> f32 {
-		let world_origin = self.samples_origin * self.scale.as_ivec3();
-		let world_extent = self.samples_extent.as_ivec3() * self.scale.as_ivec3();
-		assert!(pos.cmpge(world_origin).all());
-		assert!(pos.cmplt(world_origin + world_extent).all());
+// We want terrain generation passes 
+// Covering replaces voxels (and depends on the above chunk)
+// Carving... idk
+// Flooding adds liquid voxels 
+// Decoration adds trees (and depends on many other chunks)
+// Finally it is ready for simulation 
+// 
+// Maybe things just produce modifications? Run in parallel 
 
-		let samples_pos = pos.div_euclid(self.scale.as_ivec3());
-		let base_cell = (samples_pos - self.samples_origin).as_uvec3();
+// Issue: Want trees not intersect rock
+// Solution: Know solidity of other chunk 
+// Also after carving so no float
+// Also after covering so not on stone 
 
-		let q000 = self.samples[self.index_of(base_cell)];
-		let q001 = self.samples[self.index_of(base_cell + UVec3::X)];
-		let q010 = self.samples[self.index_of(base_cell + UVec3::Y)];
-		let q011 = self.samples[self.index_of(base_cell + UVec3::X + UVec3::Y)];
-		let q100 = self.samples[self.index_of(base_cell + UVec3::Z)];
-		let q101 = self.samples[self.index_of(base_cell + UVec3::Z + UVec3::X)];
-		let q110 = self.samples[self.index_of(base_cell + UVec3::Z + UVec3::Y)];
-		let q111 = self.samples[self.index_of(base_cell + UVec3::Z + UVec3::Y + UVec3::X)];
 
-		let pos_q000 = (samples_pos * self.scale.as_ivec3()).as_vec3();
-		let pos_q111 = ((samples_pos + IVec3::ONE) * self.scale.as_ivec3()).as_vec3();
-		let [x, y, z] = pos.as_vec3().to_array();
-		let [x1, y1, z1] = pos_q000.to_array();
-		let [x2, y2, z2] = pos_q111.to_array();
-
-		let v = lerp3(x, y, z, q000, q001, q010, q011, q100, q101, q110, q111, x1, x2, y1, y2, z1, z2);
-
-		if pos == samples_pos * self.scale.as_ivec3() {
-			assert!((v - q000).abs() < 0.0001, "reconstructed {v} != original {q000} in same position");
+#[derive(Debug)]
+pub struct TerrainGenerator {
+	// Some will be done (check the map)
+	// Others will be in progress
+	// Oh fuck these are interdependent 
+	// We will need to look at other non-done entries
+	// Fuck!!
+	// Expand out before adding to the simulation 
+	// Data will be either here or elsewhere 
+	// Check world first and then check this? 
+	// Ughh
+	// stati: SecondaryMap<ChunkKey, TerrainGeneratorChunkStatus>,
+	// Shared with the jobs
+	settings: Arc<TerrainGeneratorSettings>,
+}
+impl TerrainGenerator {
+	pub fn new(seed: u32) -> Self {
+		Self {
+			// stati: SecondaryMap::new(),
+			settings: Arc::new(TerrainGeneratorSettings::new(seed))
 		}
-		
-		// if [q000,q001,q010,q011,q100,q101,q110,q111].into_iter().all(|a| a < v) {
-		// 	panic!("In interp output {v} > all octants");
-		// }
-		// let qmax = [q000,q001,q010,q011,q100,q101,q110,q111].into_iter().reduce(|a, v| f32::max(a, v)).unwrap();
-		// assert!(v <= qmax, "output {v} > qmax {qmax}");
-		// assert!(v <= 1.0 && v >= 0.0, "bad range on v {v}");
+	}
 
-		v
+	// I've chosen to do this entirely independently of other chunks
+	// Benefits: No interdependence
+	// Drawbacks: future plans, more noise generation
+	// Rationale: We're never gonna get there anyway
+	// Should return block mods and not bool but whatevs
+	pub fn generate_this(&self, chunk_position: IVec3, blocks: &BlockManager) -> PollThread<(TerrainContents, Vec<VoxelModification>)> {
+		// let grass = blocks.key_by_name(&"grass".into()).unwrap();
+		// let dirt = blocks.key_by_name(&"dirt".into()).unwrap();
+		let stone = blocks.key_by_name(&"stone".into()).unwrap();
+
+		let settings = self.settings.clone();
+		PollThread::new(move || {
+			let mut contents = TerrainContents::new();
+			settings.base(chunk_position, &mut contents, stone);
+			
+			(contents, vec![])
+		})
+	}
+}
+
+
+
+// An Arc of this is shared between generation jobs, so I've given it the generation code 
+#[derive(Debug)]
+struct TerrainGeneratorSettings {
+	// The noise used to determine the base density of a voxel
+	density_noise: RawFbmSettings,
+	// Threshold for somethign to be solid or empty
+	// Could be useful or useless, idk
+	density_threshold: f32,
+
+	// The noise used to determine the intended height of the world
+	height_noise: RawFbmSettings,
+	// Maps raw height noise [0, 1] -> intended world terrain height [a, b]
+	height_spline: Spline<f32, f32>,
+
+	// Height variability, decides where -1 and 1 is on the adjustment spline 
+	height_variability_noise: RawFbmSettings,
+	height_variability_spline: Spline<f32, f32>,
+
+	// Density adjustment, adjusts density based on value [-1, 1]
+	density_adjustment_spline: Spline<f32, f32>,
+}
+impl TerrainGeneratorSettings {
+	pub fn new(seed: u32) -> Self {
+		let seed = i32::from_ne_bytes(seed.to_ne_bytes());
+		Self {
+			density_noise: RawFbmSettings {
+				seed,
+				freq: 1.0 / 50.0,
+				lacunarity: 2.0,
+				gain: 0.5,
+				octaves: 3,
+			},
+			density_threshold: 0.5,
+			height_noise: RawFbmSettings {
+				seed: seed + 1,
+				freq: 1.0 / 1000.0,
+				lacunarity: 2.0,
+				gain: 0.5,
+				octaves: 1,
+			},
+			height_spline: load_spline("resources/height_spline.ron").unwrap(),
+			height_variability_noise: RawFbmSettings {
+				seed: seed + 2,
+				freq: 1.0 / 100.0,
+				lacunarity: 2.0,
+				gain: 0.5, 
+				octaves: 1,
+			},
+			height_variability_spline: load_spline("resources/difference_spline.ron").unwrap(),
+			density_adjustment_spline: load_spline("resources/density_spline.ron").unwrap(),
+		}
+	}
+
+	// Takes raw noise values [0, 1]
+	// Decides if a voxel is solid
+	#[inline]
+	pub fn is_solid(&self, pos: f32, density: f32, height: f32, variability: f32) -> bool {
+		let height = self.height_spline.clamped_sample(height).unwrap();
+		let variability = self.height_variability_spline.clamped_sample(variability).unwrap();
+
+		// Above intended height is positive 
+		let dh = pos - height; 
+		// But our spline does not reflect this so invert it here
+		let dh = -dh;
+		let height_frac = dh / variability;
+		let adjustment = self.density_adjustment_spline.clamped_sample(height_frac).unwrap();
+
+		let density = density + adjustment;
+		density >= self.density_threshold
+	}
+
+	// Generates the base solid blocks for a chunk
+	pub fn base(
+		&self, 
+		chunk_position: IVec3, 
+		volume: &mut TerrainContents,
+		base: BlockKey,
+	) {
+		let density = fbm_scaled_linear(
+			self.density_noise, 
+			chunk_position * CHUNK_SIZE as i32, 
+			UVec3::splat(32), 
+			UVec3::splat(8),
+		);
+
+		// We could map and insert directly into the array volume, 
+		// but that would require knowing the indexing implementation 
+		// and I don't want to make that assumption
+		for p in cube_iterator_xyz_uvec(UVec3::splat(CHUNK_SIZE)) {
+			let density = density[(
+				p.z * CHUNK_SIZE * CHUNK_SIZE +
+				p.y * CHUNK_SIZE +
+				p.x
+			) as usize];
+
+			let world_pos = chunk_position * CHUNK_SIZE as i32 + p.as_ivec3();
+			let solid = self.is_solid(world_pos.y as f32, density, 0.5, 0.5);
+
+			if solid {
+				volume.insert(p, base);
+			}
+		}
 	}
 }
 
@@ -194,7 +270,7 @@ impl InteroplatedGeneratorNoise {
 /// Splines are loaded from disk when calling [Self::new]. 
 /// If something fails during that, the prgoram will panic.  
 #[derive(Debug)]
-pub struct NewTerrainGenerator {
+pub struct TerrainGenerator2 {
 	// The noise used to determine the base density of a voxel
 	density_noise: RawFbmSettings,
 	density_threshold: f32,
@@ -212,7 +288,7 @@ pub struct NewTerrainGenerator {
 	// Maps raw height difference noise -> height difference multiplier
 	height_difference_spline: Spline<f32, f32>,
 }
-impl NewTerrainGenerator {
+impl TerrainGenerator2 {
 	pub fn new(seed: i32) -> Self {
 		Self {
 			density_noise: RawFbmSettings {
@@ -351,254 +427,175 @@ impl NewTerrainGenerator {
 			}
 		}
 	}
-
-	// Carve should be split into cheese, spaghetti, and noodles
-	#[deprecated]
-	pub fn carve(
-		&self, 
-		_chunk_position: IVec3, 
-		_volume: &mut TerrainContents,
-	) {
-		todo!()
-	}
-
-	// Uses [Self::is_solid] lookahead to place covering blocks
-	// This does re-generate all of the solidity data in order to do that
-	// It would be better to share the solidity data
-	// But it's much easier to just do this
-	pub fn cover(
-		&self,
-		chunk_position: IVec3, 
-		volume: &mut TerrainContents,
-		top: BlockKey,
-		fill: BlockKey,
-		fill_depth: i32, // n following top placement
-	) {
-		// for x in 0..CHUNK_SIZE {
-		// 	for z in 0..CHUNK_SIZE {
-		// 		// Generate column solidity
-		// 		// The orderign of this might be wrong, just do .rev() if it is
-		// 		let solidity = self.is_solid(
-		// 			CHUNK_SIZE as i32 * chunk_position + IVec3::new(x as i32, 0, z as i32), 
-		// 			UVec3::new(1, CHUNK_SIZE + fill_depth as u32, 1),
-		// 		);
-
-		// 		let mut fill_to_place = 0;
-		// 		let mut last_was_empty = false;
-		// 		// Descend y
-		// 		for (y, solid) in solidity.into_iter().enumerate().rev() {
-		// 			// Never set an empty voxel
-		// 			if !solid {
-		// 				// Reset fill counter
-		// 				last_was_empty = true;
-		// 				fill_to_place = 0;
-		// 				continue
-		// 			} else {
-		// 				let in_chunk = y < CHUNK_SIZE as usize;
-
-		// 				// Set top if exposed on top
-		// 				if last_was_empty {
-		// 					// Begin placing fill
-		// 					fill_to_place = fill_depth;
-		// 					if in_chunk {
-		// 						// This y could be wrong
-		// 						volume.insert(UVec3::new(x as u32, y as u32, z as u32), top);
-		// 					}
-		// 				} else {
-		// 					// If not exposed and more fill to place, set fill
-		// 					if fill_to_place != 0 {
-		// 						fill_to_place -= 1;
-		// 						if in_chunk {
-		// 							// This y could be wrong
-		// 							volume.insert(UVec3::new(x as u32, y as u32, z as u32), fill);
-		// 						}
-		// 					}
-		// 				}
-
-		// 				last_was_empty = false;
-		// 			}
-		// 		}
-		// 	}
-		// }
-	}
-
-	#[deprecated]
-	pub fn treeify(
-		&self, 
-		_chunk_position: IVec3, 
-		_volume: &TerrainContents,
-	) -> bool { // Should return block modifications
-		todo!("Tree generation should be extended into a structure generation script")
-	}
 }
 
 
-#[cfg(test)]
-pub mod tests {
-	use super::*;
-	use test::Bencher;
+// #[cfg(test)]
+// pub mod tests {
+// 	use super::*;
+// 	use test::Bencher;
 
-	/// Tests that my magic scaling number is still working 
-	#[test]
-	fn test_noise_normalization() {
-		let settings = RawFbmSettings {
-			seed: 0,
-			freq: 1.0,
-			lacunarity: 1.0,
-			gain: 2.5,
-			octaves: 6,
-		};
+// 	/// Tests that my magic scaling number is still working 
+// 	#[test]
+// 	fn test_noise_normalization() {
+// 		let settings = RawFbmSettings {
+// 			seed: 0,
+// 			freq: 1.0,
+// 			lacunarity: 1.0,
+// 			gain: 2.5,
+// 			octaves: 6,
+// 		};
 
-		let extent = 256;
-		let (noise, _, _) = simdnoise::NoiseBuilder::fbm_3d(extent, extent, extent).apply_raw_settings(settings).generate();
+// 		let extent = 256;
+// 		let (noise, _, _) = simdnoise::NoiseBuilder::fbm_3d(extent, extent, extent).apply_raw_settings(settings).generate();
 		
-		let min = noise.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
-		let max = noise.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
-		println!("Max {max}, Min {min}");
+// 		let min = noise.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
+// 		let max = noise.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+// 		println!("Max {max}, Min {min}");
 
-		let scale = settings.compute_scale();
-		println!("Scale {scale}");
-		let normed = noise.into_iter().map(|v| (v * scale + 1.0) / 2.0).collect::<Vec<_>>();
+// 		let scale = settings.compute_scale();
+// 		println!("Scale {scale}");
+// 		let normed = noise.into_iter().map(|v| (v * scale + 1.0) / 2.0).collect::<Vec<_>>();
 
-		let min = normed.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
-		let max = normed.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
-		println!("Max {max}, Min {min}");
+// 		let min = normed.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
+// 		let max = normed.iter().max_by(|a, b| a.total_cmp(b)).unwrap();
+// 		println!("Max {max}, Min {min}");
 
-		assert!(normed.iter().copied().all(|v| v <= 1.0));
-		assert!(normed.iter().copied().all(|v| v >= 0.0));
-	}
+// 		assert!(normed.iter().copied().all(|v| v <= 1.0));
+// 		assert!(normed.iter().copied().all(|v| v >= 0.0));
+// 	}
 
-	#[bench]
-	fn bench_interpolated_noise(b: &mut Bencher) {
-		let scale: UVec3 = UVec3::splat(4);
-		let extent: UVec3 = UVec3::splat(32);
-		let settings = RawFbmSettings {
-			seed: 42,
-			freq: 1.0 / 50.0,
-			lacunarity: 2.0,
-			gain: 0.5,
-			octaves: 3,
-		};
+// 	#[bench]
+// 	fn bench_interpolated_noise(b: &mut Bencher) {
+// 		let scale: UVec3 = UVec3::splat(4);
+// 		let extent: UVec3 = UVec3::splat(32);
+// 		let settings = RawFbmSettings {
+// 			seed: 42,
+// 			freq: 1.0 / 50.0,
+// 			lacunarity: 2.0,
+// 			gain: 0.5,
+// 			octaves: 3,
+// 		};
 
-		b.iter(|| {
-			let world_pos = rand::random::<IVec3>();
-			let [x_offset, y_offset, z_offset] = world_pos.to_array();
-			let [x_extent, y_extent, z_extent] = extent.to_array();
-			let [x_scale, y_scale, z_scale] = scale.to_array();
+// 		b.iter(|| {
+// 			let world_pos = rand::random::<IVec3>();
+// 			let [x_offset, y_offset, z_offset] = world_pos.to_array();
+// 			let [x_extent, y_extent, z_extent] = extent.to_array();
+// 			let [x_scale, y_scale, z_scale] = scale.to_array();
 			
-			InteroplatedGeneratorNoise::generate(
-				settings, 
-				x_offset, x_extent, x_scale, 
-				y_offset, y_extent, y_scale, 
-				z_offset, z_extent, z_scale,
-			)
-		});
-	}
+// 			InteroplatedGeneratorNoise::generate(
+// 				settings, 
+// 				x_offset, x_extent, x_scale, 
+// 				y_offset, y_extent, y_scale, 
+// 				z_offset, z_extent, z_scale,
+// 			)
+// 		});
+// 	}
 
-	#[bench]
-	fn bench_uninterpolated_noise(b: &mut Bencher) {
-		let extent: usize = 32;
+// 	#[bench]
+// 	fn bench_uninterpolated_noise(b: &mut Bencher) {
+// 		let extent: usize = 32;
 
-		let settings = RawFbmSettings {
-			seed: 42,
-			freq: 1.0 / 50.0,
-			lacunarity: 2.0,
-			gain: 0.5,
-			octaves: 3,
-		};
+// 		let settings = RawFbmSettings {
+// 			seed: 42,
+// 			freq: 1.0 / 50.0,
+// 			lacunarity: 2.0,
+// 			gain: 0.5,
+// 			octaves: 3,
+// 		};
 
-		b.iter(|| {
-			let world_pos = rand::random::<IVec3>();
-			let st = world_pos / extent as i32 * extent as i32;
-			let [x_offset, y_offset, z_offset] = st.as_vec3().to_array();
+// 		b.iter(|| {
+// 			let world_pos = rand::random::<IVec3>();
+// 			let st = world_pos / extent as i32 * extent as i32;
+// 			let [x_offset, y_offset, z_offset] = st.as_vec3().to_array();
 
-			let data = simdnoise::NoiseBuilder::fbm_3d_offset(
-				x_offset as f32 + 0.5, extent, 
-				y_offset as f32 + 0.5, extent, 
-				z_offset as f32 + 0.5, extent,
-			).apply_raw_settings(settings).generate().0;
+// 			let data = simdnoise::NoiseBuilder::fbm_3d_offset(
+// 				x_offset as f32 + 0.5, extent, 
+// 				y_offset as f32 + 0.5, extent, 
+// 				z_offset as f32 + 0.5, extent,
+// 			).apply_raw_settings(settings).generate().0;
 
-			data
-		});
-	}
+// 			data
+// 		});
+// 	}
 
-	// /// Generates chunks until one is fully solid and another is fully empty
-	// #[test]
-	// fn test_density_falloff() {
-	// 	let base = 0;
-	// 	let x = 0;
-	// 	let z = 0;
-	// 	let mut y_min = None;
-	// 	let mut y_max = None;
-	// 	let max_look_length = 10; // Look five chunks up or down
+// 	// /// Generates chunks until one is fully solid and another is fully empty
+// 	// #[test]
+// 	// fn test_density_falloff() {
+// 	// 	let base = 0;
+// 	// 	let x = 0;
+// 	// 	let z = 0;
+// 	// 	let mut y_min = None;
+// 	// 	let mut y_max = None;
+// 	// 	let max_look_length = 10; // Look five chunks up or down
 
-	// 	let generator = NewTerrainGenerator::new(0);
+// 	// 	let generator = NewTerrainGenerator::new(0);
 
-	// 	println!("Looking up...");
-	// 	for y in base..=base+max_look_length {
-	// 		let chunk_position = IVec3::new(x, y, z);
-	// 		let mut volume = ArrayVolume::new(UVec3::splat(CHUNK_SIZE));
-	// 		generator.base(chunk_position, &mut volume, BlockKey::default());
+// 	// 	println!("Looking up...");
+// 	// 	for y in base..=base+max_look_length {
+// 	// 		let chunk_position = IVec3::new(x, y, z);
+// 	// 		let mut volume = ArrayVolume::new(UVec3::splat(CHUNK_SIZE));
+// 	// 		generator.base(chunk_position, &mut volume, BlockKey::default());
 
-	// 		let n_solid = volume.contents.iter().filter(|v| v.is_some()).count();
-	// 		println!("y={y} is {:.2}% solid ({} / {})", n_solid as f32 / CHUNK_SIZE.pow(3) as f32 * 100.0, n_solid, CHUNK_SIZE.pow(3));
+// 	// 		let n_solid = volume.contents.iter().filter(|v| v.is_some()).count();
+// 	// 		println!("y={y} is {:.2}% solid ({} / {})", n_solid as f32 / CHUNK_SIZE.pow(3) as f32 * 100.0, n_solid, CHUNK_SIZE.pow(3));
 
-	// 		if volume.contents.iter().all(|v| v.is_none()) {
-	// 			println!("y={y} is fully empty");
-	// 			y_max = Some(y);
-	// 			break
-	// 		}
-	// 	}
-	// 	assert!(y_max.is_some(), "No fully empty chunk found");
+// 	// 		if volume.contents.iter().all(|v| v.is_none()) {
+// 	// 			println!("y={y} is fully empty");
+// 	// 			y_max = Some(y);
+// 	// 			break
+// 	// 		}
+// 	// 	}
+// 	// 	assert!(y_max.is_some(), "No fully empty chunk found");
 
-	// 	println!("Looking down...");
-	// 	for y in (base-max_look_length..=base).rev() {
-	// 		let chunk_position = IVec3::new(x, y, z);
-	// 		let mut volume = ArrayVolume::new(UVec3::splat(CHUNK_SIZE));
-	// 		generator.base(chunk_position, &mut volume, BlockKey::default());
+// 	// 	println!("Looking down...");
+// 	// 	for y in (base-max_look_length..=base).rev() {
+// 	// 		let chunk_position = IVec3::new(x, y, z);
+// 	// 		let mut volume = ArrayVolume::new(UVec3::splat(CHUNK_SIZE));
+// 	// 		generator.base(chunk_position, &mut volume, BlockKey::default());
 
-	// 		let n_solid = volume.contents.iter().filter(|v| v.is_some()).count();
-	// 		println!("y={y} is {:.2}% solid ({} / {})", n_solid as f32 / CHUNK_SIZE.pow(3) as f32 * 100.0, n_solid, CHUNK_SIZE.pow(3));
+// 	// 		let n_solid = volume.contents.iter().filter(|v| v.is_some()).count();
+// 	// 		println!("y={y} is {:.2}% solid ({} / {})", n_solid as f32 / CHUNK_SIZE.pow(3) as f32 * 100.0, n_solid, CHUNK_SIZE.pow(3));
 
-	// 		if volume.contents.iter().all(|v| v.is_some()) {
-	// 			println!("y={y} is fully solid");
-	// 			y_min = Some(y);
-	// 			break
-	// 		}
-	// 	}
-	// 	assert!(y_min.is_some(), "No fully solid chunk found");
-	// }
+// 	// 		if volume.contents.iter().all(|v| v.is_some()) {
+// 	// 			println!("y={y} is fully solid");
+// 	// 			y_min = Some(y);
+// 	// 			break
+// 	// 		}
+// 	// 	}
+// 	// 	assert!(y_min.is_some(), "No fully solid chunk found");
+// 	// }
 
-	#[test]
-	fn test_3d_fbm_index() {
-		let settings = RawFbmSettings {
-			seed: 0,
-			freq: 0.05,
-			lacunarity: 1.0,
-			gain: 2.5,
-			octaves: 6,
-		};
+// 	#[test]
+// 	fn test_3d_fbm_index() {
+// 		let settings = RawFbmSettings {
+// 			seed: 0,
+// 			freq: 0.05,
+// 			lacunarity: 1.0,
+// 			gain: 2.5,
+// 			octaves: 6,
+// 		};
 
-		let distance = 15;
+// 		let distance = 15;
 
-		let (noise, _, _) = simdnoise::NoiseBuilder::fbm_3d_offset(
-			0.0, distance, 
-			0.25, 1, 
-			0.25, 1,
-		).apply_raw_settings(settings).generate();
-		let a = noise[distance-1];
-		println!("{noise:?}");
-		dbg!(a);
+// 		let (noise, _, _) = simdnoise::NoiseBuilder::fbm_3d_offset(
+// 			0.0, distance, 
+// 			0.25, 1, 
+// 			0.25, 1,
+// 		).apply_raw_settings(settings).generate();
+// 		let a = noise[distance-1];
+// 		println!("{noise:?}");
+// 		dbg!(a);
 
-		let (noise, _, _) = simdnoise::NoiseBuilder::fbm_3d_offset(
-			(distance-2) as f32, 3, 
-			0.25, 1, 
-			0.25, 1,
-		).apply_raw_settings(settings).generate();
-		let b = noise[1];
-		println!("{noise:?}");
-		dbg!(b);
+// 		let (noise, _, _) = simdnoise::NoiseBuilder::fbm_3d_offset(
+// 			(distance-2) as f32, 3, 
+// 			0.25, 1, 
+// 			0.25, 1,
+// 		).apply_raw_settings(settings).generate();
+// 		let b = noise[1];
+// 		println!("{noise:?}");
+// 		dbg!(b);
 
-		assert!(a - b <= f32::EPSILON);
-	}
-}
+// 		assert!(a - b <= f32::EPSILON);
+// 	}
+// }

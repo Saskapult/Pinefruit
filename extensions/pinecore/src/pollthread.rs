@@ -1,6 +1,7 @@
 use crossbeam_channel::{Receiver, TryRecvError};
 
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ThreadState {
 	// We could add an Arc<State> to this but it'd be better to have another way to do that so that the function is marked as complete automatically 
 	Working,
@@ -8,12 +9,13 @@ pub enum ThreadState {
 }
 
 
+#[derive(Debug)]
 pub struct PollThread<V> {
 	state: ThreadState,
 	receiver: Receiver<V>,
 }
 impl<V: Send + Sync + 'static> PollThread<V> {
-	pub fn new(f: fn() -> V) -> Self {
+	pub fn new(f: impl Fn() -> V + Send + 'static) -> Self {
 		let (sender, receiver) = crossbeam_channel::bounded(1);
 		rayon::spawn(move || sender.send(f()).unwrap());
 		Self {
@@ -22,8 +24,8 @@ impl<V: Send + Sync + 'static> PollThread<V> {
 		}
 	}
 	
-	pub fn state(&self) -> &ThreadState {
-		&self.state
+	pub fn state(&self) -> ThreadState {
+		self.state
 	}
 	
 	// Values are never returned by a thing that takes self 

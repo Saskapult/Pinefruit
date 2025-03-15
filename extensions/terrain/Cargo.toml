@@ -26,6 +26,7 @@ rayon = "1.10.0"
 rand = "0.8.5"
 mlua = { version = "0.9.9", features = ["luau-jit", "macros", "send"] }
 serde = "1.0.132"
+oneshot = "0.1.8"
 
 # [profile.dev]
 # # debug = 1

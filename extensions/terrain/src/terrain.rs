@@ -4,8 +4,9 @@ use crossbeam_channel::{Sender, Receiver, unbounded};
 use eeks::prelude::*;
 use glam::{IVec3, UVec3};
 use parking_lot::RwLock;
+use pinecore::pollthread::{PollThread, ThreadState};
 use slotmap::SecondaryMap;
-use crate::{generator::NewTerrainGenerator, modification::VoxelModification};
+use crate::{generator::TerrainGenerator, modification::VoxelModification};
 
 
 
@@ -196,29 +197,27 @@ impl StorageCommandExpose for TerrainResource {
 #[derive(Debug, Resource)]
 #[sda(commands = true)]
 pub struct TerrainLoadingResource {
-	pub chunk_sender: Sender<(IVec3, TerrainContents, Vec<VoxelModification>)>,
-	pub chunk_receiver: Receiver<(IVec3, TerrainContents, Vec<VoxelModification>)>,
+	// pub chunk_sender: Sender<(IVec3, TerrainContents, Vec<VoxelModification>)>,
+	// pub chunk_receiver: Receiver<(IVec3, TerrainContents, Vec<VoxelModification>)>,
 	pub max_generation_jobs: u8,
-	pub cur_generation_jobs: u8,
-	pub vec_generation_jobs: Vec<(IVec3, Instant)>, // For profiling
+	pub generation_jobs: Vec<(IVec3, Instant, PollThread<(TerrainContents, Vec<VoxelModification>)>)>,
 	// pub generation_durations: RingDataHolder<Duration>, // For profiling
 
 	pub seed: u32,
 	pub pending_blockmods: HashMap<IVec3, Vec<VoxelModification>>,
-	pub generator: Arc<NewTerrainGenerator>,
+	pub generator: TerrainGenerator,
 }
 impl TerrainLoadingResource {
 	pub fn new(seed: u32) -> Self {
-		let (chunk_sender, chunk_receiver) = unbounded();
+		// let (chunk_sender, chunk_receiver) = unbounded();
 		Self {
-			chunk_sender, chunk_receiver, 
+			// chunk_sender, chunk_receiver, 
 			max_generation_jobs: 16,
-			cur_generation_jobs: 0,
-			vec_generation_jobs: Vec::with_capacity(16),
+			generation_jobs: Vec::with_capacity(16),
 			// generation_durations: RingDataHolder::new(32),
 			seed, 
 			pending_blockmods: HashMap::new(),
-			generator: Arc::new(NewTerrainGenerator::new(seed as i32)),
+			generator: TerrainGenerator::new(seed),
 		}
 	}
 }
@@ -237,18 +236,19 @@ impl StorageCommandExpose for TerrainLoadingResource {
 				_ => Err(anyhow::anyhow!("Unknown field")),
 			},
 			"stats" => {
-				let s = if let Some((longest_p, longest_t)) = self.vec_generation_jobs.iter()
-					.map(|(p, s)| (p, s.elapsed().as_secs_f32()))
+				let s = if let Some((longest_p, longest_t)) = self.generation_jobs.iter()
+					.map(|(p, s, _)| (p, s.elapsed().as_secs_f32()))
 					.reduce(|a, v| if a.1 > v.1 { a } else { v }) 
 				{
-					format!("longest_running: {:?}, {:.1}ms", longest_p, longest_t * 1000.0)
+					format!("longest: {:?}, {:.1}ms", longest_p, longest_t * 1000.0)
 				} else {
-					format!("longest_running: None")
+					format!("longest: None")
 				};
 
+				// Percent loaded?
+
 				Ok([
-					format!("max_jobs: {}", self.max_generation_jobs),
-					format!("current_jobs: {}", self.cur_generation_jobs),
+					format!("jobs: {} / {}", self.generation_jobs.len(), self.max_generation_jobs),
 					s,
 					format!("seed: {}", self.seed),
 				].join("\n"))
@@ -279,31 +279,29 @@ pub fn terrain_loading_system(
 
 	{ // Receive new chunks
 		// profiling::scope!("Receive new chunks");
-		while let Ok((position, chunk, modifications)) = loading.chunk_receiver.try_recv() {
-			trace!("Received generated chunk for {position}");
-			let n = chunks.chunks.len();
-			let n_loaded = terrain_chunks.values().filter(|e| e.is_complete()).count();
-			trace!("Terrain is now {:.2}% loaded",  n_loaded as f32 / n as f32 * 100.0);
+		for (position, _t_start, j) in loading.generation_jobs.iter_mut() {
+			if let Some((contents, modifications)) = j.poll() {
+				trace!("Received generated chunk for {position}");
 
-			let i = loading.vec_generation_jobs.iter().position(|&(v, _)| v == position)
-				.expect("We don't seem to have queued this for generation");
-			let (_, _t_start) = loading.vec_generation_jobs.remove(i);
-			// loading.generation_durations.insert(t_start.elapsed());
+				let n = chunks.chunks.len();
+				let n_loaded = terrain_chunks.values().filter(|e| e.is_complete()).count();
+				trace!("Terrain is now {:.2}% loaded",  n_loaded as f32 / n as f32 * 100.0);
 
-			if let Some(k) = chunks.get_position(position) {
-				terrain_chunks.insert(k, TerrainEntry::Complete(Arc::new(TerrainChunk { 
-					contents: chunk, 
-					generation: KGeneration::new(), 
-				})));
-				terrain.modify_voxels(modifications.as_slice());
-				loading.cur_generation_jobs -= 1;
-			} else {
-				warn!("Received chunk but not meant to be loaded");
+				if let Some(k) = chunks.get_position(*position) {
+					terrain_chunks.insert(k, TerrainEntry::Complete(Arc::new(TerrainChunk { 
+						contents, 
+						generation: KGeneration::new(), 
+					})));
+					terrain.modify_voxels(modifications.as_slice());
+				} else {
+					warn!("Received chunk but not meant to be loaded");
+				}
 			}
 		}
+		loading.generation_jobs.retain(|(_, _, j)| j.state() == ThreadState::Working);
 	}
 	
-	if loading.cur_generation_jobs < loading.max_generation_jobs {
+	if loading.generation_jobs.len() < loading.max_generation_jobs as usize {
 		// profiling::scope!("Start new jobs");
 		for &(key, d) in chunks.chunks_by_distance.iter() {
 			let position = chunks.chunks[key];
@@ -312,29 +310,11 @@ pub fn terrain_loading_system(
 				terrain_chunks.insert(key, TerrainEntry::Loading);
 	
 				let blocks = blocks.read();
-				let grass = blocks.key_by_name(&"grass".into()).unwrap();
-				let dirt = blocks.key_by_name(&"dirt".into()).unwrap();
-				let stone = blocks.key_by_name(&"stone".into()).unwrap();
-	
-				let generator = loading.generator.clone();
-				let sender = loading.chunk_sender.clone();
-				rayon::spawn(move || {
-					let mut c = TerrainContents::new();
-	
-					// let tgen = TerrainGenerator::new(0);
-					// tgen.chunk_base_3d(position, &mut c, stone);
-					// tgen.cover_chunk(&mut c, position, grass, dirt, 3);
-	
-					generator.base(position, &mut c, stone);
-					generator.cover(position, &mut c, grass, dirt, 3);
-	
-					sender.send((position, c, Vec::new())).unwrap();
-				});
+				let job = loading.generator.generate_this(position, &blocks);
 
-				loading.vec_generation_jobs.push((position, Instant::now()));
-				loading.cur_generation_jobs += 1;
+				loading.generation_jobs.push((position, Instant::now(), job));
 			}
-			if loading.cur_generation_jobs >= loading.max_generation_jobs {
+			if loading.generation_jobs.len() >= loading.max_generation_jobs as usize {
 				trace!("Reached maxium chunk generation jobs");
 				break;
 			}
