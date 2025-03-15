@@ -1,6 +1,8 @@
 pub mod controls;
 pub mod player;
+pub mod pollthread;
 pub mod render;
+pub mod signal_map;
 pub mod time;
 pub mod transform;
 
