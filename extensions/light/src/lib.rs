@@ -52,6 +52,8 @@ pub fn systems(loader: &mut ExtensionSystemsLoader) {
 		.run_after("time_update_system");
 
 	loader.system("render", "sun_render_system", sun_render_system);
+
+	loader.command("sun", sun_bright);
 }
 
 
@@ -60,4 +62,24 @@ pub fn load(storages: &mut eeks::ExtensionStorageLoader) {
 	storages.resource(TorchLightChunksResource::default());
 	storages.resource(SunResource::new());
 	storages.component::<TorchLightModifierComponent>();
+}
+
+
+pub fn sun_bright(world: &World, args: &[&str]) -> anyhow::Result<String> {
+	let mut sun = world.query::<ResMut<SunResource>>();
+
+	// An API for this would be great
+	match args[0] {
+		"set_angle" => {
+			// Uses degrees becuase I am a lowly meatbag
+			let angle = args[1].parse::<f32>()?.to_radians();
+			sun.fix_angle(angle);
+			Ok(format!("Set angle to {}", angle))
+		},
+		"unset_angle" => {
+			sun.unfix_angle();
+			Ok("Unfixed angle".to_string())
+		},
+		_ => Err(anyhow::anyhow!("command not recognized")),
+	}
 }

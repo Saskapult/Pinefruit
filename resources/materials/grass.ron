@@ -6,7 +6,7 @@
 		"camera": Context("camera"),
 		"texture": Global(Path("../textures/grass.png")),
 		"depth": Context("depth"),
-		"time": Global(Label("time")),
+		"sun": Global(Label("SunBuffer")),
 	},
 	array_mappings: {},
 )

@@ -1,5 +1,3 @@
-#![feature(lazy_cell)]
-
 use std::{collections::HashMap, path::{Path, PathBuf}, sync::LazyLock, time::{Duration, SystemTime, UNIX_EPOCH}};
 use anyhow::{anyhow, Context};
 use eks::{prelude::*, resource::UntypedResource, sparseset::UntypedSparseSet, system::SystemFunction, WorldEntitySpawn};
@@ -75,10 +73,11 @@ macro_rules! load_extensions {
 			use std::path::Path;
 			let mut esl = eeks::ExtensionStorageLoader::new(&mut $world);
 			let mut systems = Vec::new();
-			let mut ess = ExtensionSystemsLoader::new(&mut systems);
+			let mut commands = Vec::new();
+			let mut ess = ExtensionSystemsLoader::new(&mut systems, &mut commands);
 			let excludes: Vec<&Path> = load_core_extensions!();
 
-			$extensions.init_directory("extensions", excludes.as_slice(), systems)
+			$extensions.init_directory("extensions", excludes.as_slice(), systems, commands)
 		}
 	};
 }
@@ -127,10 +126,14 @@ pub struct ExtensionSystemsLoader<'a> {
 	// Oh but wait, that's a bad idea! 
 	// We'd need to track what was added for each world so that it can be unloaded for each world
 	systems: &'a mut Vec<ExtensionSystem>,
+	commands: &'a mut Vec<(String, Box<dyn Fn(&World, &[&str]) -> anyhow::Result<String>>)>,
 }
 impl<'a> ExtensionSystemsLoader<'a> {
-	pub fn new(systems: &'a mut Vec<ExtensionSystem>) -> Self {
-		Self { systems }
+	pub fn new(
+		systems: &'a mut Vec<ExtensionSystem>, 
+		commands: &'a mut Vec<(String, Box<dyn Fn(&World, &[&str]) -> anyhow::Result<String>>)>,
+	) -> Self {
+		Self { systems, commands }
 	}
 
 	pub fn system<S: SystemFunction<'static, (), Q, R> + Copy + 'static, R, Q: Queriable<'static>>(
@@ -142,6 +145,14 @@ impl<'a> ExtensionSystemsLoader<'a> {
 		let i = self.systems.len();
 		self.systems.push(ExtensionSystem::new::<S, R, Q>(group, name, function));
 		self.systems.get_mut(i).unwrap()
+	}
+
+	pub fn command(
+		&mut self, 
+		id: impl AsRef<str>,
+		f: impl Fn(&World, &[&str]) -> anyhow::Result<String> + 'static, 
+	) {
+		self.commands.push((id.as_ref().to_string(), Box::new(f)));
 	}
 }
 
@@ -217,6 +228,7 @@ pub struct ExtensionLibrary {
 	pub library: libloading::Library,
 	pub read_at: SystemTime, 
 	pub load_dependencies: Vec<String>,
+	pub commands: Vec<(String, Box<dyn Fn(&World, &[&str]) -> anyhow::Result<String>>)>,
 	pub systems: Vec<ExtensionSystem>,
 	pub storages: Option<ExtensionStorages>,
 }
@@ -241,10 +253,12 @@ impl ExtensionLibrary {
 		};
 		trace!("Depends on {:?}", load_dependencies);
 
-		// Fetch systems
+		// Fetch systems and commands
 		let mut systems = Vec::new();
+		let mut commands = Vec::new();
 		let mut systems_loader = ExtensionSystemsLoader {
 			systems: &mut systems,
+			commands: &mut commands,
 		};
 		unsafe {
 			let n = format!("{}_systems", name);
@@ -257,6 +271,7 @@ impl ExtensionLibrary {
 			library, 
 			read_at: library_ts, 
 			load_dependencies,
+			commands,
 			systems,
 			storages: None,
 		})
@@ -315,6 +330,8 @@ impl Drop for ExtensionLibrary {
 		self.systems.clear();
 	}
 }
+unsafe impl Send for ExtensionLibrary {}
+unsafe impl Sync for ExtensionLibrary {}
 
 
 fn extension_build_filename(extension_name: impl AsRef<str>) -> PathBuf {
@@ -686,6 +703,7 @@ pub struct ExtensionRegistry {
 	// These will be excluded from loading and reloads (TODO)
 	core_paths: Vec<PathBuf>,
 	core_systems: Vec<ExtensionSystem>,
+	core_commands: Vec<(String, Box<dyn Fn(&World, &[&str]) -> anyhow::Result<String>>)>,
 
 	lua: mlua::Lua,
 	lua_extensions: Vec<LuaExtensionEntry>,
@@ -704,6 +722,7 @@ impl ExtensionRegistry {
 			extensions: Vec::new(),
 			core_paths: Vec::new(),
 			core_systems: Vec::new(),
+			core_commands: Vec::new(),
 			lua,
 			lua_extensions: Vec::new(),
 			workloads: HashMap::new(),
@@ -879,9 +898,11 @@ impl ExtensionRegistry {
 		path: impl AsRef<Path>,
 		core_extensions: &[impl AsRef<Path>],
 		core_systems: Vec<ExtensionSystem>,
+		core_commands: Vec<(String, Box<dyn Fn(&World, &[&str]) -> anyhow::Result<String>>)>,
 	) -> anyhow::Result<()> {
 		debug!("{} core systems: {:?}", core_systems.len(), core_systems.iter().map(|s| (&s.group, &s.id)).collect::<Vec<_>>());
 		self.core_systems = core_systems;
+		self.core_commands = core_commands;
 		self.core_paths = core_extensions.iter().map(|v| v.as_ref().canonicalize().expect("Core extension path DNE")).collect();
 
 		let dirs = std::fs::read_dir(path.as_ref())?
@@ -1191,11 +1212,11 @@ impl ExtensionRegistry {
 		Ok(())
 	}
 
-	pub fn command(&mut self, world: &mut World, command: &[&str]) -> anyhow::Result<String> {
-		let keyword = *command.get(0)
+	pub fn command(&mut self, world: &mut World, args: &[&str]) -> anyhow::Result<String> {
+		let keyword = *args.get(0)
 			.with_context(|| "please supply a keyword")?;
 		match keyword {
-			"component" | "resource" => world.command(command),
+			"component" | "resource" => world.command(args),
 			_ => {
 				info!("Global command '{}'", keyword);
 				// I've decided that running commands doesn't need to be optimized 
@@ -1221,11 +1242,33 @@ impl ExtensionRegistry {
 						}
 					}
 				}
+
+				for e in self.extensions.iter() {
+					if let Some(l) = e.library.as_ref() {
+						for (c, f) in l.commands.iter() {
+							if c == keyword {
+								trace!("Command '{}' from '{}'", c, e.name);
+								return f(&world, &args[1..])
+							}
+						}
+					}
+				}
+
+				for (c, f) in self.core_commands.iter() {
+					if c == keyword {
+						trace!("Command '{}' from core", c);
+						return f(&world, &args[1..])
+					}
+				}
+
+				error!("Command '{}' was not found", keyword);
 				Err(anyhow!("Command not found!"))
 			}
 		}
 	}
 }
+unsafe impl Send for ExtensionRegistry {}
+unsafe impl Sync for ExtensionRegistry {}
 
 
 /// Adds logging functions (from env_logger) to the lua context. 

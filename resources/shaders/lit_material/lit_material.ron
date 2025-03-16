@@ -63,7 +63,7 @@
 	bind_groups: {
 		0: {
             0: UniformBuffer("camera", [Vertex]),
-			1: UniformBuffer("time", [Fragment]),
+			1: UniformBuffer("sun", [Fragment]),
 		},
 		1: {
             0: Texture("texture", Rgba8Unorm, D2, false, Float, [Fragment]),

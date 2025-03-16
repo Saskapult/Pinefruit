@@ -321,6 +321,9 @@ pub struct SunResource {
 	time_angle_spline: Spline<f32, f32>, // time -> angle (radians)
 	angle_brightness_spline: Spline<f32, f32>, // angle -> brightness ([0, 1])
 	buffer: Option<BufferKey>,
+
+	// Used to fix the sun at a certain angle
+	fixed_angle: Option<f32>,
 }
 impl SunResource {
 	pub fn new() -> Self {
@@ -335,16 +338,28 @@ impl SunResource {
 			.expect("Failed to interpret angle brightness spline");
 		assert!(angle_brightness_spline.len() >= 1);
 		Self {
-			time_angle_spline, angle_brightness_spline, buffer: None,
+			time_angle_spline, angle_brightness_spline, buffer: None, fixed_angle: None,
 		}
 	}
 
+	pub fn fix_angle(&mut self, angle: f32) {
+		self.fixed_angle = Some(angle);
+	}
+	
+	pub fn unfix_angle(&mut self) {
+		self.fixed_angle = None;
+	}
+
 	pub fn current_angle(&self, time: f32) -> f32 {
-		let max_t = self.time_angle_spline.keys().iter()
-			.map(|v| v.t)
-			.reduce(|a, v| f32::max(a, v))
-			.unwrap();
-		self.time_angle_spline.sample(time % max_t).unwrap()
+		if let Some(a) = self.fixed_angle {
+			a
+		} else {
+			let max_t = self.time_angle_spline.keys().iter()
+				.map(|v| v.t)
+				.reduce(|a, v| f32::max(a, v))
+				.unwrap();
+			self.time_angle_spline.sample(time % max_t).unwrap()
+		}		
 	}
 
 	pub fn current_brightness(&self, time: f32) -> f32 {
