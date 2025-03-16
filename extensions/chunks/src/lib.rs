@@ -1,9 +1,12 @@
+#![feature(test)]
+
 pub mod array_volume;
 pub mod blocks;
 pub mod chunk;
 pub mod chunks;
 pub mod fvt;
 pub mod generation;
+pub mod spiral_iterator;
 
 use blocks::BlockResource;
 use chunks::{chunk_loading_system, ChunkLoadingComponent, ChunksResource};
@@ -14,6 +17,7 @@ use pinecore::player::PlayerSpawnResource;
 #[macro_use]
 extern crate log;
 
+extern crate test;
 
 
 /// Chunk side length. 
